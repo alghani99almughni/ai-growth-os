@@ -370,13 +370,34 @@ async def public_voice(websocket,call_id:str):
         try: await websocket.send_json({"type":"error","message":"Voice session ended: "+str(exc)})
         except Exception: pass
     finally:
-        call.status="ended"; db.commit(); db.close()
+        db.refresh(call)
+        if call.status not in {"handoff_requested","handoff_accepted","connected"}:
+            call.status="ended"
+        db.commit(); db.close()
 
 class PublicVoiceTurnRequest(BaseModel):
     transcript:str=Field(min_length=1,max_length=4000)
     conversation_id:str|None=None
     call_id:str|None=None
     channel:str="voice"
+
+@app.get("/api/v1/public/business/{slug}/call/{call_id}/handoff")
+def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==t.id))
+    if not call: raise HTTPException(404,"Call not found")
+    staff=db.get(StaffMember,call.staff_id) if call.staff_id else None
+    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"staff":{"id":staff.id,"name":staff.name} if staff else None}
+
+@app.get("/api/v1/public/business/{slug}/voice/ice")
+def public_voice_ice(slug:str, db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    servers=[{"urls":"stun:stun.l.google.com:19302"}]
+    if settings.turn_url:
+        servers.append({"urls":settings.turn_url,"username":settings.turn_username,"credential":settings.turn_credential})
+    return {"ice_servers":servers}
 
 @app.post("/api/v1/public/business/{slug}/voice/turn")
 async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=Depends(get_db)):
