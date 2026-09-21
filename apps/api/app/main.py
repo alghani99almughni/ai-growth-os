@@ -725,7 +725,7 @@ def create_feedback(slug,payload:FeedbackCreate,db:Session=Depends(get_db)):
     if row:
         try: review_url=json.loads(row.value_json).get("review_url","")
         except Exception: pass
-    return {"id":f.id,"saved":True,"google_review_url":review_url if payload.rating>=4 else ""}
+    return {"id":f.id,"saved":True,"google_review_url":review_url}
 
 @app.post("/api/v1/public/chat")
 async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
