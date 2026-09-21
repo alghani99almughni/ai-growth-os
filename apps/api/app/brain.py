@@ -63,7 +63,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             response=await client.post(url,json={"contents":[{"parts":[{"text":prompt}]}]})
             response.raise_for_status()
             data=response.json()
-        reply=data.get("candidates",[{}])[0].get("content",{}).get("parts",[{}]).get("text") or "A staff member can help with that."
+        reply=data.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text") or "A staff member can help with that."
         provider="gemini"
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
