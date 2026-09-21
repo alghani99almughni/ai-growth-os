@@ -2,7 +2,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models import Tenant, Service, Product
-from .models_growth import KnowledgeItem
+from .models_growth import KnowledgeItem,TenantSetting
 from .models_ai import Conversation, ConversationMessage
 from .config import settings
 from .ai_router import detect_language, faq_match, structured_match
@@ -12,7 +12,7 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
     services=db.scalars(select(Service).where(Service.tenant_id==tenant_id,Service.is_active==True)).all()
     products=db.scalars(select(Product).where(Product.tenant_id==tenant_id,Product.is_active==True)).all()
     knowledge=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True)).all()
-    lines=[f"Business: {tenant.name}",f"Industry: {tenant.industry}",f"Description: {tenant.description or ''}",f"Phone: {tenant.phone or ''}",f"WhatsApp: {tenant.whatsapp_number or ''}",f"Address: {tenant.address or ''}"]
+    feature_row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))\n    feature_text=feature_row.value_json if feature_row else "{}"\n    lines=[f"Business: {tenant.name}",f"Industry: {tenant.industry}",f"Description: {tenant.description or ''}",f"Phone: {tenant.phone or ''}",f"WhatsApp: {tenant.whatsapp_number or ''}",f"Address: {tenant.address or ''}",f"Enabled customer features: {feature_text}"]
     for x in knowledge: lines.append(f"Knowledge ({x.kind}): {x.title}: {x.content}")
     for x in services: lines.append(f"Service ID: {x.id}; name={x.name}; description={x.description or ''}; price={x.price} {x.currency}; duration={x.duration_minutes or ''} minutes")
     for x in products: lines.append(f"Product: {x.name}; description={x.description or ''}; price={x.price} {x.currency}; stock={x.stock_quantity if x.stock_quantity is not None else 'unknown'}")
