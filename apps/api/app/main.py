@@ -299,7 +299,7 @@ async def public_voice(websocket,call_id:str):
                         responses=[]
                         for fc in msg["toolCall"].get("functionCalls",[]):
                             if fc.get("name")=="save_customer_identity":
-                                args=fc.get("args",{}); c=upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False); call.customer_id=c.id; call.status="connected"; db.commit(); responses.append({"id":fc.get("id"),"name":fc.get("name"),"response":{"result":{"customer_id":c.id,"verified":True}}})
+                                args=fc.get("args",{}); c=upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False); call.customer_id=c.id; call.status="connected"; db.commit(); route_call(db,tenant.id,call,call.intent); responses.append({"id":fc.get("id"),"name":fc.get("name"),"response":{"result":{"customer_id":c.id,"verified":True}}})
                         if responses: await gemini.send(json.dumps({"toolResponse":{"functionResponses":responses}}))
                     await websocket.send_text(raw)
             tasks=[asyncio.create_task(browser_to_gemini()),asyncio.create_task(gemini_to_browser())]
