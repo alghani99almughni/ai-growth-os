@@ -27,7 +27,7 @@ def detect_language(text: str) -> str:
         return "en"
     winner=max(scores, key=scores.get)
     # Hindi/Marathi share script; Marathi marker words improve routing.
-    if winner=="hi" and re.search(r"\\b(आहे|मला|काय|कुठे)\\b", text): return "mr"
+    if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b", text): return "mr"
     if winner=="bn" and re.search(r"[অআইঈউএও]", text): return "bn"
     return winner
 
