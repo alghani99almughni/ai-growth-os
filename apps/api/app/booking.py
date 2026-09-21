@@ -136,7 +136,9 @@ def create_appointment(db: Session, tenant: Tenant, customer: Customer, service:
     db.add(appointment)
     db.flush()
     queue = None
-    if force_queue or (queue_if_busy and len(overlaps) >= (tenant.queue_threshold or 5)):
+    waiting_count = db.scalar(select(func.count(QueueEntry.id)).where(QueueEntry.tenant_id == tenant.id, QueueEntry.queue_date == starts_at_local.date(), QueueEntry.status.in_(["waiting", "serving"]))) or 0
+    huge_queue = bool(tenant.queue_enabled and waiting_count >= (tenant.queue_threshold or 5))
+    if force_queue or (queue_if_busy and (len(overlaps) >= (tenant.queue_threshold or 5) or huge_queue)):
         seq, token = next_queue_token(db, tenant.id, starts_at_local.date())
         queue = QueueEntry(tenant_id=tenant.id, appointment_id=appointment.id, customer_id=customer.id,
                            queue_date=starts_at_local.date(), sequence=seq, token=token, status="waiting")
