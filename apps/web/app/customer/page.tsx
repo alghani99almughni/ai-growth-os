@@ -37,17 +37,17 @@ export default function Customer(){
 
   <nav className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))"}}>
    <button className="card" onClick={()=>setActive("home")}>🏠 Home</button>
-   <button className="card" onClick={()=>setActive("menu")}>📖 Menu</button>
-   <button className="card" onClick={()=>setActive("games")}>🎮 Play</button>
-   <button className="card" onClick={()=>callWaiter("waiter")}>🔔 Call Waiter</button>
+   {business.features?.digital_menu&&<button className="card" onClick={()=>setActive("menu")}>📖 Menu</button>}
+   {business.features?.games&&<button className="card" onClick={()=>setActive("games")}>🎮 Play</button>}
+   {business.features?.call_waiter&&<button className="card" onClick={()=>callWaiter("waiter")}>🔔 Call Waiter</button>}
    {order&&<button className="card" onClick={()=>setActive("bill")}>💳 Bill</button>}
    {delivered&&<button className="card" onClick={()=>setActive("feedback")}>⭐ Feedback</button>}
   </nav>
 
   {active==="home"&&<section className="grid">
-   <article className="card"><h2>🍽️ Your table</h2><p>{context?context:"Table context will appear here when you scan a table QR."}</p>{waiter&&<p>🔔 {waiter.status||"requested"}{waiter.assigned_staff_name?" • "+waiter.assigned_staff_name:""}</p>}<div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>callWaiter("waiter")}>Call waiter</button><button onClick={()=>callWaiter("water")}>💧 Water</button><button onClick={()=>callWaiter("cutlery")}>🍴 Cutlery</button><button onClick={()=>callWaiter("clear_table")}>🧹 Clear table</button></div></article>
-   <article className="card"><h2>🎮 Relax & play</h2><p>All six mini games run locally in your browser.</p><button onClick={()=>setActive("games")}>Play now</button></article>
-   <article className="card"><h2>📖 Menu</h2><p>{items.length?items.length+" items available":"Menu is being prepared."}</p><button onClick={()=>setActive("menu")}>Browse menu</button></article>
+   <article className="card"><h2>🍽️ Your table</h2><p>{context?context:"Table context will appear here when you scan a table QR."}</p>{waiter&&<p>🔔 {waiter.status||"requested"}{waiter.assigned_staff_name?" • "+waiter.assigned_staff_name:""}</p>}{business.features?.call_waiter&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>callWaiter("waiter")}>Call waiter</button><button onClick={()=>callWaiter("water")}>💧 Water</button><button onClick={()=>callWaiter("cutlery")}>🍴 Cutlery</button><button onClick={()=>callWaiter("clear_table")}>🧹 Clear table</button></div>}</article>
+   {business.features?.games&&<article className="card"><h2>🎮 Relax & play</h2><p>All six mini games run locally in your browser.</p><button onClick={()=>setActive("games")}>Play now</button></article>}
+   {business.features?.digital_menu&&<article className="card"><h2>📖 Menu</h2><p>{items.length?items.length+" items available":"Menu is being prepared."}</p><button onClick={()=>setActive("menu")}>Browse menu</button></article>
    {business.features?.ai_chat&&<article className="card"><h2>🤖 AI Assistant</h2><p>Ask about the menu, order, business or anything you need.</p><button onClick={()=>location.href="/customer/assistant?business="+encodeURIComponent(business.slug)}>Ask AI</button></article>}
   </section>}
 
