@@ -61,6 +61,12 @@ class Customer(Base):
     name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     phone: Mapped[str] = mapped_column(String(32), index=True)
     whatsapp_opt_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(80), default="manual")
+    portal_token: Mapped[str] = mapped_column(String(100), unique=True, index=True, default=lambda: __import__("secrets").token_urlsafe(24))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class Lead(Base):
