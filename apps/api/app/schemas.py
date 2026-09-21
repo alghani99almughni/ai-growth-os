@@ -122,3 +122,53 @@ class ServiceRequestCreate(BaseModel):
 
 class ServiceRequestStatusUpdate(BaseModel):
     status: str = Field(pattern=r"^(requested|acknowledged|in_progress|completed|cancelled)$")
+
+class FeatureUpdate(BaseModel):
+    features: dict[str,bool]
+
+class GoogleReviewUpdate(BaseModel):
+    review_url: str | None = None
+
+class MenuCategoryCreate(BaseModel):
+    name: str = Field(min_length=1,max_length=120)
+    sort_order: int = 0
+    is_active: bool = True
+
+class MenuItemCreate(BaseModel):
+    name: str = Field(min_length=1,max_length=160)
+    category_id: str | None = None
+    description: str | None = None
+    price: int = Field(ge=0)
+    currency: str = "INR"
+    image_url: str | None = None
+    is_active: bool = True
+    is_available: bool = True
+    sort_order: int = 0
+
+class PublicOrderItem(BaseModel):
+    menu_item_id: str
+    quantity: int = Field(ge=1,le=50)
+    notes: str | None = None
+
+class PublicOrderCreate(BaseModel):
+    items: list[PublicOrderItem] = Field(min_length=1,max_length=50)
+    context_token: str | None = None
+    customer_id: str | None = None
+
+class OrderStatusUpdate(BaseModel):
+    status: str = Field(pattern=r"^(pending|confirmed|preparing|ready|assigned|served|completed|cancelled)$")
+
+class FeedbackCreate(BaseModel):
+    order_id: str | None = None
+    customer_id: str | None = None
+    rating: int = Field(ge=1,le=5)
+    food_rating: int | None = Field(default=None,ge=1,le=5)
+    service_rating: int | None = Field(default=None,ge=1,le=5)
+    comment: str | None = None
+
+class LoyaltyRuleCreate(BaseModel):
+    event_type: str
+    name: str
+    points: int = Field(ge=0)
+    is_active: bool = True
+    config: dict = {}
