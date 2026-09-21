@@ -467,9 +467,10 @@ def save_game_score(slug,game:str,score:int=Query(ge=0,le=1000000),customer_id:s
     # Reward is deliberately capped and based on completed play, not score inflation.
     reward=0 if not customer else min(25,max(1,score//20))
     row=GameScore(tenant_id=t.id,customer_id=customer.id if customer else None,game=game,score=score,reward_points=reward)
-    db.add(row)
+    db.add(row); db.flush()
     if customer and reward and _feature_config(db,t.id).get("loyalty",True):
-        db.add(LoyaltyTransaction(tenant_id=t.id,customer_id=customer.id,points=reward,reason="game:"+game,reference_id=row.id))
+        existing=db.scalar(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==t.id,LoyaltyTransaction.customer_id==customer.id,LoyaltyTransaction.reason=="game:"+game,LoyaltyTransaction.reference_id==row.id))
+        if not existing: db.add(LoyaltyTransaction(tenant_id=t.id,customer_id=customer.id,points=reward,reason="game:"+game,reference_id=row.id))
     db.commit(); db.refresh(row)
     return {"id":row.id,"game":game,"score":score,"reward_points":reward}
 
