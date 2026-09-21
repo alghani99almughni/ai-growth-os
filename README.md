@@ -58,3 +58,7 @@ docker compose -f infrastructure/docker/docker-compose.yml up -d
 ```
 
 See `docs/PHASE_1.md` for the implementation contract.
+
+
+## Final platform scope
+The platform now includes tenant feature controls, menu/catalog management, restaurant orders and status tracking, automatic bills, customer service requests, loyalty rules, offline customer games, feedback, and Google review handoff.
