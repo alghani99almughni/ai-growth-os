@@ -116,10 +116,10 @@ def products(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)
 
 @app.post("/api/v1/customers",status_code=201)
 def customer(payload:CustomerCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,payload.tenant_id); c=upsert_customer(db,payload.tenant_id,payload.phone,payload.name,payload.whatsapp_opt_in); return {"id":c.id,"tenant_id":c.tenant_id,"name":c.name,"phone":c.phone}
+    require_tenant(user,payload.tenant_id); c=upsert_customer(db,payload.tenant_id,payload.phone,payload.name,payload.whatsapp_opt_in,email=payload.email,address=payload.address,notes=payload.notes,tags=payload.tags,source=payload.source); return {"id":c.id,"tenant_id":c.tenant_id,"name":c.name,"phone":c.phone,"email":c.email,"address":c.address,"notes":c.notes,"tags":c.tags,"source":c.source,"portal_token":c.portal_token}
 @app.get("/api/v1/tenants/{tenant_id}/customers")
 def customers(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,tenant_id); rows=db.scalars(select(Customer).where(Customer.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"name":x.name,"phone":x.phone,"whatsapp_opt_in":x.whatsapp_opt_in} for x in rows]}
+    require_tenant(user,tenant_id); rows=db.scalars(select(Customer).where(Customer.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"name":x.name,"phone":x.phone,"email":x.email,"address":x.address,"notes":x.notes,"tags":x.tags,"source":x.source,"whatsapp_opt_in":x.whatsapp_opt_in,"portal_token":x.portal_token} for x in rows]}
 @app.post("/api/v1/leads",status_code=201)
 def lead(payload:LeadCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,payload.tenant_id); l=create_lead(db,payload.tenant_id,payload.source,payload.customer_id,payload.intent,payload.notes); return {"id":l.id,"status":l.status}
