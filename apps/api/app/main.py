@@ -10,13 +10,15 @@ from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department
 from .schemas import *
 from .services import *
-from .brain import generate_reply
+from .brain import generate_reply,knowledge_context
 from .config import settings
 from .signaling import signal
 from .integrations import WhatsAppAdapter,PaymentAdapter
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
+import asyncio,json,base64
+import websockets
 import jwt,secrets
 
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
@@ -187,18 +189,74 @@ def scan_qr(token,db:Session=Depends(get_db)):
     q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url+"/customer","kind":q.kind}
 
 class PublicCallStartRequest(BaseModel):
-    name:str=Field(min_length=1,max_length=120)
-    phone:str=Field(min_length=7,max_length=30)
+    name:str|None=None
+    phone:str|None=None
 
 @app.post("/api/v1/public/business/{slug}/call",status_code=201)
 def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
-    customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False)
-    call=CallRecord(tenant_id=t.id,customer_id=customer.id,source="pwa_webrtc",status="connected")
+    customer=None
+    if payload.phone and payload.name:
+        customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False)
+    call=CallRecord(tenant_id=t.id,customer_id=customer.id if customer else None,source="pwa_voice",status="ringing")
     db.add(call); db.commit(); db.refresh(call)
-    greeting=f"Hello! Welcome to {t.name}. Before I can assist you, may I confirm your name and mobile number?"
-    return {"call_id":call.id,"customer_id":customer.id,"customer_name":customer.name,"phone":customer.phone,"status":call.status,"business_name":t.name,"greeting":greeting}
+    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name}
+
+@app.websocket("/ws/public/voice/{call_id}")
+async def public_voice(websocket,call_id:str):
+    await websocket.accept()
+    db=SessionLocal(); call=db.get(CallRecord,call_id)
+    if not call:
+        await websocket.close(code=4404); db.close(); return
+    tenant=db.get(Tenant,call.tenant_id)
+    if not tenant or not settings.gemini_api_key:
+        await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
+    context=knowledge_context(db,tenant.id)
+    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\\n\\nAPPROVED BUSINESS CONTEXT:\\n{context}\\n\\n"
+             "At the beginning of every new call, say exactly: \\\"Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?\\\" "
+             "Replace [Business Name] with the real business name. Ask the customer to state their name and mobile number. "
+             "Do not invent business facts, prices, availability, policies, bookings or payment success. "
+             "When the customer has provided both their name and mobile number, call save_customer_identity before continuing. "
+             "After identity is saved, say a short confirmation and ask how you can help. Be concise, natural and multilingual when appropriate.")
+    ws_url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+settings.gemini_api_key
+    setup={"setup":{"model":"models/"+settings.gemini_model,"generationConfig":{"responseModalities":["AUDIO"]},"systemInstruction":{"parts":[{"text":system}]},"inputAudioTranscription":{},"outputAudioTranscription":{},"sessionResumption":{ },"tools":[{"functionDeclarations":[{"name":"save_customer_identity","description":"Save and verify the customer's name and mobile number after the customer has stated both during the call.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}}]}]}}
+    try:
+        async with websockets.connect(ws_url,max_size=8*1024*1024,ping_interval=20,ping_timeout=20) as gemini:
+            await gemini.send(json.dumps(setup)); await websocket.send_json({"type":"status","status":"ai_connected"})
+            await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}}))
+            async def browser_to_gemini():
+                while True:
+                    raw=await websocket.receive_text(); msg=json.loads(raw); typ=msg.get("type")
+                    if typ=="audio":
+                        await gemini.send(json.dumps({"realtimeInput":{"audio":{"data":msg["data"],"mimeType":"audio/pcm;rate=16000"}}}))
+                    elif typ=="stop":
+                        break
+            async def gemini_to_browser():
+                while True:
+                    raw=await gemini.recv()
+                    if isinstance(raw,bytes): raw=raw.decode()
+                    msg=json.loads(raw); sc=msg.get("serverContent") or {}
+                    if sc.get("inputTranscription",{}).get("text"):
+                        txt=sc["inputTranscription"]["text"]; call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":txt})
+                    if sc.get("outputTranscription",{}).get("text"):
+                        txt=sc["outputTranscription"]["text"]; call.transcript=((call.transcript+"\\n") if call.transcript else "")+"AI: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":txt})
+                    if msg.get("toolCall"):
+                        responses=[]
+                        for fc in msg["toolCall"].get("functionCalls",[]):
+                            if fc.get("name")=="save_customer_identity":
+                                args=fc.get("args",{}); c=upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False); call.customer_id=c.id; call.status="connected"; db.commit(); responses.append({"id":fc.get("id"),"name":fc.get("name"),"response":{"result":{"customer_id":c.id,"verified":True}}})
+                        if responses: await gemini.send(json.dumps({"toolResponse":{"functionResponses":responses}}))
+                    await websocket.send_text(raw)
+            tasks=[asyncio.create_task(browser_to_gemini()),asyncio.create_task(gemini_to_browser())]
+            done,_=await asyncio.wait(tasks,return_when=asyncio.FIRST_COMPLETED)
+            for task in tasks:
+                if not task.done(): task.cancel()
+    except Exception as exc:
+        try: await websocket.send_json({"type":"error","message":"Voice session ended: "+str(exc)})
+        except Exception: pass
+    finally:
+        call.status="ended"; db.commit(); db.close()
 
 class PublicVoiceTurnRequest(BaseModel):
     transcript:str=Field(min_length=1,max_length=4000)
