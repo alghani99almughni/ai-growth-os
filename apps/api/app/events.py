@@ -26,11 +26,12 @@ async def publish_event(tenant_id: str, event_type: str, data: dict, *, context_
     message = json.dumps(payload, default=str)
     channel = f"ago:events:{tenant_id}"
 
-    for queue in list(_local_subscribers.get(channel, set())):
-        try:
-            queue.put_nowait(payload)
-        except asyncio.QueueFull:
-            pass
+    if not settings.redis_url or redis_async is None:
+        for queue in list(_local_subscribers.get(channel, set())):
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                pass
 
     if settings.redis_url and redis_async is not None:
         client = redis_async.from_url(settings.redis_url, decode_responses=True)
