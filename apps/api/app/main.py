@@ -455,6 +455,73 @@ def update_service_request(tenant_id,request_id,payload:ServiceRequestStatusUpda
     db.commit(); db.refresh(r)
     return _request_out(r,db)
 
+@app.post("/api/v1/public/business/{slug}/games/{game}/score")
+def save_game_score(slug,game:str,score:int=Query(ge=0,le=1000000),customer_id:str|None=None,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    if not _feature_config(db,t.id).get("games",True): raise HTTPException(403,"Games are disabled")
+    if game not in {x["id"] for x in GAME_CATALOG}: raise HTTPException(400,"Game not available")
+    customer=None
+    if customer_id:
+        customer=db.scalar(select(Customer).where(Customer.id==customer_id,Customer.tenant_id==t.id))
+    # Reward is deliberately capped and based on completed play, not score inflation.
+    reward=0 if not customer else min(25,max(1,score//20))
+    row=GameScore(tenant_id=t.id,customer_id=customer.id if customer else None,game=game,score=score,reward_points=reward)
+    db.add(row)
+    if customer and reward and _feature_config(db,t.id).get("loyalty",True):
+        db.add(LoyaltyTransaction(tenant_id=t.id,customer_id=customer.id,points=reward,reason="game:"+game,reference_id=row.id))
+    db.commit(); db.refresh(row)
+    return {"id":row.id,"game":game,"score":score,"reward_points":reward}
+
+@app.post("/api/v1/public/business/{slug}/bills/{bill_id}/payment-order")
+def create_bill_payment(slug,bill_id,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    if not _feature_config(db,t.id).get("online_payment",True): raise HTTPException(403,"Online payment is disabled")
+    bill=db.scalar(select(Bill).where(Bill.id==bill_id,Bill.tenant_id==t.id))
+    if not bill: raise HTTPException(404,"Bill not found")
+    if bill.status=="paid": return {"paid":True,"bill_id":bill.id}
+    try:
+        result=asyncio.run(PaymentAdapter(settings.razorpay_key_id,settings.razorpay_key_secret).create_order(int(bill.total)*100,"INR","bill-"+bill.id[:24]))
+    except RuntimeError as exc: raise HTTPException(503,str(exc))
+    except Exception as exc: raise HTTPException(502,"Unable to create payment order")
+    return {"bill_id":bill.id,"key_id":settings.razorpay_key_id,"amount":result.get("amount"),"currency":result.get("currency"),"razorpay_order_id":result.get("id")}
+
+@app.post("/api/v1/public/business/{slug}/bills/{bill_id}/verify-payment")
+def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(get_db)):
+    import hmac,hashlib
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    bill=db.scalar(select(Bill).where(Bill.id==bill_id,Bill.tenant_id==t.id)) if t else None
+    if not bill: raise HTTPException(404,"Bill not found")
+    expected=hmac.new(settings.razorpay_key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected,payload.razorpay_signature): raise HTTPException(400,"Invalid payment signature")
+    bill.payment_id=payload.razorpay_payment_id; bill.status="paid"; bill.paid_at=datetime.utcnow()
+    order=db.get(Order,bill.order_id)
+    if order: order.payment_status="paid"; order.updated_at=datetime.utcnow()
+    db.commit()
+    return {"paid":True,"bill_id":bill.id,"payment_id":bill.payment_id}
+
+@app.post("/api/v1/webhooks/razorpay")
+async def razorpay_webhook(payload:dict,signature:str|None=None,db:Session=Depends(get_db)):
+    import hmac,hashlib,json as _json
+    raw=_json.dumps(payload,separators=(",",":"),sort_keys=True).encode()
+    if not settings.razorpay_key_secret or not signature: raise HTTPException(401,"Webhook signature required")
+    expected=hmac.new(settings.razorpay_key_secret.encode(),raw,hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected,signature): raise HTTPException(400,"Invalid webhook signature")
+    entity=payload.get("payload",{}).get("payment",{}).get("entity",{})
+    order_id=entity.get("order_id")
+    if order_id:
+        # Razorpay order receipt is bill-<bill id>; resolve safely through bill id.
+        receipt=entity.get("notes",{}).get("receipt") or entity.get("description","")
+        if receipt.startswith("bill-"):
+            bill=db.scalar(select(Bill).where(Bill.id==receipt[5:]))
+            if bill:
+                bill.status="paid"; bill.payment_id=entity.get("id"); bill.paid_at=datetime.utcnow()
+                order=db.get(Order,bill.order_id)
+                if order: order.payment_status="paid"
+                db.commit()
+    return {"received":True}
+
 @app.get("/api/v1/public/business/{slug}/service-requests/{request_id}")
 def public_service_request(slug,request_id,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
