@@ -172,3 +172,8 @@ class LoyaltyRuleCreate(BaseModel):
     points: int = Field(ge=0)
     is_active: bool = True
     config: dict = {}
+
+class PaymentVerify(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
