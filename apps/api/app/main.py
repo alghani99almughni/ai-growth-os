@@ -10,11 +10,11 @@ from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,
 from .schemas import *
 from .services import *
 from .brain import generate_reply
-from .config import settings
+from .config import settings\nfrom .signaling import signal\nfrom .integrations import WhatsAppAdapter,PaymentAdapter
 import jwt,secrets
 
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
-app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
+app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])\n\n@app.websocket("/ws/calls/{call_id}")\nasync def call_signal(websocket,call_id:str):\n    await signal(websocket,call_id)\n
 security=HTTPBearer(auto_error=False)
 def get_db():
     db=SessionLocal()
@@ -128,7 +128,7 @@ def scan_qr(token,db:Session=Depends(get_db)):
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
 def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
-@app.patch("/api/v1/tenants/{tenant_id}/calls/{call_id}")
+@app.get("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}")\ndef loyalty_balance(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):\n    require_tenant(user,tenant_id); rows=db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==customer_id)).all(); return {"points":sum(x.points for x in rows)}\n\nclass LoyaltyCreate(BaseModel): points:int; reason:str; reference_id:str|None=None\n@app.post("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}",status_code=201)\ndef add_loyalty(tenant_id,customer_id,payload:LoyaltyCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):\n    require_tenant(user,tenant_id); x=LoyaltyTransaction(tenant_id=tenant_id,customer_id=customer_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"points":x.points}\n\n@app.patch("/api/v1/tenants/{tenant_id}/calls/{call_id}")
 def update_call(tenant_id,call_id,payload:dict,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); c=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
     if not c: raise HTTPException(404,"Call not found")
