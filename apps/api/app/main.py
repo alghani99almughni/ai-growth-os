@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product
-from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign
+from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
 from .schemas import *
 from .services import *
@@ -18,7 +18,9 @@ from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
 from .routing import route_call, available_staff
+from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
 import asyncio,json,base64
+from datetime import datetime,date,time,timedelta
 import websockets
 import jwt,secrets
 
@@ -184,6 +186,158 @@ def leads(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); rows=db.scalars(select(Lead).where(Lead.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"intent":x.intent,"notes":x.notes,"status":x.status} for x in rows]}
 
 class ChatRequest(BaseModel): tenant_id:str; message:str=Field(min_length=1,max_length=4000); name:str|None=None; phone:str|None=None; conversation_id:str|None=None; channel:str="pwa"
+
+class HoursUpdate(BaseModel):
+    items: list[BusinessHourInput]
+
+@app.get("/api/v1/tenants/{tenant_id}/business-hours")
+def get_business_hours(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=ensure_default_hours(db,tenant_id)
+    t=db.get(Tenant,tenant_id)
+    return {"items":[{"weekday":x.weekday,"open_time":x.open_time.strftime("%H:%M"),"close_time":x.close_time.strftime("%H:%M"),"is_closed":x.is_closed,"slot_interval_minutes":x.slot_interval_minutes} for x in rows],
+            "queue":{"enabled":t.queue_enabled,"threshold":t.queue_threshold,"avg_service_minutes":t.queue_avg_service_minutes}}
+
+@app.put("/api/v1/tenants/{tenant_id}/business-hours")
+def set_business_hours(tenant_id,payload:HoursUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    if len(payload.items)!=7: raise HTTPException(400,"Provide all 7 weekdays")
+    existing={x.weekday:x for x in db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id)).all()}
+    for item in payload.items:
+        try: op=time.fromisoformat(item.open_time); cl=time.fromisoformat(item.close_time)
+        except ValueError: raise HTTPException(400,"Time must use HH:MM")
+        if not item.is_closed and cl<=op: raise HTTPException(400,"Closing time must be after opening time")
+        row=existing.get(item.weekday)
+        if not row: row=BusinessHour(tenant_id=tenant_id,weekday=item.weekday); db.add(row)
+        row.open_time=op; row.close_time=cl; row.is_closed=item.is_closed; row.slot_interval_minutes=item.slot_interval_minutes
+    db.commit()
+    return get_business_hours(tenant_id,user,db)
+
+@app.put("/api/v1/tenants/{tenant_id}/queue-settings")
+def set_queue_settings(tenant_id,payload:QueueSettingsInput,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    t=db.get(Tenant,tenant_id)
+    t.queue_enabled=payload.queue_enabled; t.queue_threshold=payload.queue_threshold; t.queue_avg_service_minutes=payload.queue_avg_service_minutes
+    db.commit()
+    return {"enabled":t.queue_enabled,"threshold":t.queue_threshold,"avg_service_minutes":t.queue_avg_service_minutes}
+
+def _appointment_out(a,tenant,db,queue=None):
+    service=db.get(Service,a.service_id) if a.service_id else None
+    staff=db.get(StaffMember,a.staff_id) if a.staff_id else None
+    return {"id":a.id,"customer_id":a.customer_id,"service_id":a.service_id,"service_name":service.name if service else None,
+            "staff_id":a.staff_id,"staff_name":staff.name if staff else None,
+            "starts_at":a.starts_at.isoformat(),"ends_at":a.ends_at.isoformat(),"timezone":tenant.timezone,
+            "status":a.status,"source":a.source,"notes":a.notes,"queue_token":a.queue_token,"queue_status":a.queue_status,
+            "queue":({"token":queue.token,"status":queue.status,"people_ahead":queue.people_ahead,"estimated_wait_minutes":queue.estimated_wait_minutes} if queue else None)}
+
+@app.get("/api/v1/tenants/{tenant_id}/availability")
+def availability(tenant_id,service_id:str,date_value:str=Query(alias="date"),staff_id:str|None=None,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    try: day=date.fromisoformat(date_value)
+    except ValueError: raise HTTPException(400,"date must be YYYY-MM-DD")
+    t=db.get(Tenant,tenant_id)
+    try: slots=available_slots(db,t,service_id,day,staff_id)
+    except ValueError as e: raise HTTPException(400,str(e))
+    return {"date":date_value,"timezone":t.timezone,"service_id":service_id,"slots":slots}
+
+@app.post("/api/v1/tenants/{tenant_id}/appointments",status_code=201)
+def create_manual_appointment(tenant_id,payload:AppointmentCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    t=db.get(Tenant,tenant_id)
+    customer=db.get(Customer,payload.customer_id) if payload.customer_id else None
+    if customer and customer.tenant_id!=tenant_id: raise HTTPException(403,"Customer access denied")
+    if not customer:
+        if not payload.phone: raise HTTPException(400,"customer_id or phone is required")
+        customer=upsert_customer(db,tenant_id,payload.phone,payload.name,False,source=payload.source)
+    service=db.scalar(select(Service).where(Service.id==payload.service_id,Service.tenant_id==tenant_id,Service.is_active==True))
+    if not service: raise HTTPException(404,"Service not found")
+    try: a,q=create_appointment(db,t,customer,service,payload.starts_at,payload.source,payload.staff_id,payload.notes,payload.queue_if_busy,payload.force_queue)
+    except ValueError as e: raise HTTPException(409,str(e))
+    return _appointment_out(a,t,db,q)
+
+@app.get("/api/v1/tenants/{tenant_id}/appointments")
+def appointments(tenant_id,date_value:str|None=Query(default=None,alias="date"),user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); t=db.get(Tenant,tenant_id)
+    q=select(Appointment).where(Appointment.tenant_id==tenant_id)
+    if date_value:
+        try: day=date.fromisoformat(date_value)
+        except ValueError: raise HTTPException(400,"date must be YYYY-MM-DD")
+        start=datetime.combine(day,time.min); end=start+timedelta(days=1)
+        from .booking import local_to_utc_naive
+        q=q.where(Appointment.starts_at>=local_to_utc_naive(start,t.timezone),Appointment.starts_at<local_to_utc_naive(end,t.timezone))
+    rows=db.scalars(q.order_by(Appointment.starts_at)).all()
+    return {"items":[_appointment_out(a,t,db,db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==a.id))) for a in rows]}
+
+@app.patch("/api/v1/tenants/{tenant_id}/appointments/{appointment_id}")
+def update_appointment_status(tenant_id,appointment_id,payload:AppointmentStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); a=db.scalar(select(Appointment).where(Appointment.id==appointment_id,Appointment.tenant_id==tenant_id))
+    if not a: raise HTTPException(404,"Appointment not found")
+    a.status=payload.status
+    q=db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==a.id))
+    if q:
+        if payload.status=="checked_in": q.status="waiting"; a.queue_status="waiting"
+        elif payload.status=="serving": q.status="serving"; q.called_at=datetime.utcnow(); a.queue_status="serving"
+        elif payload.status in ("completed","cancelled","no_show"): q.status=payload.status; q.completed_at=datetime.utcnow(); a.queue_status=payload.status
+    db.commit()
+    if q: queue_snapshot(db,db.get(Tenant,tenant_id),q.queue_date)
+    return _appointment_out(a,db.get(Tenant,tenant_id),db,q)
+
+@app.post("/api/v1/tenants/{tenant_id}/appointments/{appointment_id}/queue")
+def appointment_queue_checkin(tenant_id,appointment_id,payload:QueueCheckIn,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); a=db.scalar(select(Appointment).where(Appointment.id==appointment_id,Appointment.tenant_id==tenant_id))
+    if not a: raise HTTPException(404,"Appointment not found")
+    t=db.get(Tenant,tenant_id)
+    q=db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==a.id))
+    if not q:
+        from .booking import utc_naive_to_local,next_queue_token
+        day=utc_naive_to_local(a.starts_at,t.timezone).date()
+        seq,token=next_queue_token(db,tenant_id,day)
+        q=QueueEntry(tenant_id=tenant_id,appointment_id=a.id,customer_id=a.customer_id,queue_date=day,sequence=seq,token=token,status="waiting")
+        db.add(q); a.queue_token=token; a.queue_status="waiting"
+    a.status="checked_in"; q.status="waiting"; db.commit(); queue_snapshot(db,t,q.queue_date); db.refresh(q)
+    return _appointment_out(a,t,db,q)
+
+@app.get("/api/v1/tenants/{tenant_id}/queue")
+def tenant_queue(tenant_id,date_value:str|None=Query(default=None,alias="date"),user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); t=db.get(Tenant,tenant_id)
+    day=date.fromisoformat(date_value) if date_value else datetime.utcnow().date()
+    rows=queue_snapshot(db,t,day)
+    return {"date":day.isoformat(),"items":[{"id":q.id,"appointment_id":q.appointment_id,"token":q.token,"status":q.status,"people_ahead":q.people_ahead,"estimated_wait_minutes":q.estimated_wait_minutes,"customer_id":q.customer_id} for q in rows]}
+
+@app.get("/api/v1/public/business/{slug}/availability")
+def public_availability(slug,service_id:str,date_value:str=Query(alias="date"),db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    try: day=date.fromisoformat(date_value)
+    except ValueError: raise HTTPException(400,"date must be YYYY-MM-DD")
+    try: slots=available_slots(db,t,service_id,day)
+    except ValueError as e: raise HTTPException(400,str(e))
+    return {"business":t.name,"timezone":t.timezone,"date":date_value,"slots":slots}
+
+@app.post("/api/v1/public/business/{slug}/appointments",status_code=201)
+def public_appointment(slug,payload:AppointmentCreate,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    if not payload.phone and not payload.customer_id: raise HTTPException(400,"Phone is required for a public booking")
+    customer=db.get(Customer,payload.customer_id) if payload.customer_id else None
+    if customer and customer.tenant_id!=t.id: raise HTTPException(403,"Customer access denied")
+    if not customer: customer=upsert_customer(db,t.id,payload.phone,payload.name,False,source=payload.source or "pwa")
+    service=db.scalar(select(Service).where(Service.id==payload.service_id,Service.tenant_id==t.id,Service.is_active==True))
+    if not service: raise HTTPException(404,"Service not found")
+    try: a,q=create_appointment(db,t,customer,service,payload.starts_at,payload.source or "pwa",payload.staff_id,payload.notes,payload.queue_if_busy,payload.force_queue)
+    except ValueError as e: raise HTTPException(409,str(e))
+    return _appointment_out(a,t,db,q)
+
+@app.get("/api/v1/public/business/{slug}/queue/{appointment_id}")
+def public_queue(slug,appointment_id,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    q=db.scalar(select(QueueEntry).join(Appointment,QueueEntry.appointment_id==Appointment.id).where(QueueEntry.appointment_id==appointment_id,Appointment.tenant_id==t.id))
+    if not q: raise HTTPException(404,"Queue token not found")
+    queue_snapshot(db,t,q.queue_date); db.refresh(q)
+    return {"business":t.name,"token":q.token,"status":q.status,"people_ahead":q.people_ahead,"estimated_wait_minutes":q.estimated_wait_minutes,"queue_date":q.queue_date.isoformat()}
+
+
 @app.post("/api/v1/ai/chat")
 async def ai_chat(payload:ChatRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,payload.tenant_id); result=await generate_reply(db,payload.tenant_id,payload.message,payload.conversation_id,payload.channel)
