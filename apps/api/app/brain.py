@@ -56,17 +56,14 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         provider="local"
     else:
         context=knowledge_context(db,tenant_id)
-        prompt=("You are the AI customer engagement agent. Reply in the customer's language when possible. "
-                "Use ONLY the approved business context below. Never invent prices, availability, policies, discounts, bookings or payment success. "
-                "If an action is needed, say it will be confirmed by the system. Keep concise.
-
-APPROVED CONTEXT:
-"+context+
-                "
-
-CUSTOMER LANGUAGE: "+language+"
-CUSTOMER:
-"+message)
+        prompt=(
+            "You are the AI customer engagement agent. Reply in the customer's language when possible. "
+            "Use ONLY the approved business context below. Never invent prices, availability, policies, discounts, bookings or payment success. "
+            "If an action is needed, say it will be confirmed by the system. Keep concise.\\n\\n"
+            "APPROVED CONTEXT:\\n" + context +
+            "\\n\\nCUSTOMER LANGUAGE: " + language +
+            "\\nCUSTOMER:\\n" + message
+        )
         url="https://generativelanguage.googleapis.com/v1beta/models/"+settings.gemini_model+":generateContent?key="+settings.gemini_api_key
         async with httpx.AsyncClient(timeout=30) as client:
             response=await client.post(url,json={"contents":[{"parts":[{"text":prompt}]}]})
