@@ -112,3 +112,13 @@ class AppointmentStatusUpdate(BaseModel):
 
 class QueueCheckIn(BaseModel):
     force: bool = False
+
+
+class ServiceRequestCreate(BaseModel):
+    request_type: str = "waiter"
+    message: Optional[str] = None
+    context_token: Optional[str] = None
+    customer_id: Optional[str] = None
+
+class ServiceRequestStatusUpdate(BaseModel):
+    status: str = Field(pattern=r"^(requested|acknowledged|in_progress|completed|cancelled)$")
