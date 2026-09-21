@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product
-from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest
+from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
 from .schemas import *
 from .services import *
@@ -73,6 +73,23 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     u=db.get(User,uid)
     if not u or not u.is_active or p.get("tenant_id")!=u.tenant_id: raise HTTPException(401,"Invalid tenant context")
     return u
+FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":True,"referrals":True,"feedback":True,"google_review":True,"bookings":True,"queue":True}
+GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id":"brick","name":"Brick Breaker"},{"id":"flappy","name":"Flappy"},{"id":"tap","name":"Tap Target"},{"id":"2048","name":"2048"}]
+def _feature_config(db,tenant_id):
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
+    cfg=dict(FEATURE_DEFAULTS)
+    if row:
+        try: cfg.update(json.loads(row.value_json))
+        except Exception: pass
+    return cfg
+def _set_setting(db,tenant_id,key,value):
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key==key))
+    if not row:
+        row=TenantSetting(tenant_id=tenant_id,key=key,value_json=json.dumps(value)); db.add(row)
+    else: row.value_json=json.dumps(value)
+    db.commit()
+    return value
+
 def require_tenant(user:User,tenant_id:str):
     if user.tenant_id!=tenant_id: raise HTTPException(403,"Tenant access denied")
 def user_out(u): return UserOut(id=u.id,email=u.email,name=u.name,tenant_id=u.tenant_id,role=u.role)
