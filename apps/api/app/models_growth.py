@@ -187,3 +187,10 @@ class GameScore(Base):
     score:Mapped[int]=mapped_column(Integer,default=0)
     reward_points:Mapped[int]=mapped_column(Integer,default=0)
     created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class PlatformSetting(Base):
+    __tablename__="platform_settings"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    key:Mapped[str]=mapped_column(String(160),unique=True,index=True)
+    value_json:Mapped[str]=mapped_column(Text,default="{}")
+    updated_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
