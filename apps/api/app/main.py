@@ -505,7 +505,8 @@ def global_faqs(industry:str|None=None,language:str="en",db:Session=Depends(get_
 def public_business(slug:str,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower(),)); 
     if not t: raise HTTPException(404,"Business not found")
-    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"description":t.description,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address}
+    services=db.scalars(select(Service).where(Service.tenant_id==t.id,Service.is_active==True)).all()
+    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"description":t.description,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"timezone":t.timezone,"services":[{"id":x.id,"name":x.name,"description":x.description,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"duration_minutes":x.duration_minutes} for x in services]}
 @app.post("/api/v1/public/chat")
 async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
     t=db.get(Tenant,payload.tenant_id)
