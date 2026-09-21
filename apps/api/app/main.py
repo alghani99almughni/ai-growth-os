@@ -7,7 +7,7 @@ from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product
 from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign
-from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department
+from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
 from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context
@@ -172,6 +172,29 @@ def route_existing_call(tenant_id, call_id, intent: str | None = None, user=Depe
     call=db.scalar(select(CallRecord).where(CallRecord.id==call_id, CallRecord.tenant_id==tenant_id))
     if not call: raise HTTPException(404, "Call not found")
     return route_call(db, tenant_id, call, intent)
+
+@app.get("/api/v1/tenants/{tenant_id}/calls/{call_id}/context")
+def call_context(tenant_id, call_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404, "Call not found")
+    customer=db.get(Customer,call.customer_id) if call.customer_id else None
+    conversations=db.scalars(select(Conversation).where(Conversation.tenant_id==tenant_id,Conversation.customer_id==call.customer_id).order_by(Conversation.updated_at.desc())).all() if call.customer_id else []
+    return {
+        "call":{"id":call.id,"status":call.status,"department":call.department,"intent":call.intent,"summary":call.summary,"transcript":call.transcript,"created_at":call.created_at},
+        "customer": {"id":customer.id,"name":customer.name,"phone":customer.phone,"whatsapp_opt_in":customer.whatsapp_opt_in} if customer else None,
+        "conversation_ids":[c.id for c in conversations[:10]],
+    }
+
+@app.post("/api/v1/tenants/{tenant_id}/calls/{call_id}/handoff")
+def handoff_call(tenant_id, call_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404, "Call not found")
+    routed=route_call(db,tenant_id,call,call.intent)
+    call.status="handoff_requested"
+    db.commit()
+    return {**routed,"call_id":call.id,"status":call.status,"room_id":"call-"+call.id}
 
 @app.get("/api/v1/tenants/{tenant_id}/calls")
 def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
