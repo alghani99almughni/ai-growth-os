@@ -1,4 +1,4 @@
-from fastapi import FastAPI,Depends,HTTPException
+from fastapi import FastAPI,Depends,HTTPException,Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 from sqlalchemy import select
@@ -26,8 +26,22 @@ app=FastAPI(title="AI Growth OS API",version="1.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
 
 @app.websocket("/ws/calls/{call_id}")
-async def call_signal(websocket,call_id:str):
-    await signal(websocket,call_id)
+async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None)):
+    db=SessionLocal()
+    call=db.get(CallRecord,call_id)
+    if not call:
+        await websocket.close(code=4404); db.close(); return
+    allow_staff=False
+    if access_token:
+        try:
+            p=jwt.decode(access_token,settings.jwt_secret,algorithms=[settings.jwt_algorithm])
+            uid=p.get("sub")
+            user=db.get(User,uid)
+            allow_staff=bool(user and user.is_active and user.tenant_id==call.tenant_id)
+        except jwt.InvalidTokenError:
+            allow_staff=False
+    db.close()
+    await signal(websocket,call_id,allow_staff=allow_staff)
 
 security=HTTPBearer(auto_error=False)
 
