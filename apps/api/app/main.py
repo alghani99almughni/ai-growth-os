@@ -13,6 +13,7 @@ from .brain import generate_reply
 from .config import settings
 from .signaling import signal
 from .integrations import WhatsAppAdapter,PaymentAdapter
+from .migrations import ensure_schema
 import jwt,secrets
 
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
@@ -23,6 +24,10 @@ async def call_signal(websocket,call_id:str):
     await signal(websocket,call_id)
 
 security=HTTPBearer(auto_error=False)
+
+@app.on_event("startup")
+async def startup():
+    ensure_schema()
 def get_db():
     db=SessionLocal()
     try: yield db
