@@ -123,6 +123,25 @@ class KnowledgeCreate(BaseModel): title:str; content:str; kind:str="faq"
 def add_knowledge(tenant_id,payload:KnowledgeCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); x=KnowledgeItem(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return x
 
+@app.get("/api/v1/tenants/{tenant_id}/voice/ice")
+def voice_ice_config(tenant_id,user=Depends(get_current_user)):
+    require_tenant(user,tenant_id)
+    servers=[{"urls":"stun:stun.l.google.com:19302"}]
+    if settings.turn_url:
+        servers.append({"urls":settings.turn_url,"username":settings.turn_username,"credential":settings.turn_credential})
+    return {"ice_servers":servers}
+
+class VoiceTurnRequest(BaseModel):
+    transcript:str=Field(min_length=1,max_length=4000)
+    conversation_id:str|None=None
+    channel:str="voice"
+
+@app.post("/api/v1/tenants/{tenant_id}/voice/turn")
+async def voice_turn(tenant_id,payload:VoiceTurnRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    result=await generate_reply(db,tenant_id,payload.transcript,payload.conversation_id,payload.channel)
+    return {**result,"audio_generation":"provider_adapter_pending"}
+
 @app.get("/api/v1/public/languages")
 def supported_languages():
     return {"languages":[{"code":"en","name":"English"},{"code":"hi","name":"Hindi"},{"code":"te","name":"Telugu"},{"code":"ta","name":"Tamil"},{"code":"kn","name":"Kannada"},{"code":"ml","name":"Malayalam"},{"code":"mr","name":"Marathi"},{"code":"bn","name":"Bengali"},{"code":"gu","name":"Gujarati"},{"code":"pa","name":"Punjabi"},{"code":"ur","name":"Urdu"},{"code":"or","name":"Odia"},{"code":"as","name":"Assamese"}]}
