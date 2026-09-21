@@ -584,6 +584,16 @@ async def public_voice(websocket,call_id:str):
                         responses=[]
                         for fc in msg["toolCall"].get("functionCalls",[]):
                             if fc.get("name")=="save_customer_identity":
+                            elif fc.get("name")=="create_booking":
+                                args=fc.get("args",{}); service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
+                                try:
+                                    if not service: raise ValueError("Service not found or inactive")
+                                    c=db.get(Customer,call.customer_id) if call.customer_id else upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False,source="ai_voice")
+                                    starts=datetime.fromisoformat(str(args.get("starts_at","")))
+                                    a,q=create_appointment(db,tenant,c,service,starts,"ai_voice",str(args.get("staff_id")) if args.get("staff_id") else None,str(args.get("notes")) if args.get("notes") else None,True,False)
+                                    responses.append({"id":fc.get("id"),"name":fc.get("name"),"response":{"result":{"booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),"queue_token":q.token if q else None,"estimated_wait_minutes":q.estimated_wait_minutes if q else None}}})
+                                except Exception as exc:
+                                    responses.append({"id":fc.get("id"),"name":fc.get("name"),"response":{"result":{"confirmed":False,"error":str(exc)}}})
                                 args=fc.get("args",{}); c=upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False); call.customer_id=c.id; call.status="connected"; db.commit(); route_call(db,tenant.id,call,call.intent); responses.append({"id":fc.get("id"),"name":fc.get("name"),"response":{"result":{"customer_id":c.id,"verified":True}}})
                         if responses: await gemini.send(json.dumps({"toolResponse":{"functionResponses":responses}}))
                     await websocket.send_text(raw)
