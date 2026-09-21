@@ -13,7 +13,29 @@ export default function Customer(){
  const [customerName,setCustomerName]=useState("");
  useEffect(()=>{const p=new URLSearchParams(location.search);setSlug(p.get("business")||"");setContext(p.get("context")||"");setCustomerId(p.get("customer")||"")},[]);
  useEffect(()=>{if(!slug)return;fetch(api()+"/api/v1/public/business/"+encodeURIComponent(slug)).then(r=>r.json()).then(d=>{if(d.id)setBusiness(d);else setStatus(d.detail||"Business not found")})},[slug]);
- useEffect(()=>{if(!order||!business)return;const id=window.setInterval(()=>fetch(api()+"/api/v1/public/business/"+business.slug+"/orders/"+order.id).then(r=>r.json()).then(setOrder).catch(()=>{}),5000);return()=>clearInterval(id)},[order?.id,business?.slug]);
+  useEffect(()=>{if(!order||!business)return;const id=window.setInterval(()=>fetch(api()+"/api/v1/public/business/"+business.slug+"/orders/"+order.id).then(r=>r.json()).then(setOrder).catch(()=>{}),10000);return()=>clearInterval(id)},[order?.id,business?.slug]);
+ useEffect(()=>{
+  if(!business||!context)return;
+  const base=api().replace(/^http/,"ws");
+  const ws=new WebSocket(base+"/ws/public/business/"+encodeURIComponent(business.slug)+"/events?context_token="+encodeURIComponent(context));
+  ws.onmessage=(e)=>{
+   try{
+    const event=JSON.parse(e.data);
+    if(event.type==="order.created"||event.type==="order.updated"){
+      const id=event.data?.order_id;
+      if(!order||order.id===id){
+       setOrder((current:any)=>current?{...current,status:event.data.status,total:event.data.total,payment_status:event.data.payment_status,bill:event.data.bill||current.bill}:current);
+      }
+      setStatus(event.type==="order.created"?"Order received":"Order status updated");
+    }
+    if(event.type==="service_request.created"||event.type==="service_request.updated"){
+      setWaiter((current:any)=>({...current,...event.data,id:event.data.request_id,status:event.data.status}));
+      setStatus("Service request updated");
+    }
+   }catch{}
+  };
+  return()=>ws.close();
+ },[business?.slug,context,order?.id]);
  const items:Item[]=business?.menu?.items||[];
  const cats=business?.menu?.categories||[];
  const cartItems=useMemo(()=>items.filter(x=>cart[x.id]).map(x=>({...x,quantity:cart[x.id]})),[items,cart]);
