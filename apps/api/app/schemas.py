@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 from typing import Optional
+from datetime import datetime
 
 class TenantCreate(BaseModel):
     name: str = Field(min_length=2, max_length=160)
@@ -68,6 +69,11 @@ class CustomerCreate(BaseModel):
     phone: str = Field(min_length=5, max_length=32)
     name: Optional[str] = Field(default=None, max_length=160)
     whatsapp_opt_in: bool = False
+    email: Optional[EmailStr] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+    tags: str = ""
+    source: str = "manual"
 
 class LeadCreate(BaseModel):
     tenant_id: str
@@ -75,3 +81,34 @@ class LeadCreate(BaseModel):
     source: str = Field(min_length=1, max_length=80)
     intent: Optional[str] = Field(default=None, max_length=120)
     notes: Optional[str] = None
+
+
+class BusinessHourInput(BaseModel):
+    weekday: int = Field(ge=0, le=6)
+    open_time: str = "09:00"
+    close_time: str = "18:00"
+    is_closed: bool = False
+    slot_interval_minutes: int = Field(default=30, ge=5, le=120)
+
+class QueueSettingsInput(BaseModel):
+    queue_enabled: bool = True
+    queue_threshold: int = Field(default=5, ge=0, le=1000)
+    queue_avg_service_minutes: int = Field(default=15, ge=1, le=240)
+
+class AppointmentCreate(BaseModel):
+    customer_id: Optional[str] = None
+    phone: Optional[str] = None
+    name: Optional[str] = None
+    service_id: str
+    starts_at: datetime
+    staff_id: Optional[str] = None
+    notes: Optional[str] = None
+    source: str = "manual"
+    queue_if_busy: bool = True
+    force_queue: bool = False
+
+class AppointmentStatusUpdate(BaseModel):
+    status: str = Field(pattern=r"^(requested|confirmed|checked_in|serving|completed|cancelled|no_show)$")
+
+class QueueCheckIn(BaseModel):
+    force: bool = False
