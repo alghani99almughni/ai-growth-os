@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product
-from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry
+from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
 from .schemas import *
 from .services import *
@@ -337,6 +337,52 @@ def public_queue(slug,appointment_id,db:Session=Depends(get_db)):
     queue_snapshot(db,t,q.queue_date); db.refresh(q)
     return {"business":t.name,"token":q.token,"status":q.status,"people_ahead":q.people_ahead,"estimated_wait_minutes":q.estimated_wait_minutes,"queue_date":q.queue_date.isoformat()}
 
+
+
+def _request_out(r,db):
+    staff=db.get(StaffMember,r.assigned_staff_id) if r.assigned_staff_id else None
+    return {"id":r.id,"request_type":r.request_type,"message":r.message,"status":r.status,"context_token":r.context_token,"customer_id":r.customer_id,"assigned_staff_id":r.assigned_staff_id,"assigned_staff_name":staff.name if staff else None,"created_at":r.created_at.isoformat()}
+
+@app.post("/api/v1/public/business/{slug}/service-requests",status_code=201)
+def create_service_request(slug,payload:ServiceRequestCreate,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    if payload.request_type=="waiter" and t.industry.lower() not in ("restaurant","cafe","hotel","hospitality","food"):
+        raise HTTPException(400,"Waiter calling is not enabled for this business type")
+    staff=None
+    dept=db.scalar(select(Department).where(Department.tenant_id==t.id,Department.name.ilike("%service%"),Department.is_active==True))
+    if not dept: dept=db.scalar(select(Department).where(Department.tenant_id==t.id,Department.name.ilike("%reception%"),Department.is_active==True))
+    if dept: staff=db.scalar(select(StaffMember).where(StaffMember.tenant_id==t.id,StaffMember.department_id==dept.id,StaffMember.is_active==True,StaffMember.is_available==True))
+    r=ServiceRequest(tenant_id=t.id,customer_id=payload.customer_id,context_token=payload.context_token,request_type=payload.request_type,message=payload.message,status="requested",assigned_staff_id=staff.id if staff else None)
+    db.add(r); db.commit(); db.refresh(r)
+    return _request_out(r,db)
+
+@app.get("/api/v1/tenants/{tenant_id}/service-requests")
+def list_service_requests(tenant_id,status_value:str|None=Query(default=None,alias="status"),user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    q=select(ServiceRequest).where(ServiceRequest.tenant_id==tenant_id)
+    if status_value: q=q.where(ServiceRequest.status==status_value)
+    rows=db.scalars(q.order_by(ServiceRequest.created_at.desc())).all()
+    return {"items":[_request_out(r,db) for r in rows]}
+
+@app.patch("/api/v1/tenants/{tenant_id}/service-requests/{request_id}")
+def update_service_request(tenant_id,request_id,payload:ServiceRequestStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    r=db.scalar(select(ServiceRequest).where(ServiceRequest.id==request_id,ServiceRequest.tenant_id==tenant_id))
+    if not r: raise HTTPException(404,"Service request not found")
+    r.status=payload.status
+    if payload.status=="acknowledged": r.acknowledged_at=datetime.utcnow()
+    if payload.status in ("completed","cancelled"): r.completed_at=datetime.utcnow()
+    db.commit(); db.refresh(r)
+    return _request_out(r,db)
+
+@app.get("/api/v1/public/business/{slug}/service-requests/{request_id}")
+def public_service_request(slug,request_id,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    r=db.scalar(select(ServiceRequest).where(ServiceRequest.id==request_id,ServiceRequest.tenant_id==t.id))
+    if not r: raise HTTPException(404,"Service request not found")
+    return _request_out(r,db)
 
 @app.post("/api/v1/ai/chat")
 async def ai_chat(payload:ChatRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
