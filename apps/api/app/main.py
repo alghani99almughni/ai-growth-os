@@ -120,6 +120,62 @@ def customer(payload:CustomerCreate,user=Depends(get_current_user),db:Session=De
 @app.get("/api/v1/tenants/{tenant_id}/customers")
 def customers(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); rows=db.scalars(select(Customer).where(Customer.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"name":x.name,"phone":x.phone,"email":x.email,"address":x.address,"notes":x.notes,"tags":x.tags,"source":x.source,"whatsapp_opt_in":x.whatsapp_opt_in,"portal_token":x.portal_token} for x in rows]}
+
+class CustomerUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    address: Optional[str] = None
+    notes: Optional[str] = None
+    tags: str = ""
+    whatsapp_opt_in: Optional[bool] = None
+
+@app.patch("/api/v1/tenants/{tenant_id}/customers/{customer_id}")
+def update_customer(tenant_id, customer_id, payload: CustomerUpdate, user=Depends(get_current_user), db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    c=db.scalar(select(Customer).where(Customer.id==customer_id,Customer.tenant_id==tenant_id))
+    if not c: raise HTTPException(404,"Customer not found")
+    for key,value in payload.model_dump(exclude_unset=True).items():
+        if value is not None: setattr(c,key,value.strip() if isinstance(value,str) else value)
+    db.commit(); db.refresh(c)
+    return {"id":c.id,"name":c.name,"phone":c.phone,"email":c.email,"address":c.address,"notes":c.notes,"tags":c.tags,"source":c.source,"whatsapp_opt_in":c.whatsapp_opt_in,"portal_token":c.portal_token}
+
+@app.get("/api/v1/public/customer/{portal_token}")
+def public_customer_portal(portal_token, db:Session=Depends(get_db)):
+    c=db.scalar(select(Customer).where(Customer.portal_token==portal_token))
+    if not c: raise HTTPException(404,"Customer portal not found")
+    t=db.get(Tenant,c.tenant_id)
+    return {"business":{"name":t.name,"slug":t.slug},"customer":{"name":c.name,"phone":c.phone},"pwa_url":settings.public_app_url+"/customer?business="+t.slug+"&customer="+portal_token}
+
+class LandlineCallRequest(BaseModel):
+    caller_phone: str = Field(min_length=3,max_length=32)
+    department: str = "Reception"
+    staff_id: str | None = None
+    notes: str | None = None
+
+@app.post("/api/v1/tenants/{tenant_id}/telephony/inbound-call",status_code=201)
+def inbound_landline_call(tenant_id,payload:LandlineCallRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    c=upsert_customer(db,tenant_id,payload.caller_phone,None,False,source="landline")
+    call=CallRecord(tenant_id=tenant_id,customer_id=c.id,source="landline",status="connected",department=payload.department,staff_id=payload.staff_id)
+    db.add(call); db.commit(); db.refresh(call)
+    if payload.notes: call.summary=payload.notes; db.commit()
+    t=db.get(Tenant,tenant_id)
+    return {"call_id":call.id,"customer_id":c.id,"status":call.status,"department":call.department,"pwa_url":settings.public_app_url+"/customer?business="+t.slug+"&customer="+c.portal_token}
+
+@app.post("/api/v1/tenants/{tenant_id}/customers/{customer_id}/share-pwa")
+async def share_customer_pwa(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    c=db.scalar(select(Customer).where(Customer.id==customer_id,Customer.tenant_id==tenant_id))
+    t=db.get(Tenant,tenant_id)
+    if not c or not t: raise HTTPException(404,"Customer not found")
+    url=settings.public_app_url+"/customer?business="+t.slug+"&customer="+c.portal_token
+    message="Hello "+(c.name or "there")+", thank you for contacting "+t.name+". Continue with your customer portal here: "+url
+    if not c.phone: raise HTTPException(409,"Customer phone is required")
+    try:
+        result=await WhatsAppAdapter(settings.whatsapp_access_token,settings.whatsapp_phone_number_id).send_text(c.phone,message)
+    except RuntimeError as exc:
+        raise HTTPException(503,str(exc))
+    return {"sent":True,"pwa_url":url,"whatsapp":result}
 @app.post("/api/v1/leads",status_code=201)
 def lead(payload:LeadCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,payload.tenant_id); l=create_lead(db,payload.tenant_id,payload.source,payload.customer_id,payload.intent,payload.notes); return {"id":l.id,"status":l.status}
