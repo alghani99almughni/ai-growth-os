@@ -186,6 +186,37 @@ def scan_qr(token,db:Session=Depends(get_db)):
     if not q: raise HTTPException(404,"QR not found")
     q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url+"/customer","kind":q.kind}
 
+class PublicCallStartRequest(BaseModel):
+    name:str=Field(min_length=1,max_length=120)
+    phone:str=Field(min_length=7,max_length=30)
+
+@app.post("/api/v1/public/business/{slug}/call",status_code=201)
+def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False)
+    call=CallRecord(tenant_id=t.id,customer_id=customer.id,source="pwa_webrtc",status="connected")
+    db.add(call); db.commit(); db.refresh(call)
+    greeting=f"Hello! Welcome to {t.name}. Before I can assist you, may I confirm your name and mobile number?"
+    return {"call_id":call.id,"customer_id":customer.id,"customer_name":customer.name,"phone":customer.phone,"status":call.status,"business_name":t.name,"greeting":greeting}
+
+class PublicVoiceTurnRequest(BaseModel):
+    transcript:str=Field(min_length=1,max_length=4000)
+    conversation_id:str|None=None
+    call_id:str|None=None
+    channel:str="voice"
+
+@app.post("/api/v1/public/business/{slug}/voice/turn")
+async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    result=await generate_reply(db,t.id,payload.transcript,payload.conversation_id,payload.channel)
+    if payload.call_id:
+        call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
+        if call:
+            call.transcript=((call.transcript+"\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\nAI: "+result["reply"]
+            call.intent=result.get("intent"); db.commit()
+    return {**result,"tenant_id":t.id,"call_id":payload.call_id}
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
 def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
