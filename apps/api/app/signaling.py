@@ -22,7 +22,7 @@ async def _local_signal(websocket,room_id):
         rooms.get(room_id,set()).discard(websocket)
         if not rooms.get(room_id): rooms.pop(room_id,None)
 
-async def signal(websocket:WebSocket,room_id:str):
+async def signal(websocket:WebSocket,room_id:str,allow_staff:bool=False):
     await websocket.accept()
     # Redis pub/sub is used when configured so handoff signaling works across API instances.
     if not settings.redis_url or redis is None:
@@ -46,7 +46,11 @@ async def signal(websocket:WebSocket,room_id:str):
     try:
         while True:
             message=await websocket.receive_text()
-            await r.publish(channel,json.dumps({"sender":client_id,"message":json.loads(message)}))
+            payload=json.loads(message)
+            if payload.get("type")=="staff_join" and not allow_staff:
+                await websocket.send_text(json.dumps({"type":"error","message":"Staff signaling authorization required"}))
+                continue
+            await r.publish(channel,json.dumps({"sender":client_id,"message":payload}))
     except (WebSocketDisconnect,Exception):
         pass
     finally:
