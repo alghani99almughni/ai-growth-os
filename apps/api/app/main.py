@@ -631,7 +631,102 @@ def public_business(slug:str,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower(),)); 
     if not t: raise HTTPException(404,"Business not found")
     services=db.scalars(select(Service).where(Service.tenant_id==t.id,Service.is_active==True)).all()
-    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"description":t.description,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"timezone":t.timezone,"services":[{"id":x.id,"name":x.name,"description":x.description,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"duration_minutes":x.duration_minutes} for x in services]}
+    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"description":t.description,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"timezone":t.timezone,"features":_feature_config(db,t.id),"games":GAME_CATALOG,"menu":_public_menu(db,t),"services":[{"id":x.id,"name":x.name,"description":x.description,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"duration_minutes":x.duration_minutes} for x in services]}
+def _public_menu(db,t):
+    if not _feature_config(db,t.id).get("digital_menu",True): return {"enabled":False,"categories":[],"items":[]}
+    cats=db.scalars(select(MenuCategory).where(MenuCategory.tenant_id==t.id,MenuCategory.is_active==True).order_by(MenuCategory.sort_order)).all()
+    items=db.scalars(select(MenuItem).where(MenuItem.tenant_id==t.id,MenuItem.is_active==True,MenuItem.is_available==True).order_by(MenuItem.sort_order)).all()
+    return {"enabled":True,"categories":[{"id":x.id,"name":x.name} for x in cats],"items":[{"id":x.id,"category_id":x.category_id,"name":x.name,"description":x.description,"price":x.price,"currency":x.currency} for x in items]}
+
+@app.get("/api/v1/public/business/{slug}/menu")
+def public_menu(slug,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    return _public_menu(db,t)
+
+class PublicOrderItem(BaseModel):
+    menu_item_id:str
+    quantity:int=Field(ge=1,le=50)
+    notes:str|None=None
+class PublicOrderCreate(BaseModel):
+    items:list[PublicOrderItem]=Field(min_length=1,max_length=50)
+    context_token:str|None=None
+    customer_id:str|None=None
+
+def _order_out(o,db):
+    rows=db.scalars(select(OrderItem).where(OrderItem.order_id==o.id)).all()
+    bill=db.scalar(select(Bill).where(Bill.order_id==o.id))
+    return {"id":o.id,"status":o.status,"context_token":o.context_token,"subtotal":o.subtotal,"tax":o.tax,"discount":o.discount,"total":o.total,"payment_status":o.payment_status,
+            "items":[{"name":x.name,"price":x.price,"quantity":x.quantity,"notes":x.notes} for x in rows],
+            "bill":({"id":bill.id,"status":bill.status,"total":bill.total} if bill else None)}
+
+@app.post("/api/v1/public/business/{slug}/orders",status_code=201)
+def create_public_order(slug,payload:PublicOrderCreate,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    if not _feature_config(db,t.id).get("online_ordering",True): raise HTTPException(403,"Online ordering is disabled")
+    customer=None
+    if payload.customer_id:
+        customer=db.scalar(select(Customer).where(Customer.id==payload.customer_id,Customer.tenant_id==t.id))
+    o=Order(tenant_id=t.id,customer_id=customer.id if customer else None,context_token=payload.context_token,status="pending")
+    db.add(o); db.flush(); subtotal=0
+    for req in payload.items:
+        item=db.scalar(select(MenuItem).where(MenuItem.id==req.menu_item_id,MenuItem.tenant_id==t.id,MenuItem.is_active==True,MenuItem.is_available==True))
+        if not item: db.rollback(); raise HTTPException(400,"One or more items are unavailable")
+        subtotal += item.price*req.quantity
+        db.add(OrderItem(order_id=o.id,menu_item_id=item.id,name=item.name,price=item.price,quantity=req.quantity,notes=req.notes))
+    o.subtotal=subtotal; o.total=subtotal; o.updated_at=datetime.utcnow()
+    db.commit(); db.refresh(o); return _order_out(o,db)
+
+@app.get("/api/v1/public/business/{slug}/orders/{order_id}")
+def public_order_status(slug,order_id,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    o=db.scalar(select(Order).where(Order.id==order_id,Order.tenant_id==t.id)) if t else None
+    if not o: raise HTTPException(404,"Order not found")
+    return _order_out(o,db)
+
+@app.get("/api/v1/tenants/{tenant_id}/orders")
+def tenant_orders(tenant_id,status:str|None=None,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    q=select(Order).where(Order.tenant_id==tenant_id)
+    if status: q=q.where(Order.status==status)
+    return {"items":[_order_out(x,db) for x in db.scalars(q.order_by(Order.created_at.desc())).all()]}
+
+@app.patch("/api/v1/tenants/{tenant_id}/orders/{order_id}")
+def update_order(tenant_id,order_id,payload:OrderStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    o=db.scalar(select(Order).where(Order.id==order_id,Order.tenant_id==tenant_id))
+    if not o: raise HTTPException(404,"Order not found")
+    o.status=payload.status; o.updated_at=datetime.utcnow()
+    if payload.status=="completed":
+        b=db.scalar(select(Bill).where(Bill.order_id==o.id))
+        if not b: db.add(Bill(tenant_id=tenant_id,order_id=o.id,subtotal=o.subtotal,tax=o.tax,discount=o.discount,total=o.total))
+        if o.customer_id:
+            rules=db.scalars(select(LoyaltyRule).where(LoyaltyRule.tenant_id==tenant_id,LoyaltyRule.event_type=="purchase",LoyaltyRule.is_active==True)).all()
+            for rule in rules:
+                cfg=json.loads(rule.config_json or "{}")
+                if int(cfg.get("minimum_bill",0))<=o.total:
+                    db.add(LoyaltyTransaction(tenant_id=tenant_id,customer_id=o.customer_id,points=rule.points,reason=rule.name,reference_id=o.id))
+    db.commit(); db.refresh(o); return _order_out(o,db)
+
+@app.get("/api/v1/tenants/{tenant_id}/bills")
+def tenant_bills(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=db.scalars(select(Bill).where(Bill.tenant_id==tenant_id).order_by(Bill.issued_at.desc())).all()
+    return {"items":[{"id":x.id,"order_id":x.order_id,"subtotal":x.subtotal,"tax":x.tax,"discount":x.discount,"total":x.total,"status":x.status,"issued_at":x.issued_at.isoformat()} for x in rows]}
+
+@app.post("/api/v1/public/business/{slug}/feedback",status_code=201)
+def create_feedback(slug,payload:FeedbackCreate,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    f=Feedback(tenant_id=t.id,**payload.model_dump()); db.add(f); db.commit()
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==t.id,TenantSetting.key=="google_review"))
+    review_url=""
+    if row:
+        try: review_url=json.loads(row.value_json).get("review_url","")
+        except Exception: pass
+    return {"id":f.id,"saved":True,"google_review_url":review_url if payload.rating>=4 else ""}
+
 @app.post("/api/v1/public/chat")
 async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
     t=db.get(Tenant,payload.tenant_id)
