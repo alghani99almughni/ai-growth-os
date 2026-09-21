@@ -24,6 +24,7 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS source VARCHAR(40) DEFAULT 'manual'"))
             conn.execute(text("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS queue_token VARCHAR(40)"))
             conn.execute(text("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS queue_status VARCHAR(40)"))
+            conn.execute(text("CREATE TABLE IF NOT EXISTS service_requests (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, customer_id VARCHAR(36), appointment_id VARCHAR(36), context_token VARCHAR(100), request_type VARCHAR(50) NOT NULL DEFAULT 'waiter', message TEXT, status VARCHAR(40) NOT NULL DEFAULT 'requested', assigned_staff_id VARCHAR(36), created_at TIMESTAMP NOT NULL, acknowledged_at TIMESTAMP, completed_at TIMESTAMP)"))
         elif dialect=="sqlite":
             cols={r[1] for r in conn.execute(text("PRAGMA table_info(call_records)"))}
             if "staff_id" not in cols: conn.execute(text("ALTER TABLE call_records ADD COLUMN staff_id VARCHAR(36)"))
@@ -45,3 +46,4 @@ def ensure_schema():
             if "source" not in appointment_cols: conn.execute(text("ALTER TABLE appointments ADD COLUMN source VARCHAR(40) DEFAULT 'manual'"))
             if "queue_token" not in appointment_cols: conn.execute(text("ALTER TABLE appointments ADD COLUMN queue_token VARCHAR(40)"))
             if "queue_status" not in appointment_cols: conn.execute(text("ALTER TABLE appointments ADD COLUMN queue_status VARCHAR(40)"))
+            conn.execute(text("CREATE TABLE IF NOT EXISTS service_requests (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, customer_id VARCHAR(36), appointment_id VARCHAR(36), context_token VARCHAR(100), request_type VARCHAR(50) NOT NULL DEFAULT 'waiter', message TEXT, status VARCHAR(40) NOT NULL DEFAULT 'requested', assigned_staff_id VARCHAR(36), created_at DATETIME NOT NULL, acknowledged_at DATETIME, completed_at DATETIME)"))
