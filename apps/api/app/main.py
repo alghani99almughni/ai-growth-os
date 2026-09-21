@@ -207,6 +207,68 @@ class ChatRequest(BaseModel): tenant_id:str; message:str=Field(min_length=1,max_
 class HoursUpdate(BaseModel):
     items: list[BusinessHourInput]
 
+@app.get("/api/v1/tenants/{tenant_id}/features")
+def tenant_features(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); return {"features":_feature_config(db,tenant_id),"games":GAME_CATALOG}
+
+@app.put("/api/v1/tenants/{tenant_id}/features")
+def update_features(tenant_id,payload:FeatureUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    cfg=_feature_config(db,tenant_id)
+    for key,value in payload.features.items():
+        if key in FEATURE_DEFAULTS: cfg[key]=bool(value)
+    _set_setting(db,tenant_id,"features",cfg)
+    return {"features":cfg,"games":GAME_CATALOG}
+
+@app.get("/api/v1/tenants/{tenant_id}/review-settings")
+def get_review_settings(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="google_review"))
+    try: return json.loads(row.value_json) if row else {"review_url":""}
+    except Exception: return {"review_url":""}
+
+@app.put("/api/v1/tenants/{tenant_id}/review-settings")
+def set_review_settings(tenant_id,payload:GoogleReviewUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); return _set_setting(db,tenant_id,"google_review",{"review_url":payload.review_url or ""})
+
+@app.get("/api/v1/tenants/{tenant_id}/menu")
+def tenant_menu(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    cats=db.scalars(select(MenuCategory).where(MenuCategory.tenant_id==tenant_id,MenuCategory.is_active==True).order_by(MenuCategory.sort_order)).all()
+    items=db.scalars(select(MenuItem).where(MenuItem.tenant_id==tenant_id,MenuItem.is_active==True).order_by(MenuItem.sort_order)).all()
+    return {"categories":[{"id":x.id,"name":x.name,"sort_order":x.sort_order} for x in cats],"items":[{"id":x.id,"category_id":x.category_id,"name":x.name,"description":x.description,"price":x.price,"currency":x.currency,"image_url":x.image_url,"is_available":x.is_available} for x in items]}
+
+@app.post("/api/v1/tenants/{tenant_id}/menu/categories",status_code=201)
+def add_menu_category(tenant_id,payload:MenuCategoryCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); x=MenuCategory(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"name":x.name}
+
+@app.post("/api/v1/tenants/{tenant_id}/menu/items",status_code=201)
+def add_menu_item(tenant_id,payload:MenuItemCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    if payload.category_id and not db.scalar(select(MenuCategory).where(MenuCategory.id==payload.category_id,MenuCategory.tenant_id==tenant_id)): raise HTTPException(400,"Invalid category")
+    x=MenuItem(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"name":x.name,"price":x.price}
+
+@app.patch("/api/v1/tenants/{tenant_id}/menu/items/{item_id}")
+def update_menu_item(tenant_id,item_id,payload:dict,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=db.scalar(select(MenuItem).where(MenuItem.id==item_id,MenuItem.tenant_id==tenant_id))
+    if not x: raise HTTPException(404,"Menu item not found")
+    for key in ["name","description","price","category_id","image_url","is_active","is_available"]:
+        if key in payload: setattr(x,key,payload[key])
+    db.commit(); return {"id":x.id,"updated":True}
+
+@app.get("/api/v1/tenants/{tenant_id}/loyalty-rules")
+def get_loyalty_rules(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=db.scalars(select(LoyaltyRule).where(LoyaltyRule.tenant_id==tenant_id)).all()
+    return {"items":[{"id":x.id,"event_type":x.event_type,"name":x.name,"points":x.points,"is_active":x.is_active,"config":json.loads(x.config_json or "{}")} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/loyalty-rules",status_code=201)
+def create_loyalty_rule(tenant_id,payload:LoyaltyRuleCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=LoyaltyRule(tenant_id=tenant_id,event_type=payload.event_type,name=payload.name,points=payload.points,is_active=payload.is_active,config_json=json.dumps(payload.config))
+    db.add(x); db.commit(); db.refresh(x); return {"id":x.id}
+
 @app.get("/api/v1/tenants/{tenant_id}/business-hours")
 def get_business_hours(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
