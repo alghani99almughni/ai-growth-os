@@ -16,6 +16,9 @@ class Tenant(Base):
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     website: Mapped[str | None] = mapped_column(String(500), nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata")
+    queue_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    queue_threshold: Mapped[int] = mapped_column(Integer, default=5)
+    queue_avg_service_minutes: Mapped[int] = mapped_column(Integer, default=15)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 class User(Base):
