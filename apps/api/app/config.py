@@ -3,6 +3,8 @@ class Settings(BaseSettings):
     app_name:str="AI Growth OS API"; environment:str="development"
     database_url:str="postgresql+psycopg://growth:growth@localhost:5432/growth_os"; redis_url:str="redis://localhost:6379/0"
     jwt_secret:str="change-me-in-production"; jwt_algorithm:str="HS256"; access_token_minutes:int=1440
-    gemini_api_key:str=""; gemini_model:str="gemini-2.5-flash"; public_app_url:str="http://localhost:3000"\n    whatsapp_access_token:str=""; whatsapp_phone_number_id:str=""; razorpay_key_id:str=""; razorpay_key_secret:str=""\n    turn_url:str=""; turn_username:str=""; turn_credential:str=""
+    gemini_api_key:str=""; gemini_model:str="gemini-2.5-flash"; public_app_url:str="http://localhost:3000"
+    whatsapp_access_token:str=""; whatsapp_phone_number_id:str=""; razorpay_key_id:str=""; razorpay_key_secret:str=""
+    turn_url:str=""; turn_username:str=""; turn_credential:str=""
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 settings=Settings()
