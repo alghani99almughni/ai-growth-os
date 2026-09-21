@@ -1,3 +1,19 @@
 "use client";
-import {useState} from "react";
-export default function Dashboard(){const [message,setMessage]=useState("");const [reply,setReply]=useState("");async function send(){const base=process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";const r=await fetch(base+"/api/v1/ai/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message})});setReply((await r.json()).reply)}return <main className="shell"><h1>Business Dashboard</h1><div className="grid"><div className="card"><h2>Leads</h2><strong>0</strong><p>Tenant pipeline foundation.</p></div><div className="card"><h2>AI Assistant</h2><input value={message} onChange={e=>setMessage(e.target.value)} placeholder="Ask about your business..." style={{width:"100%",padding:12}}/><button onClick={send} style={{marginTop:12,padding:10}}>Send</button><p>{reply}</p></div></div></main>}
+import { useEffect, useState } from "react";
+
+export default function Dashboard(){
+  const [user,setUser]=useState<any>(null);
+  useEffect(()=>{const raw=localStorage.getItem("ago_user"); if(!raw){window.location.href="/login";return;} setUser(JSON.parse(raw));},[]);
+  if(!user) return <main className="shell"><div className="card">Loading workspace...</div></main>;
+  return <main className="shell"><div className="card" style={{maxWidth:1000,margin:"40px auto"}}>
+    <p>AI GROWTH OS</p><h1>Business Dashboard</h1>
+    <p>Welcome, {user.name}. Your tenant: <strong>{user.tenant_id}</strong></p>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,marginTop:24}}>
+      <div className="card"><strong>Customers</strong><p>CRM foundation</p></div>
+      <div className="card"><strong>Leads</strong><p>Lead pipeline</p></div>
+      <div className="card"><strong>AI Brain</strong><p>Coming next</p></div>
+      <div className="card"><strong>Calls</strong><p>Voice engine</p></div>
+    </div>
+    <button onClick={()=>{localStorage.clear();window.location.href="/login"}} style={{marginTop:24,padding:"10px 16px"}}>Sign out</button>
+  </div></main>
+}
