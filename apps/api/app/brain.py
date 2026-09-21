@@ -12,11 +12,14 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
     services=db.scalars(select(Service).where(Service.tenant_id==tenant_id,Service.is_active==True)).all()
     products=db.scalars(select(Product).where(Product.tenant_id==tenant_id,Product.is_active==True)).all()
     knowledge=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True)).all()
-    feature_row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))\n    feature_text=feature_row.value_json if feature_row else "{}"\n    lines=[f"Business: {tenant.name}",f"Industry: {tenant.industry}",f"Description: {tenant.description or ''}",f"Phone: {tenant.phone or ''}",f"WhatsApp: {tenant.whatsapp_number or ''}",f"Address: {tenant.address or ''}",f"Enabled customer features: {feature_text}"]
+    feature_row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
+    feature_text=feature_row.value_json if feature_row else "{}"
+    lines=[f"Business: {tenant.name}",f"Industry: {tenant.industry}",f"Description: {tenant.description or ''}",f"Phone: {tenant.phone or ''}",f"WhatsApp: {tenant.whatsapp_number or ''}",f"Address: {tenant.address or ''}",f"Enabled customer features: {feature_text}"]
     for x in knowledge: lines.append(f"Knowledge ({x.kind}): {x.title}: {x.content}")
     for x in services: lines.append(f"Service ID: {x.id}; name={x.name}; description={x.description or ''}; price={x.price} {x.currency}; duration={x.duration_minutes or ''} minutes")
     for x in products: lines.append(f"Product: {x.name}; description={x.description or ''}; price={x.price} {x.currency}; stock={x.stock_quantity if x.stock_quantity is not None else 'unknown'}")
-    return "\n".join(lines)
+    return "
+".join(lines)
 
 def local_intent(message:str)->str:
     m=message.lower()
@@ -56,8 +59,15 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         context=knowledge_context(db,tenant_id)
         prompt=("You are the AI customer engagement agent. Reply in the customer's language when possible. "
                 "Use ONLY the approved business context below. Never invent prices, availability, policies, discounts, bookings or payment success. "
-                "If an action is needed, say it will be confirmed by the system. Keep concise.\n\nAPPROVED CONTEXT:\n"+context+
-                "\n\nCUSTOMER LANGUAGE: "+language+"\nCUSTOMER:\n"+message)
+                "If an action is needed, say it will be confirmed by the system. Keep concise.
+
+APPROVED CONTEXT:
+"+context+
+                "
+
+CUSTOMER LANGUAGE: "+language+"
+CUSTOMER:
+"+message)
         url="https://generativelanguage.googleapis.com/v1beta/models/"+settings.gemini_model+":generateContent?key="+settings.gemini_api_key
         async with httpx.AsyncClient(timeout=30) as client:
             response=await client.post(url,json={"contents":[{"parts":[{"text":prompt}]}]})
