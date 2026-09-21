@@ -76,3 +76,114 @@ class ServiceRequest(Base):
     created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
     acknowledged_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
     completed_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+
+class TenantSetting(Base):
+    __tablename__="tenant_settings"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    key:Mapped[str]=mapped_column(String(120),index=True)
+    value_json:Mapped[str]=mapped_column(Text,default="{}")
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class MenuCategory(Base):
+    __tablename__="menu_categories"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    name:Mapped[str]=mapped_column(String(120))
+    sort_order:Mapped[int]=mapped_column(Integer,default=0)
+    is_active:Mapped[bool]=mapped_column(Boolean,default=True)
+
+class MenuItem(Base):
+    __tablename__="menu_items"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    category_id:Mapped[str|None]=mapped_column(ForeignKey("menu_categories.id"),nullable=True,index=True)
+    name:Mapped[str]=mapped_column(String(160))
+    description:Mapped[str|None]=mapped_column(Text,nullable=True)
+    price:Mapped[int]=mapped_column(Integer,default=0)
+    currency:Mapped[str]=mapped_column(String(3),default="INR")
+    image_url:Mapped[str|None]=mapped_column(String(500),nullable=True)
+    is_active:Mapped[bool]=mapped_column(Boolean,default=True)
+    is_available:Mapped[bool]=mapped_column(Boolean,default=True)
+    sort_order:Mapped[int]=mapped_column(Integer,default=0)
+
+class Order(Base):
+    __tablename__="orders"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    customer_id:Mapped[str|None]=mapped_column(ForeignKey("customers.id"),nullable=True,index=True)
+    context_token:Mapped[str|None]=mapped_column(String(100),nullable=True,index=True)
+    status:Mapped[str]=mapped_column(String(40),default="pending",index=True)
+    subtotal:Mapped[int]=mapped_column(Integer,default=0)
+    tax:Mapped[int]=mapped_column(Integer,default=0)
+    discount:Mapped[int]=mapped_column(Integer,default=0)
+    total:Mapped[int]=mapped_column(Integer,default=0)
+    payment_status:Mapped[str]=mapped_column(String(40),default="unpaid")
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+    updated_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class OrderItem(Base):
+    __tablename__="order_items"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    order_id:Mapped[str]=mapped_column(ForeignKey("orders.id"),index=True)
+    menu_item_id:Mapped[str|None]=mapped_column(ForeignKey("menu_items.id"),nullable=True)
+    name:Mapped[str]=mapped_column(String(160))
+    price:Mapped[int]=mapped_column(Integer,default=0)
+    quantity:Mapped[int]=mapped_column(Integer,default=1)
+    notes:Mapped[str|None]=mapped_column(Text,nullable=True)
+
+class Bill(Base):
+    __tablename__="bills"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    order_id:Mapped[str]=mapped_column(ForeignKey("orders.id"),unique=True,index=True)
+    subtotal:Mapped[int]=mapped_column(Integer,default=0)
+    tax:Mapped[int]=mapped_column(Integer,default=0)
+    discount:Mapped[int]=mapped_column(Integer,default=0)
+    total:Mapped[int]=mapped_column(Integer,default=0)
+    status:Mapped[str]=mapped_column(String(40),default="issued")
+    payment_id:Mapped[str|None]=mapped_column(String(120),nullable=True)
+    issued_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+    paid_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+
+class Feedback(Base):
+    __tablename__="feedback"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    customer_id:Mapped[str|None]=mapped_column(ForeignKey("customers.id"),nullable=True)
+    order_id:Mapped[str|None]=mapped_column(ForeignKey("orders.id"),nullable=True,index=True)
+    rating:Mapped[int]=mapped_column(Integer)
+    food_rating:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    service_rating:Mapped[int|None]=mapped_column(Integer,nullable=True)
+    comment:Mapped[str|None]=mapped_column(Text,nullable=True)
+    ai_summary:Mapped[str|None]=mapped_column(Text,nullable=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class LoyaltyRule(Base):
+    __tablename__="loyalty_rules"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    event_type:Mapped[str]=mapped_column(String(60),index=True)
+    name:Mapped[str]=mapped_column(String(160))
+    points:Mapped[int]=mapped_column(Integer)
+    is_active:Mapped[bool]=mapped_column(Boolean,default=True)
+    config_json:Mapped[str]=mapped_column(Text,default="{}")
+
+class LoyaltyReward(Base):
+    __tablename__="loyalty_rewards"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    name:Mapped[str]=mapped_column(String(160))
+    points_cost:Mapped[int]=mapped_column(Integer)
+    description:Mapped[str|None]=mapped_column(Text,nullable=True)
+    is_active:Mapped[bool]=mapped_column(Boolean,default=True)
+
+class GameScore(Base):
+    __tablename__="game_scores"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    customer_id:Mapped[str|None]=mapped_column(ForeignKey("customers.id"),nullable=True)
+    game:Mapped[str]=mapped_column(String(60))
+    score:Mapped[int]=mapped_column(Integer,default=0)
+    reward_points:Mapped[int]=mapped_column(Integer,default=0)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
