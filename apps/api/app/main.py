@@ -17,6 +17,7 @@ from .integrations import WhatsAppAdapter,PaymentAdapter
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
+from .routing import route_call, available_staff
 import asyncio,json,base64
 import websockets
 import jwt,secrets
@@ -124,6 +125,59 @@ class KnowledgeCreate(BaseModel): title:str; content:str; kind:str="faq"
 @app.post("/api/v1/tenants/{tenant_id}/knowledge",status_code=201)
 def add_knowledge(tenant_id,payload:KnowledgeCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); x=KnowledgeItem(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return x
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    description: str | None = None
+    skills: str = ""
+
+class StaffCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    department_id: str | None = None
+    skills: str = ""
+    is_available: bool = True
+    max_concurrent_calls: int = Field(default=1, ge=1, le=20)
+
+@app.get("/api/v1/tenants/{tenant_id}/departments")
+def departments(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    rows=db.scalars(select(Department).where(Department.tenant_id==tenant_id)).all()
+    return {"items":[{"id":x.id,"name":x.name,"description":x.description,"skills":x.skills,"is_active":x.is_active} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/departments", status_code=201)
+def add_department(tenant_id, payload: DepartmentCreate, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    x=Department(tenant_id=tenant_id, **payload.model_dump())
+    db.add(x); db.commit(); db.refresh(x)
+    return {"id":x.id,"name":x.name,"description":x.description,"skills":x.skills,"is_active":x.is_active}
+
+@app.get("/api/v1/tenants/{tenant_id}/staff")
+def staff(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .models_ai import StaffMember
+    rows=db.scalars(select(StaffMember).where(StaffMember.tenant_id==tenant_id)).all()
+    return {"items":[{"id":x.id,"name":x.name,"department_id":x.department_id,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/staff", status_code=201)
+def add_staff(tenant_id, payload: StaffCreate, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .models_ai import StaffMember
+    x=StaffMember(tenant_id=tenant_id, **payload.model_dump())
+    db.add(x); db.commit(); db.refresh(x)
+    return {"id":x.id,"name":x.name,"department_id":x.department_id,"skills":x.skills,"is_available":x.is_available}
+
+@app.post("/api/v1/tenants/{tenant_id}/calls/{call_id}/route")
+def route_existing_call(tenant_id, call_id, intent: str | None = None, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id, CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404, "Call not found")
+    return route_call(db, tenant_id, call, intent)
+
+@app.get("/api/v1/tenants/{tenant_id}/calls")
+def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id).order_by(CallRecord.created_at.desc())).all()
+    return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,"department":x.department,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
 
 @app.get("/api/v1/tenants/{tenant_id}/voice/ice")
 def voice_ice_config(tenant_id,user=Depends(get_current_user)):
