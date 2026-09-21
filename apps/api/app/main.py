@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product
-from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore
+from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
 from .schemas import *
 from .services import *
@@ -78,6 +78,10 @@ GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id
 def _feature_config(db,tenant_id):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
     cfg=dict(FEATURE_DEFAULTS)
+    platform=db.scalar(select(PlatformSetting).where(PlatformSetting.key=="feature_defaults"))
+    if platform:
+        try: cfg.update(json.loads(platform.value_json))
+        except Exception: pass
     if row:
         try: cfg.update(json.loads(row.value_json))
         except Exception: pass
@@ -206,6 +210,28 @@ class ChatRequest(BaseModel): tenant_id:str; message:str=Field(min_length=1,max_
 
 class HoursUpdate(BaseModel):
     items: list[BusinessHourInput]
+
+def require_platform_admin(user:User):
+    if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
+
+@app.get("/api/v1/platform/feature-defaults")
+def platform_feature_defaults(user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    row=db.scalar(select(PlatformSetting).where(PlatformSetting.key=="feature_defaults"))
+    try: return {"features":{**FEATURE_DEFAULTS,**(json.loads(row.value_json) if row else {})}}
+    except Exception: return {"features":FEATURE_DEFAULTS}
+
+@app.put("/api/v1/platform/feature-defaults")
+def update_platform_feature_defaults(payload:FeatureUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    cfg=dict(FEATURE_DEFAULTS)
+    for key,value in payload.features.items():
+        if key in FEATURE_DEFAULTS: cfg[key]=bool(value)
+    row=db.scalar(select(PlatformSetting).where(PlatformSetting.key=="feature_defaults"))
+    if not row: row=PlatformSetting(key="feature_defaults",value_json=json.dumps(cfg)); db.add(row)
+    else: row.value_json=json.dumps(cfg)
+    db.commit()
+    return {"features":cfg}
 
 @app.get("/api/v1/tenants/{tenant_id}/features")
 def tenant_features(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
