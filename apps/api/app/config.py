@@ -6,5 +6,8 @@ class Settings(BaseSettings):
     gemini_api_key:str=""; gemini_model:str="gemini-2.5-flash"; public_app_url:str="http://localhost:3000"
     whatsapp_access_token:str=""; whatsapp_phone_number_id:str=""; razorpay_key_id:str=""; razorpay_key_secret:str=""
     turn_url:str=""; turn_username:str=""; turn_credential:str=""
+    stt_provider:str="google"; tts_provider:str="google"; stt_api_key:str=""; tts_api_key:str=""
+    telephony_provider:str=""; telephony_api_key:str=""; telephony_webhook_secret:str=""
+    ai_voice_enabled:bool=False
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 settings=Settings()
