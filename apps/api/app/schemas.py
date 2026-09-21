@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import Optional
 
 class TenantCreate(BaseModel):
@@ -8,6 +8,31 @@ class TenantCreate(BaseModel):
 
 class TenantOut(TenantCreate):
     id: str
+
+class RegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    business_name: str = Field(min_length=2, max_length=160)
+    slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+    industry: str = Field(min_length=2, max_length=80)
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    name: str
+    tenant_id: str
+    role: str
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserOut
+    tenant: TenantOut
 
 class CustomerCreate(BaseModel):
     tenant_id: str
