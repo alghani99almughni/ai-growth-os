@@ -13,6 +13,7 @@ from .services import *
 from .brain import generate_reply,knowledge_context
 from .config import settings
 from .signaling import signal
+from .events import publish_event_sync, subscribe_events
 from .integrations import WhatsAppAdapter,PaymentAdapter
 from .migrations import ensure_schema
 from .faq_seed import FAQS
@@ -26,6 +27,48 @@ import jwt,secrets
 
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
 app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
+
+@app.websocket("/ws/tenants/{tenant_id}/events")
+async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(default=None)):
+    if not access_token:
+        await websocket.close(code=4401); return
+    db=SessionLocal()
+    try:
+        p=jwt.decode(access_token,settings.jwt_secret,algorithms=[settings.jwt_algorithm])
+        user=db.get(User,p.get("sub"))
+        if not user or not user.is_active or user.tenant_id!=tenant_id:
+            await websocket.close(code=4403); return
+    except jwt.InvalidTokenError:
+        await websocket.close(code=4401); return
+    finally:
+        db.close()
+    await websocket.accept()
+    try:
+        async for event in subscribe_events(tenant_id):
+            await websocket.send_json(event)
+    except Exception:
+        try: await websocket.close()
+        except Exception: pass
+
+@app.websocket("/ws/public/business/{slug}/events")
+async def public_business_events(websocket,slug:str,context_token:str|None=Query(default=None)):
+    db=SessionLocal()
+    try:
+        tenant=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+        if not tenant:
+            await websocket.close(code=4404); return
+    finally:
+        db.close()
+    if not context_token:
+        await websocket.close(code=4400); return
+    await websocket.accept()
+    try:
+        async for event in subscribe_events(tenant.id):
+            if event.get("context_token") == context_token:
+                await websocket.send_json(event)
+    except Exception:
+        try: await websocket.close()
+        except Exception: pass
 
 @app.websocket("/ws/calls/{call_id}")
 async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None)):
@@ -460,6 +503,10 @@ def create_service_request(slug,payload:ServiceRequestCreate,db:Session=Depends(
     if dept: staff=db.scalar(select(StaffMember).where(StaffMember.tenant_id==t.id,StaffMember.department_id==dept.id,StaffMember.is_active==True,StaffMember.is_available==True))
     r=ServiceRequest(tenant_id=t.id,customer_id=payload.customer_id,context_token=payload.context_token,request_type=payload.request_type,message=payload.message,status="requested",assigned_staff_id=staff.id if staff else None)
     db.add(r); db.commit(); db.refresh(r)
+    publish_event_sync(t.id,"service_request.created",{
+        "request_id":r.id,"request_type":r.request_type,"message":r.message,
+        "status":r.status,"assigned_staff_id":r.assigned_staff_id
+    },context_token=r.context_token)
     return _request_out(r,db)
 
 @app.get("/api/v1/tenants/{tenant_id}/service-requests")
@@ -479,6 +526,10 @@ def update_service_request(tenant_id,request_id,payload:ServiceRequestStatusUpda
     if payload.status=="acknowledged": r.acknowledged_at=datetime.utcnow()
     if payload.status in ("completed","cancelled"): r.completed_at=datetime.utcnow()
     db.commit(); db.refresh(r)
+    publish_event_sync(tenant_id,"service_request.updated",{
+        "request_id":r.id,"request_type":r.request_type,"status":r.status,
+        "assigned_staff_id":r.assigned_staff_id
+    },context_token=r.context_token)
     return _request_out(r,db)
 
 @app.post("/api/v1/public/business/{slug}/games/{game}/score")
@@ -769,7 +820,15 @@ def create_public_order(slug,payload:PublicOrderCreate,db:Session=Depends(get_db
         subtotal += item.price*req.quantity
         db.add(OrderItem(order_id=o.id,menu_item_id=item.id,name=item.name,price=item.price,quantity=req.quantity,notes=req.notes))
     o.subtotal=subtotal; o.total=subtotal; o.updated_at=datetime.utcnow()
-    db.commit(); db.refresh(o); return _order_out(o,db)
+    db.commit(); db.refresh(o)
+    publish_event_sync(t.id,"order.created",{
+        "order_id":o.id,"status":o.status,"total":o.total,
+        "customer_id":o.customer_id,"items":[
+            {"name":x.name,"price":x.price,"quantity":x.quantity}
+            for x in db.scalars(select(OrderItem).where(OrderItem.order_id==o.id)).all()
+        ]
+    },context_token=o.context_token)
+    return _order_out(o,db)
 
 @app.get("/api/v1/public/business/{slug}/orders/{order_id}")
 def public_order_status(slug,order_id,db:Session=Depends(get_db)):
@@ -800,7 +859,14 @@ def update_order(tenant_id,order_id,payload:OrderStatusUpdate,user=Depends(get_c
                 cfg=json.loads(rule.config_json or "{}")
                 if int(cfg.get("minimum_bill",0))<=o.total:
                     db.add(LoyaltyTransaction(tenant_id=tenant_id,customer_id=o.customer_id,points=rule.points,reason=rule.name,reference_id=o.id))
-    db.commit(); db.refresh(o); return _order_out(o,db)
+    db.commit(); db.refresh(o)
+    bill=db.scalar(select(Bill).where(Bill.order_id==o.id))
+    publish_event_sync(tenant_id,"order.updated",{
+        "order_id":o.id,"status":o.status,"total":o.total,
+        "payment_status":o.payment_status,
+        "bill":{"id":bill.id,"status":bill.status,"total":bill.total} if bill else None
+    },context_token=o.context_token)
+    return _order_out(o,db)
 
 @app.get("/api/v1/tenants/{tenant_id}/bills")
 def tenant_bills(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
