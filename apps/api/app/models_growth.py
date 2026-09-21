@@ -60,3 +60,19 @@ class CallRecord(Base):
 class Campaign(Base):
     __tablename__="campaigns"
     id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True); name:Mapped[str]=mapped_column(String(160)); source:Mapped[str]=mapped_column(String(80)); scans:Mapped[int]=mapped_column(Integer,default=0); leads:Mapped[int]=mapped_column(Integer,default=0); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+
+class ServiceRequest(Base):
+    __tablename__="service_requests"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    customer_id:Mapped[str|None]=mapped_column(ForeignKey("customers.id"),nullable=True,index=True)
+    appointment_id:Mapped[str|None]=mapped_column(ForeignKey("appointments.id"),nullable=True,index=True)
+    context_token:Mapped[str|None]=mapped_column(String(100),nullable=True,index=True)
+    request_type:Mapped[str]=mapped_column(String(50),default="waiter")
+    message:Mapped[str|None]=mapped_column(Text,nullable=True)
+    status:Mapped[str]=mapped_column(String(40),default="requested",index=True)
+    assigned_staff_id:Mapped[str|None]=mapped_column(ForeignKey("staff_members.id"),nullable=True,index=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+    acknowledged_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    completed_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
