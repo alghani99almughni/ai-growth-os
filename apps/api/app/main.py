@@ -180,8 +180,9 @@ def call_context(tenant_id, call_id, user=Depends(get_current_user), db: Session
     if not call: raise HTTPException(404, "Call not found")
     customer=db.get(Customer,call.customer_id) if call.customer_id else None
     conversations=db.scalars(select(Conversation).where(Conversation.tenant_id==tenant_id,Conversation.customer_id==call.customer_id).order_by(Conversation.updated_at.desc())).all() if call.customer_id else []
+    staff_member=db.get(StaffMember,call.staff_id) if call.staff_id else None
     return {
-        "call":{"id":call.id,"status":call.status,"department":call.department,"intent":call.intent,"summary":call.summary,"transcript":call.transcript,"created_at":call.created_at},
+        "call":{"id":call.id,"status":call.status,"department":call.department,"staff_id":call.staff_id,"staff_name":staff_member.name if staff_member else None,"room_id":call.room_id,"intent":call.intent,"summary":call.summary,"transcript":call.transcript,"created_at":call.created_at},
         "customer": {"id":customer.id,"name":customer.name,"phone":customer.phone,"whatsapp_opt_in":customer.whatsapp_opt_in} if customer else None,
         "conversation_ids":[c.id for c in conversations[:10]],
     }
@@ -191,16 +192,52 @@ def handoff_call(tenant_id, call_id, user=Depends(get_current_user), db: Session
     require_tenant(user, tenant_id)
     call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
     if not call: raise HTTPException(404, "Call not found")
-    routed=route_call(db,tenant_id,call,call.intent)
+    routed=route_call(db,tenant_id,call,call.intent or "human_handoff")
+    if not routed.get("staff"):
+        call.status="handoff_unavailable"
+        db.commit()
+        return {**routed,"call_id":call.id,"status":call.status,"room_id":None}
+    call.room_id="call-"+call.id
     call.status="handoff_requested"
     db.commit()
-    return {**routed,"call_id":call.id,"status":call.status,"room_id":"call-"+call.id}
+    return {**routed,"call_id":call.id,"status":call.status,"room_id":call.room_id}
+
+class HandoffDecision(BaseModel):
+    decision: str = Field(pattern="^(accept|decline)$")
+
+@app.post("/api/v1/tenants/{tenant_id}/calls/{call_id}/handoff/decision")
+def handoff_decision(tenant_id, call_id, payload: HandoffDecision, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id, CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404, "Call not found")
+    if not call.staff_id: raise HTTPException(409, "No staff assigned")
+    staff=db.get(StaffMember, call.staff_id)
+    if not staff or not staff.is_active: raise HTTPException(409, "Assigned staff is unavailable")
+    if payload.decision=="accept":
+        call.status="handoff_accepted"
+        staff.is_available=False
+    else:
+        call.status="handoff_declined"
+    db.commit()
+    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"staff":{"id":staff.id,"name":staff.name}}
+
+@app.post("/api/v1/tenants/{tenant_id}/calls/{call_id}/staff-release")
+def staff_release(tenant_id, call_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id, CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404, "Call not found")
+    if call.staff_id:
+        staff=db.get(StaffMember,call.staff_id)
+        if staff: staff.is_available=True
+    call.status="ended"
+    db.commit()
+    return {"call_id":call.id,"status":call.status}
 
 @app.get("/api/v1/tenants/{tenant_id}/calls")
 def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
     rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id).order_by(CallRecord.created_at.desc())).all()
-    return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,"department":x.department,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
+    return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
 
 @app.get("/api/v1/tenants/{tenant_id}/voice/ice")
 def voice_ice_config(tenant_id,user=Depends(get_current_user)):
