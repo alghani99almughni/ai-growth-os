@@ -1,0 +1,2 @@
+const modules=["Business onboarding","Customer PWA","CRM & leads","AI chat","Industry templates","QR entry points"];
+export default function Home(){return <main className="shell"><section className="hero"><p>AI GROWTH OS · PHASE 1</p><h1>One AI customer engagement engine for every local business.</h1><p>Business data → AI → conversations → leads → CRM → human conversion.</p></section><section className="grid">{modules.map(x=><article className="card" key={x}><h3>{x}</h3><p>Phase 1 foundation module.</p></article>)}</section></main>}
