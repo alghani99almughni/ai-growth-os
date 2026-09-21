@@ -1,4 +1,4 @@
-from fastapi import FastAPI,Depends,HTTPException,Query
+from fastapi import FastAPI,Depends,HTTPException,Query,Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 from sqlalchemy import select
@@ -502,24 +502,23 @@ def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(ge
     return {"paid":True,"bill_id":bill.id,"payment_id":bill.payment_id}
 
 @app.post("/api/v1/webhooks/razorpay")
-async def razorpay_webhook(payload:dict,signature:str|None=None,db:Session=Depends(get_db)):
-    import hmac,hashlib,json as _json
-    raw=_json.dumps(payload,separators=(",",":"),sort_keys=True).encode()
+async def razorpay_webhook(request:Request,db:Session=Depends(get_db)):
+    import hmac,hashlib
+    raw=await request.body()
+    signature=request.headers.get("X-Razorpay-Signature","")
     if not settings.razorpay_key_secret or not signature: raise HTTPException(401,"Webhook signature required")
     expected=hmac.new(settings.razorpay_key_secret.encode(),raw,hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected,signature): raise HTTPException(400,"Invalid webhook signature")
+    payload=json.loads(raw.decode("utf-8"))
     entity=payload.get("payload",{}).get("payment",{}).get("entity",{})
-    order_id=entity.get("order_id")
-    if order_id:
-        # Razorpay order receipt is bill-<bill id>; resolve safely through bill id.
-        receipt=entity.get("notes",{}).get("receipt") or entity.get("description","")
-        if receipt.startswith("bill-"):
-            bill=db.scalar(select(Bill).where(Bill.id==receipt[5:]))
-            if bill:
-                bill.status="paid"; bill.payment_id=entity.get("id"); bill.paid_at=datetime.utcnow()
-                order=db.get(Order,bill.order_id)
-                if order: order.payment_status="paid"
-                db.commit()
+    receipt=(entity.get("notes") or {}).get("receipt") or ""
+    if receipt.startswith("bill-"):
+        bill=db.scalar(select(Bill).where(Bill.id==receipt[5:]))
+        if bill:
+            bill.status="paid"; bill.payment_id=entity.get("id"); bill.paid_at=datetime.utcnow()
+            order=db.get(Order,bill.order_id)
+            if order: order.payment_status="paid"
+            db.commit()
     return {"received":True}
 
 @app.get("/api/v1/public/business/{slug}/service-requests/{request_id}")
