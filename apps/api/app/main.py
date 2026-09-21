@@ -7,6 +7,7 @@ from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product
 from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign
+from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department
 from .schemas import *
 from .services import *
 from .brain import generate_reply
@@ -14,6 +15,8 @@ from .config import settings
 from .signaling import signal
 from .integrations import WhatsAppAdapter,PaymentAdapter
 from .migrations import ensure_schema
+from .faq_seed import FAQS
+from .ai_router import detect_language
 import jwt,secrets
 
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
@@ -28,6 +31,14 @@ security=HTTPBearer(auto_error=False)
 @app.on_event("startup")
 async def startup():
     ensure_schema()
+    db=SessionLocal()
+    try:
+        if db.scalar(select(GlobalFaq.id).limit(1)) is None:
+            for industry,language,intent,question,answer,keywords in FAQS:
+                db.add(GlobalFaq(industry=industry,language=language,intent=intent,question=question,answer=answer,keywords=keywords))
+            db.commit()
+    finally:
+        db.close()
 def get_db():
     db=SessionLocal()
     try: yield db
@@ -99,10 +110,10 @@ def lead(payload:LeadCreate,user=Depends(get_current_user),db:Session=Depends(ge
 def leads(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); rows=db.scalars(select(Lead).where(Lead.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"intent":x.intent,"notes":x.notes,"status":x.status} for x in rows]}
 
-class ChatRequest(BaseModel): tenant_id:str; message:str=Field(min_length=1,max_length=4000); name:str|None=None; phone:str|None=None
+class ChatRequest(BaseModel): tenant_id:str; message:str=Field(min_length=1,max_length=4000); name:str|None=None; phone:str|None=None; conversation_id:str|None=None; channel:str="pwa"
 @app.post("/api/v1/ai/chat")
 async def ai_chat(payload:ChatRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,payload.tenant_id); result=await generate_reply(db,payload.tenant_id,payload.message)
+    require_tenant(user,payload.tenant_id); result=await generate_reply(db,payload.tenant_id,payload.message,payload.conversation_id,payload.channel)
     return {**result,"tenant_id":payload.tenant_id}
 @app.get("/api/v1/tenants/{tenant_id}/knowledge")
 def knowledge(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -111,6 +122,25 @@ class KnowledgeCreate(BaseModel): title:str; content:str; kind:str="faq"
 @app.post("/api/v1/tenants/{tenant_id}/knowledge",status_code=201)
 def add_knowledge(tenant_id,payload:KnowledgeCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); x=KnowledgeItem(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return x
+
+@app.get("/api/v1/public/languages")
+def supported_languages():
+    return {"languages":[{"code":"en","name":"English"},{"code":"hi","name":"Hindi"},{"code":"te","name":"Telugu"},{"code":"ta","name":"Tamil"},{"code":"kn","name":"Kannada"},{"code":"ml","name":"Malayalam"},{"code":"mr","name":"Marathi"},{"code":"bn","name":"Bengali"},{"code":"gu","name":"Gujarati"},{"code":"pa","name":"Punjabi"},{"code":"ur","name":"Urdu"},{"code":"or","name":"Odia"},{"code":"as","name":"Assamese"}]}
+
+@app.get("/api/v1/tenants/{tenant_id}/conversations/{conversation_id}")
+def conversation_history(tenant_id,conversation_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    c=db.scalar(select(Conversation).where(Conversation.id==conversation_id,Conversation.tenant_id==tenant_id))
+    if not c: raise HTTPException(404,"Conversation not found")
+    rows=db.scalars(select(ConversationMessage).where(ConversationMessage.conversation_id==c.id).order_by(ConversationMessage.created_at)).all()
+    return {"id":c.id,"language":c.language,"state":c.state,"intent":c.intent,"turns":c.turns,"messages":[{"role":x.role,"content":x.content,"language":x.language,"intent":x.intent,"created_at":x.created_at} for x in rows]}
+
+@app.get("/api/v1/global/faqs")
+def global_faqs(industry:str|None=None,language:str="en",db:Session=Depends(get_db)):
+    q=select(GlobalFaq).where(GlobalFaq.is_active==True,GlobalFaq.language==language)
+    if industry: q=q.where(GlobalFaq.industry.in_([industry,"general"]))
+    rows=db.scalars(q).all()
+    return {"items":[{"id":x.id,"industry":x.industry,"language":x.language,"intent":x.intent,"question":x.question,"answer":x.answer,"keywords":x.keywords} for x in rows]}
 
 @app.get("/api/v1/public/business/{slug}")
 def public_business(slug:str,db:Session=Depends(get_db)):
@@ -121,7 +151,7 @@ def public_business(slug:str,db:Session=Depends(get_db)):
 async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
     t=db.get(Tenant,payload.tenant_id)
     if not t: raise HTTPException(404,"Business not found")
-    result=await generate_reply(db,t.id,payload.message)
+    result=await generate_reply(db,t.id,payload.message,payload.conversation_id,payload.channel)
     if payload.phone:
         c=upsert_customer(db,t.id,payload.phone,payload.name,False)
         if result["intent"] in ("booking","human_handoff","pricing"): create_lead(db,t.id,"customer_pwa",c.id,result["intent"],payload.message)
