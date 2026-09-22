@@ -15,7 +15,7 @@ from .brain import generate_reply,knowledge_context
 from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
-from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter
+from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter,tenant_payment_adapter
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
@@ -723,7 +723,7 @@ def create_bill_payment(slug,bill_id,db:Session=Depends(get_db)):
     if not bill: raise HTTPException(404,"Bill not found")
     if bill.status=="paid": return {"paid":True,"bill_id":bill.id}
     try:
-        result=asyncio.run(PaymentAdapter(settings.razorpay_key_id,settings.razorpay_key_secret).create_order(int(bill.total)*100,"INR","bill-"+bill.id[:24]))
+        result=asyncio.run(tenant_payment_adapter(db,t.id,settings).create_order(int(bill.total)*100,"INR","bill-"+bill.id[:24]))
     except RuntimeError as exc: raise HTTPException(503,str(exc))
     except Exception as exc: raise HTTPException(502,"Unable to create payment order")
     return {"bill_id":bill.id,"key_id":settings.razorpay_key_id,"amount":result.get("amount"),"currency":result.get("currency"),"razorpay_order_id":result.get("id")}
@@ -737,7 +737,7 @@ def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(ge
     if bill.status=="paid":
         if bill.payment_id and bill.payment_id!=payload.razorpay_payment_id: raise HTTPException(409,"Bill is already paid with another payment")
         return {"paid":True,"bill_id":bill.id,"payment_id":bill.payment_id}
-    expected=hmac.new(settings.razorpay_key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
+    payment_adapter=tenant_payment_adapter(db,t.id,settings)\n    if not payment_adapter.key_secret: raise HTTPException(503,"Razorpay is not configured")\n    expected=hmac.new(payment_adapter.key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected,payload.razorpay_signature): raise HTTPException(400,"Invalid payment signature")
     bill.payment_id=payload.razorpay_payment_id; bill.status="paid"; bill.paid_at=datetime.utcnow()
     order=db.get(Order,bill.order_id)
