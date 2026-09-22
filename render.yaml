@@ -27,6 +27,26 @@ services:
         value: 3.12.1
       - key: JWT_SECRET
         generateValue: true
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFICATION_FROM_EMAIL
+        sync: false
+      - key: NOTIFICATION_FROM_NAME
+        value: AI Growth OS
+      - key: PASSWORD_RESET_TTL_MINUTES
+        value: "30"
+      - key: NOTIFICATION_WHATSAPP_PROVIDER
+        sync: false
+      - key: NOTIFICATION_WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: NOTIFICATION_WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: NOTIFICATION_WHATSAPP_OPENWA_BASE_URL
+        sync: false
+      - key: NOTIFICATION_WHATSAPP_OPENWA_API_KEY
+        sync: false
+      - key: NOTIFICATION_WHATSAPP_OPENWA_SESSION_ID
+        sync: false
 
   - type: web
     name: ai-growth-os-web
