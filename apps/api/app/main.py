@@ -1563,7 +1563,6 @@ APPROVED BUSINESS CONTEXT:\
         gemini=await voice_gateway.adapter_for(provider).connect(provider,system_instruction=system,tools=tool_declarations)
         try:
             await websocket.send_json({"type":"status","status":"ai_connected","provider":provider.name})
-            await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}})
             await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}}))
             async def browser_to_gemini():
                 while True:
