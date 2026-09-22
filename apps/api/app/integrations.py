@@ -116,7 +116,7 @@ def tenant_payment_adapter(db, tenant_id: str, settings_obj) -> PaymentAdapter:
     row=db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key=="razorpay",TenantIntegration.status=="connected"))
     if row and row.config_encrypted:
         try:
-            cfg=decrypt_channel_config(row.config_encrypted, settings_obj.whatsapp_credential_encryption_key)
+            cfg=decrypt_channel_config(row.config_encrypted, settings_obj.integration_credential_encryption_key or settings_obj.whatsapp_credential_encryption_key)
             if cfg.get("key_id") and cfg.get("key_secret"):
                 return PaymentAdapter(cfg["key_id"],cfg["key_secret"])
         except Exception:
