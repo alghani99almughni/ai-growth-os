@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     ai_voice_enabled:bool=False
     meta_client_id:str=""; meta_client_secret:str=""; meta_redirect_uri:str=""
     google_client_id:str=""; google_client_secret:str=""; google_redirect_uri:str=""
+    oauth_state_ttl_seconds:int=600
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
