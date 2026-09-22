@@ -259,7 +259,7 @@ export default function SSNutritions(){
       <nav><a href="#about">About</a><a href="#wellness">Wellness</a><a href="#contact">Contact</a></nav>
       <div className="ss-nav-actions">
         <button type="button" className="ss-nav-cta ss-call-outline" onClick={openCall}>☎ Call us</button>
-        <a className="ss-nav-cta ss-nav-wa" href={whatsappLink} target="_blank" rel="noreferrer">WhatsApp</a>
+        <a className="ss-nav-cta ss-app-link" href="/pwa/ss-nutritions">Open app</a><a className="ss-nav-cta ss-nav-wa" href={whatsappLink} target="_blank" rel="noreferrer">WhatsApp</a>
       </div>
     </header>
 
@@ -300,7 +300,7 @@ export default function SSNutritions(){
       <div><p className="ss-eyebrow">LET'S TALK</p><h2>{c.contact_heading}</h2><p>{c.contact_text}</p></div>
       <div className="ss-contact-card">
         <div><span>📍</span><div><strong>Visit / connect</strong><p>{address}</p></div></div>
-        <div className="ss-contact-actions">
+        <div id="call" className="ss-contact-actions">
           <button type="button" className="ss-wa ss-call-card" onClick={openCall}>☎ Call us <span>Talk now ↗</span></button>
           <a href={whatsappLink} target="_blank" rel="noreferrer" className="ss-wa">💬 Continue on WhatsApp <span>↗</span></a>
         </div>
