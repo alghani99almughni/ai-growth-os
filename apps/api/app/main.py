@@ -1236,9 +1236,7 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
-            call.transcript=((call.transcript+"
-") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"
-AI: "+result["reply"]
+            call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\\nAI: "+result["reply"]
             call.intent=result.get("intent"); db.commit()
     return {**result,"tenant_id":t.id,"call_id":payload.call_id}
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
