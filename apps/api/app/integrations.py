@@ -97,3 +97,14 @@ def whatsapp_adapter_from_config(config: dict) -> WhatsAppAdapter:
         access_token=config.get("access_token",""),
         phone_number_id=config.get("phone_number_id",""),
     )
+
+
+def tenant_whatsapp_adapter(db, tenant_id: str, settings_obj) -> WhatsAppAdapter:
+    from .models import TenantWhatsAppConnection
+    row = db.scalar(__import__("sqlalchemy").select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id == tenant_id))
+    if row and row.config_encrypted:
+        try:
+            return whatsapp_adapter_from_config(decrypt_channel_config(row.config_encrypted, settings_obj.whatsapp_credential_encryption_key))
+        except Exception:
+            pass
+    return WhatsAppAdapter(provider=settings_obj.whatsapp_provider,openwa_base_url=settings_obj.openwa_base_url,openwa_api_key=settings_obj.openwa_api_key,openwa_session_id=settings_obj.openwa_session_id,access_token=settings_obj.whatsapp_access_token,phone_number_id=settings_obj.whatsapp_phone_number_id)
