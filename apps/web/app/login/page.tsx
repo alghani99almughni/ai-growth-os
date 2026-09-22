@@ -13,7 +13,7 @@ export default function Login() {
     localStorage.setItem("ago_access_token",data.access_token);
     localStorage.setItem("ago_user",JSON.stringify(data.user));
     localStorage.setItem("ago_tenant",JSON.stringify(data.tenant));
-    window.location.href="/dashboard";
+    window.location.href=data.user.role==="platform_admin"||data.user.role==="super_admin"?"/platform":"/dashboard";
   }
   return <main className="shell"><div className="card" style={{maxWidth:480,margin:"60px auto"}}>
     <p>AI GROWTH OS</p><h1>Sign in</h1><p>Access your business workspace.</p>
