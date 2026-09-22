@@ -1590,8 +1590,21 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
+            now=datetime.utcnow()
             call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\\nAI: "+result["reply"]
-            call.intent=result.get("intent"); db.commit()
+            call.intent=result.get("intent")
+            call.language=result.get("language") or detect_language(payload.transcript)
+            call.ai_turns=(call.ai_turns or 0)+1
+            if result.get("knowledge_hit"): call.knowledge_hits=(call.knowledge_hits or 0)+1
+            if result.get("handoff_required"):
+                call.human_callback_requested=True; call.status="handoff_requested"; call.resolution="human_callback"
+                route_call(db,t.id,call,result.get("intent"))
+            elif result.get("knowledge_hit"):
+                call.resolution="knowledge"
+            else:
+                call.resolution="ai"
+            if call.answered_at is None: call.answered_at=now
+            db.commit()
     return {**result,"tenant_id":t.id,"call_id":payload.call_id}
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
 def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
