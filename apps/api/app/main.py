@@ -192,7 +192,7 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     tenant=db.get(Tenant,u.tenant_id)
     if not tenant or tenant.status!="active": raise HTTPException(403,"Tenant is not active")
     return u
-FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":True,"referrals":True,"feedback":True,"google_review":True,"bookings":True,"queue":True}
+FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True}
 GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id":"brick","name":"Brick Breaker"},{"id":"flappy","name":"Flappy"},{"id":"tap","name":"Tap Target"},{"id":"2048","name":"2048"}]
 def _feature_config(db,tenant_id):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
@@ -852,14 +852,14 @@ def save_game_score(slug,game:str,score:int=Query(ge=0,le=1000000),customer_id:s
     if customer_id:
         customer=db.scalar(select(Customer).where(Customer.id==customer_id,Customer.tenant_id==t.id))
     # Reward is deliberately capped and limited to three rewarded plays per game/day/customer.
-    reward=0 if not customer else min(25,max(1,score//20))
+    reward=0 if not customer or not _feature_config(db,t.id).get("loyalty",False) else min(25,max(1,score//20))
     if customer and reward:
         day_start=datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0)
         rewarded_count=db.scalar(select(__import__("sqlalchemy").func.count(GameScore.id)).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start)) or 0
         if rewarded_count>=3: reward=0
     row=GameScore(tenant_id=t.id,customer_id=customer.id if customer else None,game=game,score=score,reward_points=reward)
     db.add(row); db.flush()
-    if customer and reward and _feature_config(db,t.id).get("loyalty",True):
+    if customer and reward and _feature_config(db,t.id).get("loyalty",False):
         existing=db.scalar(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==t.id,LoyaltyTransaction.customer_id==customer.id,LoyaltyTransaction.reason=="game:"+game,LoyaltyTransaction.reference_id==row.id))
         if not existing: db.add(LoyaltyTransaction(tenant_id=t.id,customer_id=customer.id,points=reward,reason="game:"+game,reference_id=row.id))
     db.commit(); db.refresh(row)
@@ -1185,12 +1185,14 @@ def update_order(tenant_id,order_id,payload:OrderStatusUpdate,user=Depends(get_c
     if payload.status=="completed":
         b=db.scalar(select(Bill).where(Bill.order_id==o.id))
         if not b: db.add(Bill(tenant_id=tenant_id,order_id=o.id,subtotal=o.subtotal,tax=o.tax,discount=o.discount,total=o.total))
-        if o.customer_id:
+        if o.customer_id and _feature_config(db,tenant_id).get("loyalty",False):
             rules=db.scalars(select(LoyaltyRule).where(LoyaltyRule.tenant_id==tenant_id,LoyaltyRule.event_type=="purchase",LoyaltyRule.is_active==True)).all()
             for rule in rules:
                 cfg=json.loads(rule.config_json or "{}")
                 if int(cfg.get("minimum_bill",0))<=o.total:
-                    db.add(LoyaltyTransaction(tenant_id=tenant_id,customer_id=o.customer_id,points=rule.points,reason=rule.name,reference_id=o.id))
+                    existing=db.scalar(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==o.customer_id,LoyaltyTransaction.reason==rule.name,LoyaltyTransaction.reference_id==o.id))
+                    if not existing:
+                        db.add(LoyaltyTransaction(tenant_id=tenant_id,customer_id=o.customer_id,points=rule.points,reason=rule.name,reference_id=o.id))
     db.commit(); db.refresh(o)
     bill=db.scalar(select(Bill).where(Bill.order_id==o.id))
     publish_event_sync(tenant_id,"order.updated",{
