@@ -1722,7 +1722,7 @@ def customer_call_summary(tenant_id,customer_id,user=Depends(get_current_user),d
     return {"customer_id":customer_id,"total_calls":len(rows),"total_duration_seconds":sum(x.duration_seconds or 0 for x in rows),"last_call_at":rows[-1].created_at.isoformat() if rows else None,"languages":sorted({x.language for x in rows if x.language}),"calls":[{"id":x.id,"call_number":x.call_number,"created_at":x.created_at.isoformat(),"duration_seconds":x.duration_seconds,"status":x.status,"resolution":x.resolution,"language":x.language,"human_callback_requested":x.human_callback_requested,"intent":x.intent,"summary":x.summary} for x in rows]}
 
 @app.post("/api/v1/auth/password-reset/request")
-def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
+async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==payload.email.lower().strip()))
     if user and user.is_active:
         raw=secrets.token_urlsafe(48); digest=hashlib.sha256(raw.encode()).hexdigest(); expires=datetime.utcnow()+timedelta(minutes=settings.password_reset_ttl_minutes)
