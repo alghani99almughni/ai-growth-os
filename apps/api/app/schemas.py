@@ -177,3 +177,21 @@ class PaymentVerify(BaseModel):
     razorpay_order_id: str
     razorpay_payment_id: str
     razorpay_signature: str
+
+
+class WhatsAppConnectionConfig(BaseModel):
+    provider: str = Field(pattern=r"^(openwa|meta)$")
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    session_id: Optional[str] = None
+    access_token: Optional[str] = None
+    phone_number_id: Optional[str] = None
+    connected_phone: Optional[str] = Field(default=None, max_length=32)
+    display_name: Optional[str] = Field(default=None, max_length=160)
+
+class WhatsAppConnectionStatus(BaseModel):
+    provider: str
+    status: str
+    connected_phone: Optional[str] = None
+    display_name: Optional[str] = None
+    configured: bool
