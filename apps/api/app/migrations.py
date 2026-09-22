@@ -8,6 +8,8 @@ def ensure_schema():
     with engine.begin() as conn:
         dialect=engine.dialect.name
         if dialect=="postgresql":
+            conn.execute(text("CREATE TABLE IF NOT EXISTS ai_provider_usage (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36), provider VARCHAR(60) NOT NULL, model VARCHAR(120) NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, rate_limit_count INTEGER NOT NULL DEFAULT 0, estimated_input_tokens INTEGER NOT NULL DEFAULT 0, estimated_output_tokens INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_used_at TIMESTAMP, cooldown_until TIMESTAMP, created_at TIMESTAMP NOT NULL)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_provider_usage_tenant_provider ON ai_provider_usage(tenant_id, provider)"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS tenant_integrations (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, integration_key VARCHAR(60) NOT NULL, provider VARCHAR(60) NOT NULL, mode VARCHAR(20) NOT NULL DEFAULT 'platform', status VARCHAR(30) NOT NULL DEFAULT 'disconnected', config_encrypted TEXT NOT NULL DEFAULT '', account_name VARCHAR(200), account_id VARCHAR(200), metadata_json TEXT NOT NULL DEFAULT '{}', created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tenant_integrations_tenant_id ON tenant_integrations(tenant_id)"))
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tenant_integrations_tenant_key ON tenant_integrations(tenant_id, integration_key)"))
@@ -38,6 +40,7 @@ def ensure_schema():
             conn.execute(text("CREATE TABLE IF NOT EXISTS knowledge_candidates (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, language VARCHAR(16) NOT NULL DEFAULT 'en', intent VARCHAR(120), status VARCHAR(30) NOT NULL DEFAULT 'pending', source VARCHAR(40) NOT NULL DEFAULT 'voice', provider VARCHAR(60) NOT NULL DEFAULT 'ai', times_asked INTEGER NOT NULL DEFAULT 1, first_asked_at TIMESTAMP NOT NULL, last_asked_at TIMESTAMP NOT NULL, created_at TIMESTAMP NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_tenant_id ON knowledge_candidates(tenant_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_status ON knowledge_candidates(status)"))
+            conn.execute(text("ALTER TABLE ai_provider_usage ADD COLUMN IF NOT EXISTS credential_ref VARCHAR(32) DEFAULT 'default'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS language VARCHAR(16) DEFAULT 'en'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS source VARCHAR(60) DEFAULT 'manual'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR(30) DEFAULT 'approved'"))
@@ -56,6 +59,8 @@ def ensure_schema():
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens(user_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)"))
         elif dialect=="sqlite":
+            conn.execute(text("CREATE TABLE IF NOT EXISTS ai_provider_usage (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36), provider VARCHAR(60) NOT NULL, model VARCHAR(120) NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, rate_limit_count INTEGER NOT NULL DEFAULT 0, estimated_input_tokens INTEGER NOT NULL DEFAULT 0, estimated_output_tokens INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_used_at DATETIME, cooldown_until DATETIME, created_at DATETIME NOT NULL)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_provider_usage_tenant_provider ON ai_provider_usage(tenant_id, provider)"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS tenant_integrations (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, integration_key VARCHAR(60) NOT NULL, provider VARCHAR(60) NOT NULL, mode VARCHAR(20) NOT NULL DEFAULT 'platform', status VARCHAR(30) NOT NULL DEFAULT 'disconnected', config_encrypted TEXT NOT NULL DEFAULT '', account_name VARCHAR(200), account_id VARCHAR(200), metadata_json TEXT NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tenant_integrations_tenant_id ON tenant_integrations(tenant_id)"))
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_tenant_integrations_tenant_key ON tenant_integrations(tenant_id, integration_key)"))
@@ -93,6 +98,8 @@ def ensure_schema():
             conn.execute(text("CREATE TABLE IF NOT EXISTS knowledge_candidates (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, language VARCHAR(16) NOT NULL DEFAULT 'en', intent VARCHAR(120), status VARCHAR(30) NOT NULL DEFAULT 'pending', source VARCHAR(40) NOT NULL DEFAULT 'voice', provider VARCHAR(60) NOT NULL DEFAULT 'ai', times_asked INTEGER NOT NULL DEFAULT 1, first_asked_at DATETIME NOT NULL, last_asked_at DATETIME NOT NULL, created_at DATETIME NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_tenant_id ON knowledge_candidates(tenant_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_status ON knowledge_candidates(status)"))
+            ai_usage_cols={r[1] for r in conn.execute(text("PRAGMA table_info(ai_provider_usage)"))}
+            if "credential_ref" not in ai_usage_cols: conn.execute(text("ALTER TABLE ai_provider_usage ADD COLUMN credential_ref VARCHAR(32) DEFAULT 'default'"))
             knowledge_cols={r[1] for r in conn.execute(text("PRAGMA table_info(knowledge_items)"))}
             for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("source","VARCHAR(60) DEFAULT 'manual'"),("approval_status","VARCHAR(30) DEFAULT 'approved'"),("usage_count","INTEGER DEFAULT 0"),("last_used_at","DATETIME")]:
                 if name not in knowledge_cols: conn.execute(text(f"ALTER TABLE knowledge_items ADD COLUMN {name} {definition}"))
