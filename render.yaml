@@ -1,0 +1,52 @@
+services:
+  - type: web
+    name: ai-growth-os-api
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r apps/api/requirements.txt
+    startCommand: uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-growth-os-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: ai-growth-os-redis
+          type: keyvalue
+          property: connectionString
+      - key: ALLOWED_ORIGINS
+        value: https://ai-growth-os-web.onrender.com
+      - key: PUBLIC_APP_URL
+        value: https://ai-growth-os-web.onrender.com
+      - key: PYTHON_VERSION
+        value: 3.12.1
+      - key: JWT_SECRET
+        generateValue: true
+
+  - type: web
+    name: ai-growth-os-web
+    runtime: node
+    plan: free
+    region: singapore
+    buildCommand: cd apps/web && npm install && npm run build
+    startCommand: cd apps/web && npm start
+    autoDeployTrigger: commit
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://ai-growth-os-api.onrender.com
+
+  - type: keyvalue
+    name: ai-growth-os-redis
+    plan: free
+    region: singapore
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: ai-growth-os-db
+    plan: free
+    region: singapore
+    postgresMajorVersion: "18"
