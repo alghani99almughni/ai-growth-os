@@ -20,34 +20,10 @@ from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
-from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter
 
-class GeminiLiveAdapter:
-    name = "gemini"
+from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter, GeminiLiveAdapter
 
-    async def connect(self, provider, *, system_instruction, tools):
-        import websockets
-        ws_url = (
-            "wss://generativelanguage.googleapis.com/ws/"
-            "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-            "?key=" + provider.api_key
-        )
-        ws = await websockets.connect(ws_url, max_size=8*1024*1024, ping_interval=20, ping_timeout=20)
-        setup = {
-            "setup": {
-                "model": "models/" + provider.model,
-                "generationConfig": {"responseModalities": ["AUDIO"]},
-                "systemInstruction": {"parts": [{"text": system_instruction}]},
-                "inputAudioTranscription": {},
-                "outputAudioTranscription": {},
-                "sessionResumption": {},
-                "tools": [{"functionDeclarations": tools}],
-            }
-        }
-        await ws.send(json.dumps(setup))
-        return ws
-
-voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter()})
+voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRealtimeAdapter()})
 
 from .routing import route_call, available_staff
 from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
