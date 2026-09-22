@@ -47,7 +47,8 @@ export default function SSNutritions(){
   const [phone,setPhone]=useState("");
   const [callError,setCallError]=useState("");
   const [transcript,setTranscript]=useState<Array<{role:string;text:string}>>([]);
-  const [muted,setMuted]=useState(false);\n  const mutedRef=useRef(false);
+  const [muted,setMuted]=useState(false);
+  const mutedRef=useRef(false);
   const socketRef=useRef<WebSocket|null>(null);
   const streamRef=useRef<MediaStream|null>(null);
   const audioContextRef=useRef<AudioContext|null>(null);
