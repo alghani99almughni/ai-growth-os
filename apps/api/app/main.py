@@ -16,6 +16,7 @@ from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
 from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter,tenant_payment_adapter
+from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
@@ -26,7 +27,7 @@ from .social_routes import router as social_router
 import asyncio,json,base64,uuid
 from datetime import datetime,date,time,timedelta
 import websockets
-import jwt,secrets
+import jwt,secrets,hashlib
 
 import asyncio
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
