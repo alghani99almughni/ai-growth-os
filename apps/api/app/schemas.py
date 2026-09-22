@@ -201,6 +201,7 @@ class LoyaltyRewardUpdate(BaseModel):
 
 class LoyaltyRedeemRequest(BaseModel):
     customer_id: str
+    reward_id: str
 
 class PaymentVerify(BaseModel):
     razorpay_order_id: str
