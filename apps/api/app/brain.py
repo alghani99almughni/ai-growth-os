@@ -7,6 +7,7 @@ from .models_ai import Conversation, ConversationMessage
 from .config import settings
 from .ai_router import detect_language, faq_match, structured_match, knowledge_match
 from .ai_provider_pool import last_resort_reply
+from .semantic_knowledge import semantic_match
 
 def knowledge_context(db: Session, tenant_id: str) -> str:
     tenant=db.get(Tenant,tenant_id)
@@ -47,19 +48,24 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     
     # Library-first policy: these paths consume zero model tokens.
     direct=structured_match(db,tenant_id,message)
-    library=knowledge_match(db,tenant_id,message) if not direct else None
+    semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
+    library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
     knowledge_hit = False
     handoff_required = False
+    retrieval_stage="structured"
     if direct:
         reply=direct; provider="deterministic"
-        knowledge_hit=True
+        knowledge_hit=True; retrieval_stage="structured"
+    elif semantic:
+        reply=semantic["content"]; provider="semantic_library"
+        knowledge_hit=True; retrieval_stage="semantic"
     elif library:
         reply=library; provider="tenant_library"
-        knowledge_hit=True
+        knowledge_hit=True; retrieval_stage="lexical_library"
     elif faq:
         reply=faq.answer; provider="global_faq"
-        knowledge_hit=True
+        knowledge_hit=True; retrieval_stage="global_faq"
     else:
         context=knowledge_context(db,tenant_id)
         prompt=(
@@ -72,6 +78,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "\nCUSTOMER:\n" + message
         )
         reply,provider=await last_resort_reply(db,tenant_id,prompt)
+        retrieval_stage="generation"
         if not reply or any(x in (reply or "").casefold() for x in ("i don't have enough information","i need a human","human team","call you back","team member to follow up","i cannot verify")):
             handoff_required=True
             reply="I don't want to give you an unverified answer. I'll arrange for our team to call you back."
@@ -106,4 +113,4 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
     db.commit()
-    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required}
+    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage}
