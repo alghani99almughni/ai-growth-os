@@ -5,7 +5,7 @@ from .models import Tenant, Service, Product
 from .models_growth import KnowledgeItem,TenantSetting
 from .models_ai import Conversation, ConversationMessage
 from .config import settings
-from .ai_router import detect_language, faq_match, structured_match
+from .ai_router import detect_language, faq_match, structured_match, knowledge_match\nfrom .ai_provider_pool import last_resort_reply
 
 def knowledge_context(db: Session, tenant_id: str) -> str:
     tenant=db.get(Tenant,tenant_id)
@@ -44,17 +44,18 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     c=conversation(db,tenant_id,message,language,channel,conversation_id)
     db.add(ConversationMessage(conversation_id=c.id,role="user",content=message,language=language,intent=intent))
     
-    # Cost router: structured business data and global FAQs are checked before an LLM.
+    # Library-first policy: these paths consume zero model tokens.
     direct=structured_match(db,tenant_id,message)
-    faq=faq_match(db,tenant.industry,message,language) if not direct else None
+    library=knowledge_match(db,tenant_id,message) if not direct else None
+    faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
     if direct:
         reply=direct; provider="deterministic"
+    elif library:
+        reply=library; provider="tenant_library"
     elif faq:
         reply=faq.answer; provider="global_faq"
-    elif not settings.gemini_api_key:
-        reply="I can help with this business's verified information. Please ask about its services, products, booking, pricing, or contact options."
-        provider="local"
     else:
+        # Only now do we use an AI token. This is explicitly the last-resort path.
         context=knowledge_context(db,tenant_id)
         prompt=(
             "You are the AI customer engagement agent. Reply in the customer's language when possible. "
@@ -64,13 +65,10 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "\\n\\nCUSTOMER LANGUAGE: " + language +
             "\\nCUSTOMER:\\n" + message
         )
-        url="https://generativelanguage.googleapis.com/v1beta/models/"+settings.gemini_model+":generateContent?key="+settings.gemini_api_key
-        async with httpx.AsyncClient(timeout=30) as client:
-            response=await client.post(url,json={"contents":[{"parts":[{"text":prompt}]}]})
-            response.raise_for_status()
-            data=response.json()
-        reply=data.get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text") or "A staff member can help with that."
-        provider="gemini"
+        reply,provider=await last_resort_reply(db,tenant_id,prompt)
+        if not reply:
+            reply="I can help with this business's verified information. Please ask about its services, products, booking, pricing, or contact options."
+            provider="local"
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
     db.commit()
