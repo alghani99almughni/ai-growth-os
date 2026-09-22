@@ -58,3 +58,69 @@ docker compose -f infrastructure/docker/docker-compose.yml up -d
 ```
 
 See `docs/PHASE_1.md` for the implementation contract.
+
+
+## Tenant integrations
+
+The Business Admin dashboard now exposes a simple **Settings → Integrations** experience.
+
+Platform defaults can be used without tenant credentials. A tenant can optionally connect its own account/provider. Tenant configuration takes precedence over the platform default.
+
+Supported integration choices include:
+- Built-in WhatsApp (OpenWA) and Meta WhatsApp Cloud API
+- Razorpay
+- Gemini
+- OpenAI / ChatGPT API
+- OpenRouter
+- Claude / Anthropic
+- Meta Business / Facebook / Instagram / Meta Ads
+- YouTube
+- Google Business Profile
+- Email / SMTP
+- Voice & Calling
+
+Secrets are encrypted at rest and status responses never return raw secret values.
+
+### AI routing policy
+
+The AI Router itself is **tokenless**. It performs language/intent detection and deterministic matching only.
+
+The response order is:
+
+1. Structured tenant data
+2. Tenant Business Knowledge Library
+3. Global approved FAQ library
+4. Last-resort AI provider pool
+
+Model tokens are therefore reserved for cases where the verified library cannot answer the customer. A tenant-owned AI provider is used before the platform fallback pool. Platform AI providers can be prioritized by Super Admin and failed/rate-limited providers are skipped.
+
+### Platform environment variables
+
+Use a Fernet key for encrypted integration credentials:
+
+```bash
+INTEGRATION_CREDENTIAL_ENCRYPTION_KEY=<fernet-key>
+WHATSAPP_CREDENTIAL_ENCRYPTION_KEY=<existing-fernet-key>
+```
+
+Optional platform AI fallbacks:
+
+```bash
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.6-luna
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=qwen/qwen3-coder
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-3-5-haiku-latest
+```
+
+Built-in WhatsApp uses the platform OpenWA service:
+
+```bash
+OPENWA_BASE_URL=http://localhost:2785
+OPENWA_API_KEY=
+```
+
+The tenant never sees the platform OpenWA URL/API key/session credentials. The Business Admin only enters its WhatsApp number and connects by pairing code or QR.
