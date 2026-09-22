@@ -16,9 +16,13 @@ async def _call(provider: str, api_key: str, model: str, prompt: str) -> str:
             r=await client.post(url,json={"contents":[{"parts":[{"text":prompt}]}]})
             r.raise_for_status()
             return r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[{}])[0].get("text") or ""
-        if provider in ("openai","openrouter"):
-            base="https://api.openai.com/v1/chat/completions" if provider=="openai" else "https://openrouter.ai/api/v1/chat/completions"
-            r=await client.post(base,headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},json={"model":model,"messages":[{"role":"user","content":prompt}],"temperature":0.2})
+        if provider=="openai":
+            r=await client.post("https://api.openai.com/v1/responses",headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},json={"model":model,"input":prompt})
+            r.raise_for_status()
+            data=r.json()
+            return data.get("output_text") or ""
+        if provider=="openrouter":
+            r=await client.post("https://openrouter.ai/api/v1/chat/completions",headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},json={"model":model,"messages":[{"role":"user","content":prompt}],"temperature":0.2})
             r.raise_for_status()
             return r.json().get("choices",[{}])[0].get("message",{}).get("content") or ""
         if provider=="anthropic":
