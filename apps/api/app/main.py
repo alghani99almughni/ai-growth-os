@@ -273,6 +273,27 @@ def disconnect_whatsapp(tenant_id,user=Depends(get_current_user),db:Session=Depe
     if row: row.status="disconnected"; row.config_encrypted=""; row.updated_at=datetime.utcnow(); db.commit()
     return {"provider":row.provider if row else settings.whatsapp_provider,"status":"disconnected","connected_phone":None,"display_name":None,"configured":False}
 
+class ReferralSettingsUpdate(BaseModel):
+    enabled: bool = False
+    referrer_points: int = Field(default=50, ge=0, le=100000)
+    referee_points: int = Field(default=25, ge=0, le=100000)
+    minimum_purchase: float = Field(default=0, ge=0)
+    message: str = Field(default="Invite a friend and earn wellness rewards.", max_length=500)
+
+@app.get("/api/v1/tenants/{tenant_id}/referral-settings")
+def get_referral_settings(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="referral_settings"))
+    try: return {"enabled":_feature_config(db,tenant_id).get("referrals",False),**(json.loads(row.value_json) if row else {"referrer_points":50,"referee_points":25,"minimum_purchase":0,"message":"Invite a friend and earn wellness rewards."})}
+    except Exception: return {"enabled":False,"referrer_points":50,"referee_points":25,"minimum_purchase":0,"message":"Invite a friend and earn wellness rewards."}
+
+@app.put("/api/v1/tenants/{tenant_id}/referral-settings")
+def update_referral_settings(tenant_id,payload:ReferralSettingsUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    cfg=payload.model_dump(); enabled=cfg.pop("enabled")
+    features=_feature_config(db,tenant_id); features["referrals"]=bool(enabled); _set_setting(db,tenant_id,"features",features)
+    return {"enabled":enabled,**_set_setting(db,tenant_id,"referral_settings",cfg)}
+
 class WebsiteContentUpdate(BaseModel):
     eyebrow: str = Field(default="MOINABAD · RANGAREDDY · TELANGANA", max_length=160)
     hero_title: str = Field(default="Feel better.", max_length=160)
