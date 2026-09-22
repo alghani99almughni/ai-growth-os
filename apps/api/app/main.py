@@ -193,6 +193,17 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     if not tenant or tenant.status!="active": raise HTTPException(403,"Tenant is not active")
     return u
 FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True}
+INDUSTRY_FEATURES={
+    "restaurant":{"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "cafe":{"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "hotel":{"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":False,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "salon":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":False,"auto_bill":False,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "dental":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":False,"auto_bill":False,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "gym":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":True,"auto_bill":False,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "health":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":False,"auto_bill":False,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "wellness":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":False,"auto_bill":False,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
+    "real-estate":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":False,"auto_bill":False,"online_payment":False,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":False}
+}
 GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id":"brick","name":"Brick Breaker"},{"id":"flappy","name":"Flappy"},{"id":"tap","name":"Tap Target"},{"id":"2048","name":"2048"}]
 def _feature_config(db,tenant_id):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
@@ -222,6 +233,8 @@ def register(payload:RegisterRequest,db:Session=Depends(get_db)):
     if db.scalar(select(User).where(User.email==payload.email.lower())): raise HTTPException(409,"Email already registered")
     if db.scalar(select(Tenant).where(Tenant.slug==payload.slug.lower())): raise HTTPException(409,"Business slug already exists")
     t=create_tenant(db,payload.business_name,payload.slug,payload.industry); u=create_owner(db,payload.name,payload.email,payload.password,t)
+    provision_defaults(db,t,payload.industry)
+    _set_setting(db,t.id,"features",{**FEATURE_DEFAULTS,**INDUSTRY_FEATURES.get(payload.industry.lower(),{})})
     return {"access_token":create_access_token(u),"token_type":"bearer","user":user_out(u),"tenant":t}
 @app.post("/api/v1/auth/login",response_model=AuthResponse)
 def login(payload:LoginRequest,db:Session=Depends(get_db)):
