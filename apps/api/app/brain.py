@@ -72,7 +72,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "\nCUSTOMER:\n" + message
         )
         reply,provider=await last_resort_reply(db,tenant_id,prompt)
-        if not reply:
+        if not reply or any(x in (reply or "").casefold() for x in ("i don't have enough information","i need a human","human team","call you back","team member to follow up","i cannot verify")):
             handoff_required=True
             reply="I don't want to give you an unverified answer. I'll arrange for our team to call you back."
             provider="none"
