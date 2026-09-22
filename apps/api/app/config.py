@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     stt_provider:str="google"; tts_provider:str="google"; stt_api_key:str=""; tts_api_key:str=""
     telephony_provider:str=""; telephony_api_key:str=""; telephony_webhook_secret:str=""
     ai_voice_enabled:bool=False
+    meta_client_id:str=""; meta_client_secret:str=""; meta_redirect_uri:str=""
+    google_client_id:str=""; google_client_secret:str=""; google_redirect_uri:str=""
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
