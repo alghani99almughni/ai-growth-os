@@ -636,8 +636,73 @@ def get_loyalty_rules(tenant_id,user=Depends(get_current_user),db:Session=Depend
 @app.post("/api/v1/tenants/{tenant_id}/loyalty-rules",status_code=201)
 def create_loyalty_rule(tenant_id,payload:LoyaltyRuleCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
+    if not _feature_config(db, tenant_id).get("loyalty", True): raise HTTPException(403, "Loyalty program is disabled for this business")
     x=LoyaltyRule(tenant_id=tenant_id,event_type=payload.event_type,name=payload.name,points=payload.points,is_active=payload.is_active,config_json=json.dumps(payload.config))
     db.add(x); db.commit(); db.refresh(x); return {"id":x.id}
+
+@app.get("/api/v1/tenants/{tenant_id}/loyalty")
+def tenant_loyalty_summary(tenant_id, customer_id: str | None = Query(default=None), user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    enabled = _feature_config(db, tenant_id).get("loyalty", True)
+    if customer_id:
+        customer = db.scalar(select(Customer).where(Customer.id == customer_id, Customer.tenant_id == tenant_id))
+        if not customer: raise HTTPException(404, "Customer not found")
+        transactions = db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id == tenant_id, LoyaltyTransaction.customer_id == customer_id).order_by(LoyaltyTransaction.created_at.desc())).all()
+        balance = sum(x.points for x in transactions)
+        return {"enabled": enabled, "customer_id": customer_id, "balance": balance, "transactions": [{"id": x.id, "points": x.points, "reason": x.reason, "reference_id": x.reference_id, "created_at": x.created_at.isoformat()} for x in transactions[:100]]}
+    return {"enabled": enabled}
+
+@app.patch("/api/v1/tenants/{tenant_id}/loyalty-rules/{rule_id}")
+def update_loyalty_rule(tenant_id, rule_id, payload: LoyaltyRuleUpdate, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    if not _feature_config(db, tenant_id).get("loyalty", True): raise HTTPException(403, "Loyalty program is disabled for this business")
+    row = db.scalar(select(LoyaltyRule).where(LoyaltyRule.id == rule_id, LoyaltyRule.tenant_id == tenant_id))
+    if not row: raise HTTPException(404, "Loyalty rule not found")
+    for key in ("name", "points", "is_active"):
+        value = getattr(payload, key)
+        if value is not None: setattr(row, key, value)
+    if payload.config is not None: row.config_json = json.dumps(payload.config)
+    db.commit(); db.refresh(row)
+    return {"id": row.id, "event_type": row.event_type, "name": row.name, "points": row.points, "is_active": row.is_active, "config": json.loads(row.config_json or "{}")}
+
+@app.get("/api/v1/tenants/{tenant_id}/loyalty-rewards")
+def list_loyalty_rewards(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    rows = db.scalars(select(LoyaltyReward).where(LoyaltyReward.tenant_id == tenant_id).order_by(LoyaltyReward.points_cost)).all()
+    return {"enabled": _feature_config(db, tenant_id).get("loyalty", True), "items": [{"id": x.id, "name": x.name, "points_cost": x.points_cost, "description": x.description, "is_active": x.is_active} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/loyalty-rewards", status_code=201)
+def create_loyalty_reward(tenant_id, payload: LoyaltyRewardCreate, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    if not _feature_config(db, tenant_id).get("loyalty", True): raise HTTPException(403, "Loyalty program is disabled for this business")
+    x = LoyaltyReward(tenant_id=tenant_id, **payload.model_dump()); db.add(x); db.commit(); db.refresh(x)
+    return {"id": x.id, "name": x.name, "points_cost": x.points_cost, "description": x.description, "is_active": x.is_active}
+
+@app.patch("/api/v1/tenants/{tenant_id}/loyalty-rewards/{reward_id}")
+def update_loyalty_reward(tenant_id, reward_id, payload: LoyaltyRewardUpdate, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    if not _feature_config(db, tenant_id).get("loyalty", True): raise HTTPException(403, "Loyalty program is disabled for this business")
+    row = db.scalar(select(LoyaltyReward).where(LoyaltyReward.id == reward_id, LoyaltyReward.tenant_id == tenant_id))
+    if not row: raise HTTPException(404, "Loyalty reward not found")
+    for key in ("name", "points_cost", "description", "is_active"):
+        value = getattr(payload, key)
+        if value is not None: setattr(row, key, value)
+    db.commit(); db.refresh(row)
+    return {"id": row.id, "name": row.name, "points_cost": row.points_cost, "description": row.description, "is_active": row.is_active}
+
+@app.post("/api/v1/tenants/{tenant_id}/loyalty-redeem")
+def redeem_loyalty_reward(tenant_id, payload: LoyaltyRedeemRequest, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    if not _feature_config(db, tenant_id).get("loyalty", True): raise HTTPException(403, "Loyalty program is disabled for this business")
+    customer = db.scalar(select(Customer).where(Customer.id == payload.customer_id, Customer.tenant_id == tenant_id))
+    reward = db.scalar(select(LoyaltyReward).where(LoyaltyReward.id == payload.reward_id, LoyaltyReward.tenant_id == tenant_id, LoyaltyReward.is_active == True))
+    if not customer: raise HTTPException(404, "Customer not found")
+    if not reward: raise HTTPException(404, "Reward not found")
+    balance = db.scalar(select(__import__("sqlalchemy").func.coalesce(__import__("sqlalchemy").func.sum(LoyaltyTransaction.points), 0)).where(LoyaltyTransaction.tenant_id == tenant_id, LoyaltyTransaction.customer_id == customer.id)) or 0
+    if balance < reward.points_cost: raise HTTPException(409, "Insufficient loyalty points")
+    tx = LoyaltyTransaction(tenant_id=tenant_id, customer_id=customer.id, points=-reward.points_cost, reason="redeem:" + reward.id, reference_id=reward.id)
+    db.add(tx); db.commit(); db.refresh(tx)
+    return {"redeemed": True, "reward_id": reward.id, "points_spent": reward.points_cost, "balance": balance - reward.points_cost, "transaction_id": tx.id}
 
 @app.get("/api/v1/tenants/{tenant_id}/business-hours")
 def get_business_hours(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
