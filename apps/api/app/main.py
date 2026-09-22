@@ -20,7 +20,8 @@ from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
 from .routing import route_call, available_staff
-from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot\nfrom .integration_routes import router as integration_router
+from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
+from .integration_routes import router as integration_router
 from .social_routes import router as social_router
 import asyncio,json,base64
 from datetime import datetime,date,time,timedelta
@@ -740,7 +741,9 @@ def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(ge
     if bill.status=="paid":
         if bill.payment_id and bill.payment_id!=payload.razorpay_payment_id: raise HTTPException(409,"Bill is already paid with another payment")
         return {"paid":True,"bill_id":bill.id,"payment_id":bill.payment_id}
-    payment_adapter=tenant_payment_adapter(db,t.id,settings)\n    if not payment_adapter.key_secret: raise HTTPException(503,"Razorpay is not configured")\n    expected=hmac.new(payment_adapter.key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
+    payment_adapter=tenant_payment_adapter(db,t.id,settings)
+    if not payment_adapter.key_secret: raise HTTPException(503,"Razorpay is not configured")
+    expected=hmac.new(payment_adapter.key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected,payload.razorpay_signature): raise HTTPException(400,"Invalid payment signature")
     bill.payment_id=payload.razorpay_payment_id; bill.status="paid"; bill.paid_at=datetime.utcnow()
     order=db.get(Order,bill.order_id)
@@ -1118,7 +1121,12 @@ async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=
     if not tenant or not settings.gemini_api_key:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
     context=knowledge_context(db,tenant.id)
-    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\\n\\nAPPROVED BUSINESS CONTEXT:\\n{context}\\n\\n"
+    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\
+\
+APPROVED BUSINESS CONTEXT:\
+{context}\
+\
+"
              "At the beginning of every new call, say exactly: \\\"Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?\\\" "
              "Replace [Business Name] with the real business name. Ask the customer to state their name and mobile number. "
              "Do not invent business facts, prices, availability, policies, bookings or payment success. "
@@ -1143,9 +1151,11 @@ async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=
                     if isinstance(raw,bytes): raw=raw.decode()
                     msg=json.loads(raw); sc=msg.get("serverContent") or {}
                     if sc.get("inputTranscription",{}).get("text"):
-                        txt=sc["inputTranscription"]["text"]; call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":txt})
+                        txt=sc["inputTranscription"]["text"]; call.transcript=((call.transcript+"\
+") if call.transcript else "")+"CUSTOMER: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":txt})
                     if sc.get("outputTranscription",{}).get("text"):
-                        txt=sc["outputTranscription"]["text"]; call.transcript=((call.transcript+"\\n") if call.transcript else "")+"AI: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":txt})
+                        txt=sc["outputTranscription"]["text"]; call.transcript=((call.transcript+"\
+") if call.transcript else "")+"AI: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":txt})
                     if msg.get("toolCall"):
                         responses=[]
                         for fc in msg["toolCall"].get("functionCalls",[]):
@@ -1226,7 +1236,9 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
-            call.transcript=((call.transcript+"\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\nAI: "+result["reply"]
+            call.transcript=((call.transcript+"
+") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"
+AI: "+result["reply"]
             call.intent=result.get("intent"); db.commit()
     return {**result,"tenant_id":t.id,"call_id":payload.call_id}
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
