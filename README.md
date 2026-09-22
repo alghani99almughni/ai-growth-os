@@ -140,6 +140,6 @@ The tenant dashboard links to **Social Studio** for connected-account publishing
 
 API routes are tenant-scoped under `/api/v1/tenants/{tenant_id}/social/*`.
 
-Google OAuth uses offline access so the service can refresh access tokens without requiring the tenant to reconnect each time. YouTube's upload API requires OAuth authorization and unverified API projects may be restricted to private uploads until Google's audit requirements are satisfied. citeturn0search2turn0search7
+Google OAuth uses offline access so the service can refresh access tokens without requiring the tenant to reconnect each time. YouTube's upload API requires OAuth authorization and unverified API projects may be restricted to private uploads until Google's audit requirements are satisfied.
 
-Google Business Profile API access is subject to Google's eligibility and API access requirements; the implementation does not bypass those requirements. citeturn0search13
+Google Business Profile API access is subject to Google's eligibility and API access requirements; the implementation does not bypass those requirements.
