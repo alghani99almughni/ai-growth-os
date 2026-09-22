@@ -13,8 +13,19 @@ class WhatsAppAdapter:
     phone_number_id: str = ""
 
     def send_text_sync(self, to: str, text: str) -> dict:
-        import asyncio
-        return asyncio.run(self.send_text(to, text))
+        provider = (self.provider or "openwa").lower()
+        if provider == "openwa":
+            if not self.openwa_base_url or not self.openwa_api_key or not self.openwa_session_id: raise RuntimeError("OpenWA WhatsApp is not configured")
+            chat_id = to if "@" in to else to.lstrip("+") + "@c.us"
+            url = self.openwa_base_url.rstrip("/") + "/api/sessions/" + self.openwa_session_id + "/messages/send-text"
+            with httpx.Client(timeout=20) as client:
+                r = client.post(url, headers={"X-API-Key": self.openwa_api_key}, json={"chatId": chat_id, "text": text}); r.raise_for_status(); return r.json()
+        if provider == "meta":
+            if not self.access_token or not self.phone_number_id: raise RuntimeError("WhatsApp Business Platform is not configured")
+            url = "https://graph.facebook.com/v23.0/" + self.phone_number_id + "/messages"
+            with httpx.Client(timeout=20) as client:
+                r = client.post(url, headers={"Authorization": "Bearer " + self.access_token}, json={"messaging_product":"whatsapp","to":to.lstrip("+"),"type":"text","text":{"body":text}}); r.raise_for_status(); return r.json()
+        raise RuntimeError("Unsupported WhatsApp provider: " + provider)
 
     async def send_text(self, to: str, text: str) -> dict:
         provider = (self.provider or "openwa").lower()
