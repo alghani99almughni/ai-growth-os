@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
-from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken
+from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken,AIProviderUsage
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,RoleDefinition
 from .schemas import *
 from .services import *
@@ -230,6 +230,23 @@ def _set_setting(db,tenant_id,key,value):
 def require_tenant(user:User,tenant_id:str):
     if user.tenant_id!=tenant_id: raise HTTPException(403,"Tenant access denied")
 def user_out(u): return UserOut(id=u.id,email=u.email,name=u.name,tenant_id=u.tenant_id,role=u.role)
+
+@app.get("/api/v1/platform/ai/providers")
+def platform_ai_provider_status(user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    if user.role not in ("platform_admin","super_admin"):
+        raise HTTPException(403,"Platform admin access required")
+    rows=db.scalars(select(AIProviderUsage).order_by(AIProviderUsage.provider,AIProviderUsage.last_used_at.desc())).all()
+    return {"providers":[{"tenant_id":x.tenant_id,"provider":x.provider,"model":x.model,"requests":x.request_count,"successes":x.success_count,"failures":x.failure_count,"rate_limits":x.rate_limit_count,"estimated_input_tokens":x.estimated_input_tokens,"estimated_output_tokens":x.estimated_output_tokens,"last_error":x.last_error,"last_used_at":x.last_used_at,"cooldown_until":x.cooldown_until} for x in rows]}
+
+@app.post("/api/v1/platform/ai/providers/{provider}/recover")
+def platform_ai_provider_recover(provider:str,model:str,user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    if user.role not in ("platform_admin","super_admin"):
+        raise HTTPException(403,"Platform admin access required")
+    rows=db.scalars(select(AIProviderUsage).where(AIProviderUsage.provider==provider,AIProviderUsage.model==model)).all()
+    for x in rows:
+        x.cooldown_until=None; x.last_error=None
+    db.commit()
+    return {"ok":True,"provider":provider,"model":model,"recovered_records":len(rows)}
 
 @app.post("/api/v1/auth/register",response_model=AuthResponse,status_code=201)
 def register(payload:RegisterRequest,db:Session=Depends(get_db)):
