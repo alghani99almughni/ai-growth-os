@@ -23,7 +23,7 @@ from .routing import route_call, available_staff
 from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
 from .integration_routes import router as integration_router
 from .social_routes import router as social_router
-import asyncio,json,base64
+import asyncio,json,base64,uuid
 from datetime import datetime,date,time,timedelta
 import websockets
 import jwt,secrets
