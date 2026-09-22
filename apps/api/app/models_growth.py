@@ -6,7 +6,34 @@ import uuid
 def uid(): return str(uuid.uuid4())
 class KnowledgeItem(Base):
     __tablename__="knowledge_items"
-    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True); title:Mapped[str]=mapped_column(String(200)); content:Mapped[str]=mapped_column(Text); kind:Mapped[str]=mapped_column(String(40),default="faq"); is_active:Mapped[bool]=mapped_column(Boolean,default=True); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    title:Mapped[str]=mapped_column(String(200))
+    content:Mapped[str]=mapped_column(Text)
+    kind:Mapped[str]=mapped_column(String(40),default="faq")
+    language:Mapped[str]=mapped_column(String(16),default="en",index=True)
+    source:Mapped[str]=mapped_column(String(60),default="manual")
+    approval_status:Mapped[str]=mapped_column(String(30),default="approved",index=True)
+    usage_count:Mapped[int]=mapped_column(Integer,default=0)
+    last_used_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    is_active:Mapped[bool]=mapped_column(Boolean,default=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
+class KnowledgeCandidate(Base):
+    __tablename__="knowledge_candidates"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    question:Mapped[str]=mapped_column(Text)
+    answer:Mapped[str]=mapped_column(Text)
+    language:Mapped[str]=mapped_column(String(16),default="en",index=True)
+    intent:Mapped[str|None]=mapped_column(String(120),nullable=True,index=True)
+    status:Mapped[str]=mapped_column(String(30),default="pending",index=True)
+    source:Mapped[str]=mapped_column(String(40),default="voice")
+    provider:Mapped[str]=mapped_column(String(60),default="ai")
+    times_asked:Mapped[int]=mapped_column(Integer,default=1)
+    first_asked_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+    last_asked_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,index=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class BusinessHour(Base):
     __tablename__="business_hours"
     id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
@@ -56,7 +83,28 @@ class QrEntry(Base):
     id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True); token:Mapped[str]=mapped_column(String(100),unique=True,index=True); kind:Mapped[str]=mapped_column(String(40),default="business"); label:Mapped[str]=mapped_column(String(160)); scans:Mapped[int]=mapped_column(Integer,default=0); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class CallRecord(Base):
     __tablename__="call_records"
-    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True); customer_id:Mapped[str|None]=mapped_column(ForeignKey("customers.id"),nullable=True); source:Mapped[str]=mapped_column(String(40),default="webrtc"); status:Mapped[str]=mapped_column(String(40),default="created"); department:Mapped[str|None]=mapped_column(String(80),nullable=True); staff_id:Mapped[str|None]=mapped_column(ForeignKey("staff_members.id"),nullable=True,index=True); transcript:Mapped[str|None]=mapped_column(Text,nullable=True); summary:Mapped[str|None]=mapped_column(Text,nullable=True); intent:Mapped[str|None]=mapped_column(String(120),nullable=True); room_id:Mapped[str|None]=mapped_column(String(80),nullable=True,index=True); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True)
+    customer_id:Mapped[str|None]=mapped_column(ForeignKey("customers.id"),nullable=True,index=True)
+    source:Mapped[str]=mapped_column(String(40),default="webrtc")
+    status:Mapped[str]=mapped_column(String(40),default="created",index=True)
+    department:Mapped[str|None]=mapped_column(String(80),nullable=True)
+    staff_id:Mapped[str|None]=mapped_column(ForeignKey("staff_members.id"),nullable=True,index=True)
+    transcript:Mapped[str|None]=mapped_column(Text,nullable=True)
+    summary:Mapped[str|None]=mapped_column(Text,nullable=True)
+    intent:Mapped[str|None]=mapped_column(String(120),nullable=True,index=True)
+    language:Mapped[str]=mapped_column(String(16),default="en",index=True)
+    room_id:Mapped[str|None]=mapped_column(String(80),nullable=True,index=True)
+    started_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    answered_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    ended_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    duration_seconds:Mapped[int]=mapped_column(Integer,default=0)
+    call_number:Mapped[int]=mapped_column(Integer,default=1)
+    resolution:Mapped[str|None]=mapped_column(String(50),nullable=True)
+    knowledge_hits:Mapped[int]=mapped_column(Integer,default=0)
+    ai_turns:Mapped[int]=mapped_column(Integer,default=0)
+    human_callback_requested:Mapped[bool]=mapped_column(Boolean,default=False)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 class Campaign(Base):
     __tablename__="campaigns"
     id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid); tenant_id:Mapped[str]=mapped_column(ForeignKey("tenants.id"),index=True); name:Mapped[str]=mapped_column(String(160)); source:Mapped[str]=mapped_column(String(80)); scans:Mapped[int]=mapped_column(Integer,default=0); leads:Mapped[int]=mapped_column(Integer,default=0); created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
