@@ -491,7 +491,7 @@ def require_platform_admin(user:User):
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
 
 @app.post("/api/v1/auth/password-reset/request")
-async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
+async async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==payload.email.lower(),User.is_active==True))
     if not user:
         return {"accepted":True}
@@ -1611,12 +1611,16 @@ def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_
     require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
 @app.get("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}")
 def loyalty_balance(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,tenant_id); rows=db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==customer_id)).all(); return {"points":sum(x.points for x in rows)}
+    require_tenant(user,tenant_id)
+    if not _feature_config(db,tenant_id).get("loyalty",False): raise HTTPException(403,"Loyalty is disabled for this business")
+    rows=db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==customer_id)).all(); return {"points":sum(x.points for x in rows)}
 
 class LoyaltyCreate(BaseModel): points:int; reason:str; reference_id:str|None=None
 @app.post("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}",status_code=201)
 def add_loyalty(tenant_id,customer_id,payload:LoyaltyCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,tenant_id); x=LoyaltyTransaction(tenant_id=tenant_id,customer_id=customer_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"points":x.points}
+    require_tenant(user,tenant_id)
+    if not _feature_config(db,tenant_id).get("loyalty",False): raise HTTPException(403,"Loyalty is disabled for this business")
+    x=LoyaltyTransaction(tenant_id=tenant_id,customer_id=customer_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"points":x.points}
 
 @app.patch("/api/v1/tenants/{tenant_id}/calls/{call_id}")
 def update_call(tenant_id,call_id,payload:dict,user=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -1677,7 +1681,7 @@ def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_d
     user=db.scalar(select(User).where(User.email==payload.email.lower().strip()))
     if user and user.is_active:
         raw=secrets.token_urlsafe(48); digest=hashlib.sha256(raw.encode()).hexdigest(); expires=datetime.utcnow()+timedelta(minutes=settings.password_reset_ttl_minutes)
-        db.add(PasswordResetToken(user_id=user.id,token_hash=digest,expires_at=expires)); db.commit(); send_password_reset(db,user,raw)
+        db.add(PasswordResetToken(user_id=user.id,token_hash=digest,expires_at=expires)); db.commit(); tenant=db.get(Tenant,user.tenant_id); await send_password_reset(user,tenant,raw) if tenant else None
     return {"sent":True,"message":"If the account exists, reset instructions have been sent."}
 
 @app.post("/api/v1/auth/password-reset/confirm")
