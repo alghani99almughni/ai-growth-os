@@ -8,6 +8,10 @@ class TenantCreate(BaseModel):
     industry: str = Field(min_length=2, max_length=80)
 
 class TenantOut(TenantCreate):
+    # Platform admin uses an internal tenant slug (__platform__). Keep
+    # normal tenant creation restricted to URL-safe slugs while allowing
+    # this internal tenant to be returned by authentication endpoints.
+    slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9_-]+$")
     id: str
     status: str = "active"
     description: Optional[str] = None
