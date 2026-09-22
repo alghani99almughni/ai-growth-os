@@ -58,3 +58,21 @@ def structured_match(db: Session, tenant_id: str, message: str) -> str | None:
         if products:
             return "Here are the currently configured products: " + "; ".join(f"{p.name}: {p.price} {p.currency}" for p in products if p.price is not None)
     return None
+
+
+def knowledge_match(db: Session, tenant_id: str, message: str) -> str | None:
+    """Tokenless tenant-library retrieval. This must run before any paid/limited model call."""
+    from .models_growth import KnowledgeItem
+    rows=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True)).all()
+    incoming=normalize(message)
+    if not incoming: return None
+    best=None; best_score=0.0
+    for row in rows:
+        source=normalize((row.title or "")+" "+(row.content or ""))
+        if not source: continue
+        overlap=len(incoming & source)/max(1,len(incoming))
+        similarity=SequenceMatcher(None,message.lower(),(row.title or "")+" "+(row.content or "")).ratio()
+        score=max(overlap, similarity*0.65)
+        if score>best_score:
+            best_score=score; best=row
+    return best.content if best and best_score >= 0.35 else None
