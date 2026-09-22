@@ -1222,6 +1222,16 @@ def global_faqs(industry:str|None=None,language:str="en",db:Session=Depends(get_
     rows=db.scalars(q).all()
     return {"items":[{"id":x.id,"industry":x.industry,"language":x.language,"intent":x.intent,"question":x.question,"answer":x.answer,"keywords":x.keywords} for x in rows]}
 
+@app.get("/api/v1/public/business/resolve")
+def public_business_resolve(name: str = Query(min_length=2, max_length=160), db: Session = Depends(get_db)):
+    normalized = " ".join(name.strip().lower().split())
+    tenants = db.scalars(select(Tenant)).all()
+    matches = [t for t in tenants if " ".join((t.name or "").strip().lower().split()) == normalized and t.status == "active"]
+    if not matches:
+        raise HTTPException(404, "Business not found")
+    t = sorted(matches, key=lambda x: x.created_at or datetime.min, reverse=True)[0]
+    return {"id": t.id, "name": t.name, "slug": t.slug, "industry": t.industry}
+
 @app.get("/api/v1/public/business/{slug}")
 def public_business(slug:str,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower(),)); 
@@ -1360,8 +1370,10 @@ async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
 
 @app.post("/api/v1/tenants/{tenant_id}/qr",status_code=201)
 def create_qr(tenant_id,kind:str="business",label:str="Business QR",user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,tenant_id); q=QrEntry(tenant_id=tenant_id,token=secrets.token_urlsafe(18),kind=kind,label=label); db.add(q); db.commit(); db.refresh(q)
-    return {"id":q.id,"token":q.token,"url":settings.public_app_url+"/customer?qr="+q.token,"kind":q.kind,"label":q.label}
+    require_tenant(user,tenant_id); t=db.get(Tenant,tenant_id)
+    if not t: raise HTTPException(404,"Tenant not found")
+    q=QrEntry(tenant_id=tenant_id,token=secrets.token_urlsafe(18),kind=kind,label=label); db.add(q); db.commit(); db.refresh(q)
+    return {"id":q.id,"token":q.token,"url":settings.public_app_url+"/pwa/"+t.slug+"?qr="+q.token,"kind":q.kind,"label":q.label}
 @app.get("/api/v1/public/qr/{token}")
 def scan_qr(token,db:Session=Depends(get_db)):
     q=db.scalar(select(QrEntry).where(QrEntry.token==token))
