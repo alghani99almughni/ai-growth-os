@@ -342,7 +342,7 @@ async def share_customer_pwa(tenant_id,customer_id,user=Depends(get_current_user
     message="Hello "+(c.name or "there")+", thank you for contacting "+t.name+". Continue with your customer portal here: "+url
     if not c.phone: raise HTTPException(409,"Customer phone is required")
     try:
-        result=await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(c.phone,message)
+        result=await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(c.phone,message)
     except RuntimeError as exc:
         raise HTTPException(503,str(exc))
     return {"sent":True,"pwa_url":url,"whatsapp":result}
@@ -366,7 +366,7 @@ async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db
     existing=db.scalar(select(Customer).where(Customer.tenant_id==tenant_id,Customer.phone==normalize_phone(phone)))
     push_name=((data.get("contact") or {}).get("pushName") or (data.get("contact") or {}).get("name") or "").strip()
     if not existing and not push_name:
-        await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(phone,"Welcome to "+tenant.name+"! Before I can assist you, please reply with your name.")
+        await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(phone,"Welcome to "+tenant.name+"! Before I can assist you, please reply with your name.")
         return {"ok":True,"identity_required":True}
     if not existing:
         try: existing=upsert_customer(db,tenant_id,phone,push_name,True,source="whatsapp")
