@@ -26,7 +26,7 @@ def _usage_row(db: Session, tenant_id: str|None, provider: str, model: str, api_
         AIProviderUsage.credential_ref==ref
     ))
     if not row:
-        row=AIProviderUsage(tenant_id=tenant_id,provider=provider,model=model)
+        row=AIProviderUsage(tenant_id=tenant_id,provider=provider,model=model,credential_ref=ref)
         db.add(row); db.flush()
     return row
 
