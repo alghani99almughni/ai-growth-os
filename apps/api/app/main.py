@@ -20,34 +20,10 @@ from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
-from .voice_gateway import VoiceGateway, VoiceProvider
 
-class GeminiLiveAdapter:
-    name = "gemini"
+from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter, GeminiLiveAdapter
 
-    async def connect(self, provider, *, system_instruction, tools):
-        import websockets
-        ws_url = (
-            "wss://generativelanguage.googleapis.com/ws/"
-            "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-            "?key=" + provider.api_key
-        )
-        ws = await websockets.connect(ws_url, max_size=8*1024*1024, ping_interval=20, ping_timeout=20)
-        setup = {
-            "setup": {
-                "model": "models/" + provider.model,
-                "generationConfig": {"responseModalities": ["AUDIO"]},
-                "systemInstruction": {"parts": [{"text": system_instruction}]},
-                "inputAudioTranscription": {},
-                "outputAudioTranscription": {},
-                "sessionResumption": {},
-                "tools": [{"functionDeclarations": tools}],
-            }
-        }
-        await ws.send(json.dumps(setup))
-        return ws
-
-voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter()})
+voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRealtimeAdapter()})
 
 from .routing import route_call, available_staff
 from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
@@ -55,6 +31,7 @@ from .integration_routes import router as integration_router
 from .social_routes import router as social_router
 import asyncio,json,base64,uuid
 from datetime import datetime,date,time,timedelta
+import time
 import websockets
 import jwt,secrets,hashlib
 
@@ -1532,113 +1509,130 @@ async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=
     if not voice_token or not verify_call_room_token(voice_token,call_id,"call-ai"):
         await websocket.close(code=4403); return
     await websocket.accept()
-    db=SessionLocal(); call=db.get(CallRecord,call_id)
+    db=SessionLocal()
+    call=db.get(CallRecord,call_id)
     if not call:
         await websocket.close(code=4404); db.close(); return
     tenant=db.get(Tenant,call.tenant_id)
-    if not tenant or not settings.gemini_api_key:
+    if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
     context=knowledge_context(db,tenant.id)
-    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\
-\
-APPROVED BUSINESS CONTEXT:\
-{context}\
-\
-"
-             "At the beginning of every new call, say exactly: \\\"Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?\\\" "
-             "Replace [Business Name] with the real business name. Ask the customer to state their name and mobile number. "
-             "Do not invent business facts, prices, availability, policies, bookings or payment success. "
-             "When the customer has provided both their name and mobile number, call save_customer_identity before continuing. "
-             "After identity is saved, say a short confirmation and ask how you can help. For booking requests, use the approved service IDs in the business context, ask for an exact date and time, and call create_booking only after the customer explicitly confirms the selected slot. Never claim a booking is confirmed unless the tool returns confirmed=true. If a queue token is returned, tell the customer the token and estimated wait. Be concise, natural and multilingual when appropriate.")
+    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\\n\\nAPPROVED BUSINESS CONTEXT:\\n{context}\\n\\n"
+            "At the beginning of every new call, say exactly: \\"Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?\\" "
+            "Replace [Business Name] with the real business name. Ask for name and mobile number. Do not invent business facts, prices, availability, policies, bookings or payment success. "
+            "Use save_customer_identity after both are provided. For bookings use approved service IDs, exact local date/time, and create_booking only after explicit confirmation. Be concise and multilingual.")
     tool_declarations=[
-        {"name":"save_customer_identity","description":"Save and verify the customer's name and mobile number after the customer has stated both during the call.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
-        {"name":"create_booking","description":"Create a confirmed appointment after the customer explicitly confirms an exact service, date and time. starts_at is local business time without timezone offset.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}
+        {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
+        {"name":"create_booking","description":"Create a confirmed appointment after explicit confirmation.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}
     ]
-    providers=[VoiceProvider("gemini",settings.gemini_live_model,settings.gemini_api_key,priority=100)]
-    providers=voice_gateway.ordered(providers)
-    if not providers:
-        await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
-    provider=providers[0]
+    providers=[]
+    if settings.gemini_api_key:
+        providers.append(VoiceProvider("gemini",settings.gemini_live_model,settings.gemini_api_key,priority=100))
+    if settings.openai_api_key:
+        providers.append(VoiceProvider("openai",getattr(settings,"openai_realtime_model","gpt-realtime-2.1"),settings.openai_api_key,priority=200))
+    state=VoiceSessionState(call_id=call.id,provider_name="")
+    gateway=VoiceGateway({"gemini":GeminiLiveAdapter(),"openai":OpenAIRealtimeAdapter()})
     try:
-        gemini=await voice_gateway.adapter_for(provider).connect(provider,system_instruction=system,tools=tool_declarations)
-        try:
-            await websocket.send_json({"type":"status","status":"ai_connected","provider":provider.name})
-            await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}}))
-            async def browser_to_gemini():
-                while True:
-                    raw=await websocket.receive_text(); msg=json.loads(raw); typ=msg.get("type")
-                    if typ=="audio":
-                        await gemini.send(json.dumps({"realtimeInput":{"audio":{"data":msg["data"],"mimeType":"audio/pcm;rate=16000"}}}))
-                    elif typ=="stop":
-                        break
-            async def gemini_to_browser():
-                while True:
-                    raw=await gemini.recv()
-                    if isinstance(raw,bytes): raw=raw.decode()
-                    msg=json.loads(raw); sc=msg.get("serverContent") or {}
-                    if sc.get("inputTranscription",{}).get("text"):
-                        txt=sc["inputTranscription"]["text"]; call.transcript=((call.transcript+"\
-") if call.transcript else "")+"CUSTOMER: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":txt})
-                    if sc.get("outputTranscription",{}).get("text"):
-                        txt=sc["outputTranscription"]["text"]; call.transcript=((call.transcript+"\
-") if call.transcript else "")+"AI: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":txt})
-                    if msg.get("toolCall"):
-                        responses=[]
-                        for fc in msg["toolCall"].get("functionCalls",[]):
-                            args=fc.get("args",{})
-                            name=fc.get("name")
-                            if name=="save_customer_identity":
-                                try:
-                                    phone=str(args.get("phone","")).strip()
-                                    customer_name=str(args.get("name","")).strip()
-                                    if not phone or not customer_name:
-                                        raise ValueError("Name and mobile number are required")
-                                    c=upsert_customer(db,tenant.id,phone,customer_name,False,source="ai_voice")
-                                    call.customer_id=c.id
-                                    call.status="connected"
-                                    db.commit()
-                                    route_call(db,tenant.id,call,call.intent)
-                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"customer_id":c.id,"verified":True}}})
-                                except Exception as exc:
-                                    db.rollback()
-                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"verified":False,"error":str(exc)}}})
-                            elif name=="create_booking":
-                                try:
-                                    service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
-                                    if not service: raise ValueError("Service not found or inactive")
-                                    if not call.customer_id: raise ValueError("Customer identity must be verified first")
-                                    c=db.get(Customer,call.customer_id)
-                                    starts=datetime.fromisoformat(str(args.get("starts_at","")))
-                                    a,q=create_appointment(db,tenant,c,service,starts,"ai_voice",str(args.get("staff_id")) if args.get("staff_id") else None,str(args.get("notes")) if args.get("notes") else None,True,False)
-                                    db.commit()
-                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),"queue_token":q.token if q else None,"estimated_wait_minutes":q.estimated_wait_minutes if q else None}}})
-                                except Exception as exc:
-                                    db.rollback()
-                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"confirmed":False,"error":str(exc)}}})
-                        if responses: await gemini.send(json.dumps({"toolResponse":{"functionResponses":responses}}))
-                    await websocket.send_text(raw)
-            tasks=[asyncio.create_task(browser_to_gemini()),asyncio.create_task(gemini_to_browser())]
-            done,_=await asyncio.wait(tasks,return_when=asyncio.FIRST_COMPLETED)
-            for task in tasks:
-                if not task.done(): task.cancel()
-        finally:
-            await gemini.close()
+        provider,session=await gateway.connect_with_failover(providers,system_instruction=system,tools=tool_declarations,state=state)
+        await websocket.send_json({"type":"status","status":"ai_connected","provider":provider.name})
+        await gateway.adapter_for(provider).send_text(session,"Begin the call now.")
+        while True:
+            recv_task=asyncio.create_task(websocket.receive_text())
+            provider_task=asyncio.create_task(gateway.adapter_for(provider).recv(session))
+            done,_=await asyncio.wait([recv_task,provider_task],return_when=asyncio.FIRST_COMPLETED)
+            if recv_task in done:
+                msg=json.loads(recv_task.result()); typ=msg.get("type"); state.last_activity=time.time()
+                if typ=="audio":
+                    await gateway.adapter_for(provider).send_audio(session,msg["data"])
+                elif typ=="interrupt":
+                    state.interrupted=True
+                    await gateway.adapter_for(provider).interrupt(session)
+                elif typ=="text":
+                    await gateway.adapter_for(provider).send_text(session,msg.get("text",""))
+                elif typ=="stop":
+                    break
+                if not provider_task.done(): provider_task.cancel()
+            else:
+                if not recv_task.done(): recv_task.cancel()
+                try:
+                    event=provider_task.result()
+                except Exception:
+                    old_provider=provider
+                    try: await gateway.adapter_for(old_provider).close(session)
+                    except Exception: pass
+                    provider,session=await gateway.reconnect(providers,old_provider,system_instruction=system,tools=tool_declarations,state=state)
+                    await websocket.send_json({"type":"status","status":"ai_reconnected","provider":provider.name,"reconnects":state.reconnects,"failovers":state.failovers})
+                    await gateway.adapter_for(provider).send_text(session,"Continue the call naturally from the preserved context.")
+                    continue
+                gw=event.get("_gateway") or {}
+                if gw.get("event")=="interruption":
+                    state.interrupted=True
+                    await websocket.send_json({"type":"interruption"})
+                    continue
+                sc=event.get("serverContent") or {}
+                inp=(sc.get("inputTranscription") or {}).get("text")
+                out=(sc.get("outputTranscription") or {}).get("text")
+                if inp:
+                    state.customer_transcript.append(inp); state.turn_index+=1
+                    call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+inp
+                    call.language=detect_language(inp); call.ai_turns=(call.ai_turns or 0)+1
+                    db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":inp})
+                if out:
+                    state.assistant_transcript.append(out)
+                    call.transcript=((call.transcript+"\\n") if call.transcript else "")+"AI: "+out
+                    db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":out})
+                if event.get("toolCall"):
+                    responses=[]
+                    for fc in event["toolCall"].get("functionCalls",[]):
+                        args=fc.get("args",{}); name=fc.get("name")
+                        if name=="save_customer_identity":
+                            try:
+                                c=upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False,source="ai_voice")
+                                call.customer_id=c.id; call.status="connected"; call.answered_at=call.answered_at or datetime.utcnow(); db.commit()
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"customer_id":c.id,"verified":True}}})
+                            except Exception as exc:
+                                db.rollback(); responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"verified":False,"error":str(exc)}}})
+                        elif name=="create_booking":
+                            try:
+                                service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
+                                if not service or not call.customer_id: raise ValueError("Service or verified customer unavailable")
+                                c=db.get(Customer,call.customer_id); starts_at=datetime.fromisoformat(str(args.get("starts_at","")))
+                                a,q=create_appointment(db,tenant,c,service,starts_at,"ai_voice",str(args.get("staff_id")) if args.get("staff_id") else None,str(args.get("notes")) if args.get("notes") else None,True,False); db.commit()
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),"queue_token":q.token if q else None}}})
+                            except Exception as exc:
+                                db.rollback(); responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"confirmed":False,"error":str(exc)}}})
+                    if responses: await gateway.adapter_for(provider).send_tool_response(session,responses)
     except Exception as exc:
-        try: await websocket.send_json({"type":"error","message":"Voice session ended: "+str(exc)})
-        except Exception: pass
+        # Preserve transcript/session state and transparently attempt provider/session recovery.
+        try:
+            old_provider=provider
+            old_session=session
+            await gateway.adapter_for(old_provider).close(old_session)
+            provider,session=await gateway.reconnect(providers,old_provider,system_instruction=system,tools=tool_declarations,state=state)
+            await websocket.send_json({"type":"status","status":"ai_reconnected","provider":provider.name,"reconnects":state.reconnects,"failovers":state.failovers})
+            await gateway.adapter_for(provider).send_text(session,"Continue the call naturally from the preserved context.")
+            while True:
+                raw=await websocket.receive_text(); msg=json.loads(raw)
+                if msg.get("type")=="stop": break
+                if msg.get("type")=="interrupt": await gateway.adapter_for(provider).interrupt(session)
+                elif msg.get("type")=="audio": await gateway.adapter_for(provider).send_audio(session,msg["data"])
+                elif msg.get("type")=="text": await gateway.adapter_for(provider).send_text(session,msg.get("text",""))
+                else:
+                    continue
+        except Exception as recovery_exc:
+            try: await websocket.send_json({"type":"error","message":"Voice session could not be recovered.","recovered":False})
+            except Exception: pass
     finally:
         try:
-            db.refresh(call)
-            now=datetime.utcnow()
-            if call.started_at:
-                call.ended_at=now
-                call.duration_seconds=max(0,int((now-call.started_at).total_seconds()))
-            if call.status not in {"handoff_requested","handoff_accepted","connected"}:
-                call.status="ended"
-                if not call.resolution: call.resolution="completed"
+            if 'session' in locals(): await gateway.adapter_for(provider).close(session)
+        except Exception: pass
+        try:
+            db.refresh(call); now=datetime.utcnow(); call.ended_at=now
+            if call.started_at: call.duration_seconds=max(0,int((now-call.started_at).total_seconds()))
+            if call.status not in {"handoff_requested","handoff_accepted","connected"}: call.status="ended"
+            if not call.resolution: call.resolution="completed"
             db.commit()
-        finally:
-            db.close()
+        finally: db.close()
 
 class PublicVoiceTurnRequest(BaseModel):
     transcript:str=Field(min_length=1,max_length=4000)

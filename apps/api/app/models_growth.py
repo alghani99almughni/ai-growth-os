@@ -34,6 +34,8 @@ class KnowledgeItem(Base):
     approval_status:Mapped[str]=mapped_column(String(30),default="approved",index=True)
     usage_count:Mapped[int]=mapped_column(Integer,default=0)
     last_used_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    embedding_json:Mapped[str|None]=mapped_column(Text,nullable=True)
+    embedding_model:Mapped[str|None]=mapped_column(String(80),nullable=True)
     is_active:Mapped[bool]=mapped_column(Boolean,default=True)
     created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
 
