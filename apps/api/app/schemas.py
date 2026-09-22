@@ -9,6 +9,14 @@ class TenantCreate(BaseModel):
 
 class TenantOut(TenantCreate):
     id: str
+    status: str = "active"
+    description: Optional[str] = None
+    phone: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    email: Optional[EmailStr] = None
+    address: Optional[str] = None
+    website: Optional[str] = None
+    timezone: str = "Asia/Kolkata"
     model_config = ConfigDict(from_attributes=True)
 
 class TenantProfileUpdate(BaseModel):
