@@ -40,6 +40,7 @@ def ensure_schema():
             conn.execute(text("CREATE TABLE IF NOT EXISTS knowledge_candidates (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, language VARCHAR(16) NOT NULL DEFAULT 'en', intent VARCHAR(120), status VARCHAR(30) NOT NULL DEFAULT 'pending', source VARCHAR(40) NOT NULL DEFAULT 'voice', provider VARCHAR(60) NOT NULL DEFAULT 'ai', times_asked INTEGER NOT NULL DEFAULT 1, first_asked_at TIMESTAMP NOT NULL, last_asked_at TIMESTAMP NOT NULL, created_at TIMESTAMP NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_tenant_id ON knowledge_candidates(tenant_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_status ON knowledge_candidates(status)"))
+            conn.execute(text("ALTER TABLE ai_provider_usage ADD COLUMN IF NOT EXISTS credential_ref VARCHAR(32) DEFAULT 'default'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS language VARCHAR(16) DEFAULT 'en'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS source VARCHAR(60) DEFAULT 'manual'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR(30) DEFAULT 'approved'"))
@@ -97,6 +98,8 @@ def ensure_schema():
             conn.execute(text("CREATE TABLE IF NOT EXISTS knowledge_candidates (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, language VARCHAR(16) NOT NULL DEFAULT 'en', intent VARCHAR(120), status VARCHAR(30) NOT NULL DEFAULT 'pending', source VARCHAR(40) NOT NULL DEFAULT 'voice', provider VARCHAR(60) NOT NULL DEFAULT 'ai', times_asked INTEGER NOT NULL DEFAULT 1, first_asked_at DATETIME NOT NULL, last_asked_at DATETIME NOT NULL, created_at DATETIME NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_tenant_id ON knowledge_candidates(tenant_id)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_status ON knowledge_candidates(status)"))
+            ai_usage_cols={r[1] for r in conn.execute(text("PRAGMA table_info(ai_provider_usage)"))}
+            if "credential_ref" not in ai_usage_cols: conn.execute(text("ALTER TABLE ai_provider_usage ADD COLUMN credential_ref VARCHAR(32) DEFAULT 'default'"))
             knowledge_cols={r[1] for r in conn.execute(text("PRAGMA table_info(knowledge_items)"))}
             for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("source","VARCHAR(60) DEFAULT 'manual'"),("approval_status","VARCHAR(30) DEFAULT 'approved'"),("usage_count","INTEGER DEFAULT 0"),("last_used_at","DATETIME")]:
                 if name not in knowledge_cols: conn.execute(text(f"ALTER TABLE knowledge_items ADD COLUMN {name} {definition}"))
