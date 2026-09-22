@@ -10,6 +10,7 @@ class AIProviderUsage(Base):
     tenant_id:Mapped[str|None]=mapped_column(ForeignKey("tenants.id"),nullable=True,index=True)
     provider:Mapped[str]=mapped_column(String(60),index=True)
     model:Mapped[str]=mapped_column(String(120))
+    credential_ref:Mapped[str]=mapped_column(String(32),index=True,default="default")
     request_count:Mapped[int]=mapped_column(Integer,default=0)
     success_count:Mapped[int]=mapped_column(Integer,default=0)
     failure_count:Mapped[int]=mapped_column(Integer,default=0)
