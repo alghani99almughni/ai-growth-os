@@ -343,7 +343,14 @@ async def oauth_google_callback(code: str, state: str, db: Session=Depends(get_d
     tenant_id,key=_verify_oauth_state(state)
     if not settings.google_client_id or not settings.google_client_secret: raise HTTPException(503,"Google OAuth is not configured")
     token=await _http_json("POST","https://oauth2.googleapis.com/token",data={"code":code,"client_id":settings.google_client_id,"client_secret":settings.google_client_secret,"redirect_uri":settings.google_redirect_uri,"grant_type":"authorization_code"})
-    cfg={"access_token":token.get("access_token"),"refresh_token":token.get("refresh_token"),"token_type":token.get("token_type"),"scope":token.get("scope")}
+    existing=_oauth_row(db,tenant_id,key)
+    previous={}
+    if existing and existing.config_encrypted:
+        try:
+            previous=decrypt_channel_config(existing.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
+        except Exception:
+            previous={}
+    cfg={"access_token":token.get("access_token"),"refresh_token":token.get("refresh_token") or previous.get("refresh_token"),"token_type":token.get("token_type"),"scope":token.get("scope")}
     account_id=None; account_name=None
     if key=="youtube":
         info=await _http_json("GET","https://www.googleapis.com/youtube/v3/channels",params={"part":"snippet,contentDetails","mine":"true"},headers={"Authorization":"Bearer "+cfg["access_token"]})
