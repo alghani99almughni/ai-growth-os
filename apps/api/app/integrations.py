@@ -108,3 +108,17 @@ def tenant_whatsapp_adapter(db, tenant_id: str, settings_obj) -> WhatsAppAdapter
         except Exception:
             pass
     return WhatsAppAdapter(provider=settings_obj.whatsapp_provider,openwa_base_url=settings_obj.openwa_base_url,openwa_api_key=settings_obj.openwa_api_key,openwa_session_id=settings_obj.openwa_session_id,access_token=settings_obj.whatsapp_access_token,phone_number_id=settings_obj.whatsapp_phone_number_id)
+
+
+def tenant_payment_adapter(db, tenant_id: str, settings_obj) -> PaymentAdapter:
+    from .models_integrations import TenantIntegration
+    from sqlalchemy import select
+    row=db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key=="razorpay",TenantIntegration.status=="connected"))
+    if row and row.config_encrypted:
+        try:
+            cfg=decrypt_channel_config(row.config_encrypted, settings_obj.whatsapp_credential_encryption_key)
+            if cfg.get("key_id") and cfg.get("key_secret"):
+                return PaymentAdapter(cfg["key_id"],cfg["key_secret"])
+        except Exception:
+            pass
+    return PaymentAdapter(settings_obj.razorpay_key_id,settings_obj.razorpay_key_secret)
