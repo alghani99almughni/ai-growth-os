@@ -186,7 +186,9 @@ export default function SSNutritions(){
       recognition.continuous=true;
       recognition.interimResults=false;
       recognition.maxAlternatives=1;
-      recognition.lang="en-IN";
+      const speechLangs:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
+      const browserLang=(navigator.language||"en-IN").toLowerCase();
+      recognition.lang=Object.values(speechLangs).includes(browserLang)?browserLang:(speechLangs[browserLang.slice(0,2)]||"en-IN");
       recognition.onresult=async(event:any)=>{
         for(let i=event.resultIndex;i<event.results.length;i++){
           const result=event.results[i];
@@ -203,6 +205,7 @@ export default function SSNutritions(){
             if(!rr.ok) throw new Error(answer.detail||"Voice answer failed.");
             setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
             speakKnowledgeAnswer(answer.reply,answer.language||"en");
+            if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
             if(answer.handoff_required){
               try{recognition.stop();}catch{}
               setCallError("Our team will call you back shortly.");
