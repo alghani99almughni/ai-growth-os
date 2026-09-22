@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
-from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken
+from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken,AIProviderUsage
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,RoleDefinition
 from .schemas import *
 from .services import *
@@ -230,6 +230,49 @@ def _set_setting(db,tenant_id,key,value):
 def require_tenant(user:User,tenant_id:str):
     if user.tenant_id!=tenant_id: raise HTTPException(403,"Tenant access denied")
 def user_out(u): return UserOut(id=u.id,email=u.email,name=u.name,tenant_id=u.tenant_id,role=u.role)
+
+class PlatformAIProviderRequest(BaseModel):
+    provider:str=Field(min_length=2,max_length=60)
+    model:str=Field(min_length=2,max_length=120)
+    api_key:str=Field(min_length=8,max_length=500)
+    priority:int=Field(default=100,ge=1,le=10000)
+    enabled:bool=True
+
+@app.post("/api/v1/platform/ai/providers")
+def platform_ai_provider_add(payload:PlatformAIProviderRequest,user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    if user.role not in ("platform_admin","super_admin"):
+        raise HTTPException(403,"Platform admin access required")
+    key=(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)
+    if not key:
+        raise HTTPException(500,"Credential encryption is not configured")
+    existing=db.scalar(select(PlatformAIProvider).where(
+        PlatformAIProvider.provider==payload.provider.lower(),
+        PlatformAIProvider.model==payload.model,
+        PlatformAIProvider.config_encrypted==encrypt_channel_config({"api_key":payload.api_key},key)
+    ))
+    if existing:
+        existing.priority=payload.priority; existing.enabled=payload.enabled; existing.status="healthy"
+    else:
+        db.add(PlatformAIProvider(provider=payload.provider.lower(),model=payload.model,priority=payload.priority,enabled=payload.enabled,status="healthy",config_encrypted=encrypt_channel_config({"api_key":payload.api_key},key)))
+    db.commit()
+    return {"ok":True,"provider":payload.provider.lower(),"model":payload.model,"priority":payload.priority,"enabled":payload.enabled}
+
+@app.get("/api/v1/platform/ai/providers")
+def platform_ai_provider_status(user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    if user.role not in ("platform_admin","super_admin"):
+        raise HTTPException(403,"Platform admin access required")
+    rows=db.scalars(select(AIProviderUsage).order_by(AIProviderUsage.provider,AIProviderUsage.last_used_at.desc())).all()
+    return {"providers":[{"tenant_id":x.tenant_id,"provider":x.provider,"model":x.model,"requests":x.request_count,"successes":x.success_count,"failures":x.failure_count,"rate_limits":x.rate_limit_count,"estimated_input_tokens":x.estimated_input_tokens,"estimated_output_tokens":x.estimated_output_tokens,"last_error":x.last_error,"last_used_at":x.last_used_at,"cooldown_until":x.cooldown_until} for x in rows]}
+
+@app.post("/api/v1/platform/ai/providers/{provider}/recover")
+def platform_ai_provider_recover(provider:str,model:str,user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    if user.role not in ("platform_admin","super_admin"):
+        raise HTTPException(403,"Platform admin access required")
+    rows=db.scalars(select(AIProviderUsage).where(AIProviderUsage.provider==provider,AIProviderUsage.model==model)).all()
+    for x in rows:
+        x.cooldown_until=None; x.last_error=None
+    db.commit()
+    return {"ok":True,"provider":provider,"model":model,"recovered_records":len(rows)}
 
 @app.post("/api/v1/auth/register",response_model=AuthResponse,status_code=201)
 def register(payload:RegisterRequest,db:Session=Depends(get_db)):
