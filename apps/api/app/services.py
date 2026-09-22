@@ -43,6 +43,8 @@ def create_owner(db: Session, name: str, email: str, password: str, tenant: Tena
 
 def upsert_customer(db: Session, tenant_id: str, phone: str, name: str | None, whatsapp_opt_in: bool, **fields) -> Customer:
     normalized = normalize_phone(phone)
+    if not normalized: raise ValueError("Customer mobile number is required")
+    if not name or not name.strip(): raise ValueError("Customer name is required")
     customer = db.scalar(select(Customer).where(Customer.tenant_id == tenant_id, Customer.phone == normalized))
     if customer:
         if name: customer.name = name.strip()

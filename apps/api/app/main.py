@@ -234,14 +234,28 @@ def products(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)
     return {"items":[{"id":x.id,"name":x.name,"description":x.description,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"sku":x.sku,"stock_quantity":x.stock_quantity,"is_active":x.is_active} for x in rows]}
 
 @app.post("/api/v1/customers",status_code=201)
-def customer(payload:CustomerCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,payload.tenant_id); c=upsert_customer(db,payload.tenant_id,payload.phone,payload.name,payload.whatsapp_opt_in,email=payload.email,address=payload.address,notes=payload.notes,tags=payload.tags,source=payload.source); return {"id":c.id,"tenant_id":c.tenant_id,"name":c.name,"phone":c.phone,"email":c.email,"address":c.address,"notes":c.notes,"tags":c.tags,"source":c.source,"portal_token":c.portal_token}
+async def customer(payload:CustomerCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,payload.tenant_id)
+    existing=db.scalar(select(Customer).where(Customer.tenant_id==payload.tenant_id,Customer.phone==normalize_phone(payload.phone)))
+    try:
+        c=upsert_customer(db,payload.tenant_id,payload.phone,payload.name,payload.whatsapp_opt_in,email=payload.email,address=payload.address,notes=payload.notes,tags=payload.tags,source=payload.source)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
+    welcome_sent=False
+    if existing is None and settings.whatsapp_welcome_enabled and c.phone:
+        message=f"Hello {c.name}, welcome to {db.get(Tenant,c.tenant_id).name}! You can continue with us on WhatsApp or open your digital PWA experience."
+        try:
+            await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(c.phone,message)
+            welcome_sent=True
+        except RuntimeError:
+            welcome_sent=False
+    return {"id":c.id,"tenant_id":c.tenant_id,"name":c.name,"phone":c.phone,"email":c.email,"address":c.address,"notes":c.notes,"tags":c.tags,"source":c.source,"portal_token":c.portal_token,"welcome_whatsapp_sent":welcome_sent}
 @app.get("/api/v1/tenants/{tenant_id}/customers")
 def customers(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); rows=db.scalars(select(Customer).where(Customer.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"name":x.name,"phone":x.phone,"email":x.email,"address":x.address,"notes":x.notes,"tags":x.tags,"source":x.source,"whatsapp_opt_in":x.whatsapp_opt_in,"portal_token":x.portal_token} for x in rows]}
 
 class CustomerUpdate(BaseModel):
-    name: Optional[str] = None
+    name: str
     email: Optional[str] = None
     address: Optional[str] = None
     notes: Optional[str] = None
@@ -266,7 +280,9 @@ def public_customer_portal(portal_token, db:Session=Depends(get_db)):
     return {"business":{"name":t.name,"slug":t.slug},"customer":{"name":c.name,"phone":c.phone},"pwa_url":settings.public_app_url+"/customer?business="+t.slug+"&customer="+portal_token}
 
 class LandlineCallRequest(BaseModel):
-    caller_phone: str = Field(min_length=3,max_length=32)
+    caller_phone: str | None = Field(default=None,max_length=32)
+    mobile_number: str = Field(min_length=5,max_length=32)
+    name: str = Field(min_length=1,max_length=160)
     department: str = "Reception"
     staff_id: str | None = None
     notes: str | None = None
@@ -274,7 +290,10 @@ class LandlineCallRequest(BaseModel):
 @app.post("/api/v1/tenants/{tenant_id}/telephony/inbound-call",status_code=201)
 def inbound_landline_call(tenant_id,payload:LandlineCallRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
-    c=upsert_customer(db,tenant_id,payload.caller_phone,None,False,source="landline")
+    try:
+        c=upsert_customer(db,tenant_id,payload.mobile_number,payload.name,False,source="landline")
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
     call=CallRecord(tenant_id=tenant_id,customer_id=c.id,source="landline",status="connected",department=payload.department,staff_id=payload.staff_id)
     db.add(call); db.commit(); db.refresh(call)
     if payload.notes: call.summary=payload.notes; db.commit()
@@ -291,10 +310,43 @@ async def share_customer_pwa(tenant_id,customer_id,user=Depends(get_current_user
     message="Hello "+(c.name or "there")+", thank you for contacting "+t.name+". Continue with your customer portal here: "+url
     if not c.phone: raise HTTPException(409,"Customer phone is required")
     try:
-        result=await WhatsAppAdapter(settings.whatsapp_access_token,settings.whatsapp_phone_number_id).send_text(c.phone,message)
+        result=await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(c.phone,message)
     except RuntimeError as exc:
         raise HTTPException(503,str(exc))
     return {"sent":True,"pwa_url":url,"whatsapp":result}
+@app.post("/api/v1/webhooks/openwa/{tenant_id}")
+async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db)):
+    raw=await request.body()
+    signature=request.headers.get("X-OpenWA-Signature") or request.headers.get("X-Webhook-Signature")
+    if not WhatsAppAdapter.verify_webhook(raw,signature,settings.openwa_webhook_secret):
+        raise HTTPException(401,"Invalid OpenWA webhook signature")
+    try: payload=json.loads(raw.decode("utf-8"))
+    except Exception: raise HTTPException(400,"Invalid webhook JSON")
+    if payload.get("event")!="message.received": return {"ok":True,"ignored":True}
+    data=payload.get("data") or {}
+    if data.get("isGroup"): return {"ok":True,"ignored":True}
+    phone=str(data.get("senderPhone") or data.get("from") or data.get("chatId") or "").split("@")[0]
+    body=str(data.get("body") or "").strip()
+    if not phone or not body: return {"ok":True,"ignored":True}
+    tenant=db.get(Tenant,tenant_id)
+    if not tenant: raise HTTPException(404,"Tenant not found")
+    # The first WhatsApp interaction is an identity gate: number is captured from WhatsApp, name must be supplied by the customer.
+    existing=db.scalar(select(Customer).where(Customer.tenant_id==tenant_id,Customer.phone==normalize_phone(phone)))
+    push_name=((data.get("contact") or {}).get("pushName") or (data.get("contact") or {}).get("name") or "").strip()
+    if not existing and not push_name:
+        await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(phone,"Welcome to "+tenant.name+"! Before I can assist you, please reply with your name.")
+        return {"ok":True,"identity_required":True}
+    if not existing:
+        try: existing=upsert_customer(db,tenant_id,phone,push_name,True,source="whatsapp")
+        except ValueError as exc: raise HTTPException(400,str(exc))
+    elif not existing.name and push_name:
+        existing.name=push_name; existing.whatsapp_opt_in=True; db.commit()
+    # Existing customers may interact freely; new customers must have both mobile + name before AI/business actions.
+    result=await generate_reply(db,tenant_id,body,None,"whatsapp")
+    reply=result.get("reply") or "Thanks. How can I help you today?"
+    await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(existing.phone,reply)
+    return {"ok":True,"customer_id":existing.id,"reply":reply}
+
 @app.post("/api/v1/leads",status_code=201)
 def lead(payload:LeadCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,payload.tenant_id); l=create_lead(db,payload.tenant_id,payload.source,payload.customer_id,payload.intent,payload.notes); return {"id":l.id,"status":l.status}
@@ -980,6 +1032,12 @@ def create_feedback(slug,payload:FeedbackCreate,db:Session=Depends(get_db)):
 async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
     t=db.get(Tenant,payload.tenant_id)
     if not t: raise HTTPException(404,"Business not found")
+    if not payload.phone or not payload.name:
+        return {"identity_required":True,"required":["phone","name"],"tenant_id":t.id,"message":"Please provide your mobile number and name before we continue."}
+    try:
+        upsert_customer(db,t.id,payload.phone,payload.name,False,source=payload.channel)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
     result=await generate_reply(db,t.id,payload.message,payload.conversation_id,payload.channel)
     if payload.phone:
         c=upsert_customer(db,t.id,payload.phone,payload.name,False)
@@ -997,16 +1055,18 @@ def scan_qr(token,db:Session=Depends(get_db)):
     q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url+"/customer","kind":q.kind}
 
 class PublicCallStartRequest(BaseModel):
-    name:str|None=None
-    phone:str|None=None
+    name:str=Field(min_length=1,max_length=160)
+    phone:str=Field(min_length=5,max_length=32)
 
 @app.post("/api/v1/public/business/{slug}/call",status_code=201)
 def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
     customer=None
-    if payload.phone and payload.name:
-        customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False)
+    try:
+        customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False,source="pwa_voice")
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
     call=CallRecord(tenant_id=t.id,customer_id=customer.id if customer else None,source="pwa_voice",status="ringing")
     db.add(call); db.commit(); db.refresh(call)
     return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"voice_token":issue_call_room_token(call.id,"call-ai")}

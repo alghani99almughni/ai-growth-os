@@ -67,7 +67,7 @@ class AuthResponse(BaseModel):
 class CustomerCreate(BaseModel):
     tenant_id: str
     phone: str = Field(min_length=5, max_length=32)
-    name: Optional[str] = Field(default=None, max_length=160)
+    name: str = Field(min_length=1, max_length=160)
     whatsapp_opt_in: bool = False
     email: Optional[EmailStr] = None
     address: Optional[str] = None
