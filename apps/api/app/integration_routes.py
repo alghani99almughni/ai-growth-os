@@ -292,7 +292,7 @@ def oauth_start(provider: str, tenant_id: str, integration_key: str, credentials
     if provider=="meta":
         if not settings.meta_client_id or not settings.meta_redirect_uri: raise HTTPException(503,"Meta OAuth is not configured")
         scopes="pages_show_list,pages_read_engagement,pages_manage_metadata,business_management,instagram_basic,instagram_content_publish,ads_read,ads_management"
-        url="https://www.facebook.com/v23.0/dialog/oauth?"+urlencode({"client_id":settings.meta_client_id,"redirect_uri":settings.meta_redirect_uri,"state":state,"scope":scopes})
+        url=f"https://www.facebook.com/{settings.meta_graph_api_version}/dialog/oauth?"+urlencode({"client_id":settings.meta_client_id,"redirect_uri":settings.meta_redirect_uri,"state":state,"scope":scopes})
     elif provider=="google":
         if not settings.google_client_id or not settings.google_redirect_uri: raise HTTPException(503,"Google OAuth is not configured")
         scopes={
@@ -312,24 +312,24 @@ async def oauth_start_post(provider: str, payload: dict, credentials: HTTPAuthor
 async def oauth_meta_callback(code: str, state: str, db: Session=Depends(get_db)):
     tenant_id,key=_verify_oauth_state(state)
     if not settings.meta_client_id or not settings.meta_client_secret: raise HTTPException(503,"Meta OAuth is not configured")
-    token=await _http_json("GET","https://graph.facebook.com/v23.0/oauth/access_token",params={"client_id":settings.meta_client_id,"client_secret":settings.meta_client_secret,"redirect_uri":settings.meta_redirect_uri,"code":code})
+    token=await _http_json("GET","https://graph.facebook.com/{settings.meta_graph_api_version}/oauth/access_token",params={"client_id":settings.meta_client_id,"client_secret":settings.meta_client_secret,"redirect_uri":settings.meta_redirect_uri,"code":code})
     access_token=token["access_token"]
-    me=await _http_json("GET","https://graph.facebook.com/v23.0/me",params={"fields":"id,name","access_token":access_token})
+    me=await _http_json("GET","https://graph.facebook.com/{settings.meta_graph_api_version}/me",params={"fields":"id,name","access_token":access_token})
     account_id=me.get("id"); account_name=me.get("name")
     if key in ("facebook","meta_business","instagram","meta_ads"):
         if key in ("facebook","meta_business"):
-            pages=await _http_json("GET","https://graph.facebook.com/v23.0/me/accounts",params={"fields":"id,name,access_token,instagram_business_account","access_token":access_token})
+            pages=await _http_json("GET","https://graph.facebook.com/{settings.meta_graph_api_version}/me/accounts",params={"fields":"id,name,access_token,instagram_business_account","access_token":access_token})
             page=(pages.get("data") or [{}])[0]
             account_id=page.get("id") or account_id; account_name=page.get("name") or account_name
             if page.get("access_token"): access_token=page["access_token"]
         elif key=="instagram":
-            pages=await _http_json("GET","https://graph.facebook.com/v23.0/me/accounts",params={"fields":"id,name,instagram_business_account","access_token":access_token})
+            pages=await _http_json("GET","https://graph.facebook.com/{settings.meta_graph_api_version}/me/accounts",params={"fields":"id,name,instagram_business_account","access_token":access_token})
             page=next((p for p in pages.get("data",[]) if p.get("instagram_business_account")),None)
             if page:
-                ig=await _http_json("GET",f"https://graph.facebook.com/v23.0/{page['instagram_business_account']['id']}",params={"fields":"id,username,name","access_token":access_token})
+                ig=await _http_json("GET",f"https://graph.facebook.com/{settings.meta_graph_api_version}/{page['instagram_business_account']['id']}",params={"fields":"id,username,name","access_token":access_token})
                 account_id=ig.get("id") or account_id; account_name=ig.get("username") or ig.get("name") or account_name
         elif key=="meta_ads":
-            ads=await _http_json("GET","https://graph.facebook.com/v23.0/me/adaccounts",params={"fields":"id,name,account_id","access_token":access_token})
+            ads=await _http_json("GET","https://graph.facebook.com/{settings.meta_graph_api_version}/me/adaccounts",params={"fields":"id,name,account_id","access_token":access_token})
             ad=(ads.get("data") or [{}])[0]
             account_id=ad.get("id") or ad.get("account_id") or account_id; account_name=ad.get("name") or account_name
     row=_oauth_row(db,tenant_id,key)
