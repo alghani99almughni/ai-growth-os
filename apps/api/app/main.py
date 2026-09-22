@@ -1398,15 +1398,228 @@ def tenant_bills(tenant_id,user=Depends(get_current_user),db:Session=Depends(get
 
 @app.post("/api/v1/public/business/{slug}/feedback",status_code=201)
 def create_feedback(slug,payload:FeedbackCreate,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    f=Feedback(tenant_id=t.id,**payload.model_dump()); db.add(f); db.commit()
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==t.id,TenantSetting.key=="google_review"))
+    review_url=""
+    if row:
+        try: review_url=json.loads(row.value_json).get("review_url","")
+        except Exception: pass
+    return {"id":f.id,"saved":True,"google_review_url":review_url}
+
+@app.post("/api/v1/public/chat")
+async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
+    t=db.get(Tenant,payload.tenant_id)
+    if not t: raise HTTPException(404,"Business not found")
+    if not payload.phone or not payload.name:
+        return {"identity_required":True,"required":["phone","name"],"tenant_id":t.id,"message":"Please provide your mobile number and name before we continue."}
+    try:
+        upsert_customer(db,t.id,payload.phone,payload.name,False,source=payload.channel)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
+    result=await generate_reply(db,t.id,payload.message,payload.conversation_id,payload.channel)
+    if payload.phone:
+        c=upsert_customer(db,t.id,payload.phone,payload.name,False)
+        if result["intent"] in ("booking","human_handoff","pricing"): create_lead(db,t.id,"customer_pwa",c.id,result["intent"],payload.message)
+    return {**result,"tenant_id":t.id}
+
+@app.post("/api/v1/tenants/{tenant_id}/qr",status_code=201)
+def create_qr(tenant_id,kind:str="business",label:str="Business QR",user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); t=db.get(Tenant,tenant_id)
+    if not t: raise HTTPException(404,"Tenant not found")
+    q=QrEntry(tenant_id=tenant_id,token=secrets.token_urlsafe(18),kind=kind,label=label); db.add(q); db.commit(); db.refresh(q)
+    return {"id":q.id,"token":q.token,"url":settings.public_app_url+"/pwa/"+t.slug+"?qr="+q.token,"kind":q.kind,"label":q.label}
+@app.get("/api/v1/public/qr/{token}")
+def scan_qr(token,db:Session=Depends(get_db)):
+    q=db.scalar(select(QrEntry).where(QrEntry.token==token))
+    if not q: raise HTTPException(404,"QR not found")
+    q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url+"/customer","kind":q.kind}
+
+class PublicCallStartRequest(BaseModel):
+    name:str=Field(min_length=1,max_length=160)
+    phone:str=Field(min_length=5,max_length=32)
+
+@app.post("/api/v1/public/business/{slug}/call",status_code=201)
+def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    customer=None
+    try:
+        customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False,source="pwa_voice")
+    except ValueError as exc:
+        raise HTTPException(400,str(exc))
+    previous_calls=db.scalar(select(__import__("sqlalchemy").func.count(CallRecord.id)).where(CallRecord.tenant_id==t.id,CallRecord.customer_id==customer.id)) or 0
+    now=datetime.utcnow()
+    call=CallRecord(tenant_id=t.id,customer_id=customer.id if customer else None,source="pwa_voice",status="ringing",started_at=now,call_number=previous_calls+1)
+    db.add(call); db.commit(); db.refresh(call)
+    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"voice_token":issue_call_room_token(call.id,"call-ai")}
+
+@app.websocket("/ws/public/voice/{call_id}")
+async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=None)):
+    if not voice_token or not verify_call_room_token(voice_token,call_id,"call-ai"):
+        await websocket.close(code=4403); return
+    await websocket.accept()
+    db=SessionLocal(); call=db.get(CallRecord,call_id)
+    if not call:
+        await websocket.close(code=4404); db.close(); return
+    tenant=db.get(Tenant,call.tenant_id)
+    if not tenant or not settings.gemini_api_key:
+        await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
+    context=knowledge_context(db,tenant.id)
+    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\
+\
+APPROVED BUSINESS CONTEXT:\
+{context}\
+\
+"
+             "At the beginning of every new call, say exactly: \\\"Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?\\\" "
+             "Replace [Business Name] with the real business name. Ask the customer to state their name and mobile number. "
+             "Do not invent business facts, prices, availability, policies, bookings or payment success. "
+             "When the customer has provided both their name and mobile number, call save_customer_identity before continuing. "
+             "After identity is saved, say a short confirmation and ask how you can help. For booking requests, use the approved service IDs in the business context, ask for an exact date and time, and call create_booking only after the customer explicitly confirms the selected slot. Never claim a booking is confirmed unless the tool returns confirmed=true. If a queue token is returned, tell the customer the token and estimated wait. Be concise, natural and multilingual when appropriate.")
+    ws_url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+settings.gemini_api_key
+    setup={"setup":{"model":"models/"+settings.gemini_live_model,"generationConfig":{"responseModalities":["AUDIO"]},"systemInstruction":{"parts":[{"text":system}]},"inputAudioTranscription":{},"outputAudioTranscription":{},"sessionResumption":{},"tools":[{"functionDeclarations":[{"name":"save_customer_identity","description":"Save and verify the customer's name and mobile number after the customer has stated both during the call.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},{"name":"create_booking","description":"Create a confirmed appointment after the customer explicitly confirms an exact service, date and time. starts_at is local business time without timezone offset.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}]}]}}
+    try:
+        async with websockets.connect(ws_url,max_size=8*1024*1024,ping_interval=20,ping_timeout=20) as gemini:
+            await gemini.send(json.dumps(setup)); await websocket.send_json({"type":"status","status":"ai_connected"})
+            await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}}))
+            async def browser_to_gemini():
+                while True:
+                    raw=await websocket.receive_text(); msg=json.loads(raw); typ=msg.get("type")
+                    if typ=="audio":
+                        await gemini.send(json.dumps({"realtimeInput":{"audio":{"data":msg["data"],"mimeType":"audio/pcm;rate=16000"}}}))
+                    elif typ=="stop":
+                        break
+            async def gemini_to_browser():
+                while True:
+                    raw=await gemini.recv()
+                    if isinstance(raw,bytes): raw=raw.decode()
+                    msg=json.loads(raw); sc=msg.get("serverContent") or {}
+                    if sc.get("inputTranscription",{}).get("text"):
+                        txt=sc["inputTranscription"]["text"]; call.transcript=((call.transcript+"\
+") if call.transcript else "")+"CUSTOMER: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":txt})
+                    if sc.get("outputTranscription",{}).get("text"):
+                        txt=sc["outputTranscription"]["text"]; call.transcript=((call.transcript+"\
+") if call.transcript else "")+"AI: "+txt; db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":txt})
+                    if msg.get("toolCall"):
+                        responses=[]
+                        for fc in msg["toolCall"].get("functionCalls",[]):
+                            args=fc.get("args",{})
+                            name=fc.get("name")
+                            if name=="save_customer_identity":
+                                try:
+                                    phone=str(args.get("phone","")).strip()
+                                    customer_name=str(args.get("name","")).strip()
+                                    if not phone or not customer_name:
+                                        raise ValueError("Name and mobile number are required")
+                                    c=upsert_customer(db,tenant.id,phone,customer_name,False,source="ai_voice")
+                                    call.customer_id=c.id
+                                    call.status="connected"
+                                    db.commit()
+                                    route_call(db,tenant.id,call,call.intent)
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"customer_id":c.id,"verified":True}}})
+                                except Exception as exc:
+                                    db.rollback()
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"verified":False,"error":str(exc)}}})
+                            elif name=="create_booking":
+                                try:
+                                    service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
+                                    if not service: raise ValueError("Service not found or inactive")
+                                    if not call.customer_id: raise ValueError("Customer identity must be verified first")
+                                    c=db.get(Customer,call.customer_id)
+                                    starts=datetime.fromisoformat(str(args.get("starts_at","")))
+                                    a,q=create_appointment(db,tenant,c,service,starts,"ai_voice",str(args.get("staff_id")) if args.get("staff_id") else None,str(args.get("notes")) if args.get("notes") else None,True,False)
+                                    db.commit()
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),"queue_token":q.token if q else None,"estimated_wait_minutes":q.estimated_wait_minutes if q else None}}})
+                                except Exception as exc:
+                                    db.rollback()
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"confirmed":False,"error":str(exc)}}})
+                        if responses: await gemini.send(json.dumps({"toolResponse":{"functionResponses":responses}}))
+                    await websocket.send_text(raw)
+            tasks=[asyncio.create_task(browser_to_gemini()),asyncio.create_task(gemini_to_browser())]
+            done,_=await asyncio.wait(tasks,return_when=asyncio.FIRST_COMPLETED)
+            for task in tasks:
+                if not task.done(): task.cancel()
+    except Exception as exc:
+        try: await websocket.send_json({"type":"error","message":"Voice session ended: "+str(exc)})
+        except Exception: pass
+    finally:
+        try:
+            db.refresh(call)
+            now=datetime.utcnow()
+            if call.started_at:
+                call.ended_at=now
+                call.duration_seconds=max(0,int((now-call.started_at).total_seconds()))
+            if call.status not in {"handoff_requested","handoff_accepted","connected"}:
+                call.status="ended"
+                if not call.resolution: call.resolution="completed"
+            db.commit()
+        finally:
+            db.close()
+
+class PublicVoiceTurnRequest(BaseModel):
+    transcript:str=Field(min_length=1,max_length=4000)
+    conversation_id:str|None=None
+    call_id:str|None=None
+    channel:str="voice"
+
+@app.get("/api/v1/public/business/{slug}/call/{call_id}/handoff")
+def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==t.id))
+    if not call: raise HTTPException(404,"Call not found")
+    staff=db.get(StaffMember,call.staff_id) if call.staff_id else None
+    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"room_token":issue_call_room_token(call.id,"call-customer") if call.room_id and call.status in ("handoff_requested","handoff_accepted","connected") else None,"staff":{"id":staff.id,"name":staff.name} if staff else None}
+
+@app.get("/api/v1/public/business/{slug}/voice/ice")
+def public_voice_ice(slug:str, db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    servers=[{"urls":"stun:stun.l.google.com:19302"}]
+    if settings.turn_url:
+        servers.append({"urls":settings.turn_url,"username":settings.turn_username,"credential":settings.turn_credential})
+    return {"ice_servers":servers}
+
+@app.post("/api/v1/public/business/{slug}/voice/turn")
+async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    result=await generate_reply(db,t.id,payload.transcript,payload.conversation_id,payload.channel)
+    if payload.call_id:
+        call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
+        if call:
+            call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\\nAI: "+result["reply"]
+            call.intent=result.get("intent"); db.commit()
+    return {**result,"tenant_id":t.id,"call_id":payload.call_id}
+@app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
+def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
+@app.get("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}")
+def loyalty_balance(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); rows=db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==customer_id)).all(); return {"points":sum(x.points for x in rows)}
+
+class LoyaltyCreate(BaseModel): points:int; reason:str; reference_id:str|None=None
+@app.post("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}",status_code=201)
+def add_loyalty(tenant_id,customer_id,payload:LoyaltyCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); x=LoyaltyTransaction(tenant_id=tenant_id,customer_id=customer_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"points":x.points}
+
+@app.patch("/api/v1/tenants/{tenant_id}/calls/{call_id}")
+def update_call(tenant_id,call_id,payload:dict,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id); c=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
+    if not c: raise HTTPException(404,"Call not found")
+    for k in ["status","department","transcript","summary","intent"]:
+        if k in payload: setattr(c,k,payload[k])
+    db.commit(); return {"id":c.id,"status":c.status}
 
 
-# --- Knowledge learning + CRM call intelligence ---------------------------------
+# --- Knowledge learning + CRM call intelligence ---
 class KnowledgeCandidateCreate(BaseModel):
     question: str = Field(min_length=2, max_length=4000)
     answer: str = Field(min_length=1, max_length=8000)
     language: str = Field(default="en", max_length=16)
     intent: str | None = Field(default=None, max_length=120)
-    status: str = Field(default="pending", max_length=30)
 
 @app.get("/api/v1/tenants/{tenant_id}/knowledge-candidates")
 def list_knowledge_candidates(tenant_id, status: str | None = None, user=Depends(get_current_user), db:Session=Depends(get_db)):
@@ -1414,92 +1627,51 @@ def list_knowledge_candidates(tenant_id, status: str | None = None, user=Depends
     q=select(KnowledgeCandidate).where(KnowledgeCandidate.tenant_id==tenant_id)
     if status: q=q.where(KnowledgeCandidate.status==status)
     rows=db.scalars(q.order_by(KnowledgeCandidate.last_asked_at.desc())).all()
-    return {"items":[{
-        "id":x.id,"question":x.question,"answer":x.answer,"language":x.language,
-        "intent":x.intent,"status":x.status,"source":x.source,"provider":x.provider,
-        "times_asked":x.times_asked,"first_asked_at":x.first_asked_at.isoformat() if x.first_asked_at else None,
-        "last_asked_at":x.last_asked_at.isoformat() if x.last_asked_at else None
-    } for x in rows]}
+    return {"items":[{"id":x.id,"question":x.question,"answer":x.answer,"language":x.language,"intent":x.intent,"status":x.status,"source":x.source,"provider":x.provider,"times_asked":x.times_asked,"first_asked_at":x.first_asked_at.isoformat() if x.first_asked_at else None,"last_asked_at":x.last_asked_at.isoformat() if x.last_asked_at else None} for x in rows]}
 
 @app.post("/api/v1/tenants/{tenant_id}/knowledge-candidates/{candidate_id}/approve")
-def approve_knowledge_candidate(tenant_id, candidate_id, user=Depends(get_current_user), db:Session=Depends(get_db)):
+def approve_knowledge_candidate(tenant_id,candidate_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
     x=db.scalar(select(KnowledgeCandidate).where(KnowledgeCandidate.id==candidate_id,KnowledgeCandidate.tenant_id==tenant_id))
     if not x: raise HTTPException(404,"Knowledge candidate not found")
-    item=KnowledgeItem(
-        tenant_id=tenant_id,title=x.question,content=x.answer,kind="learned_faq",
-        language=x.language,source="conversation_learning",approval_status="approved",
-        usage_count=0
-    )
+    item=KnowledgeItem(tenant_id=tenant_id,title=x.question,content=x.answer,kind="learned_faq",language=x.language,source="conversation_learning",approval_status="approved")
     db.add(item); x.status="approved"; db.commit(); db.refresh(item)
     return {"id":item.id,"candidate_id":x.id,"status":"approved"}
 
 @app.post("/api/v1/tenants/{tenant_id}/knowledge-candidates/{candidate_id}/reject")
-def reject_knowledge_candidate(tenant_id, candidate_id, user=Depends(get_current_user), db:Session=Depends(get_db)):
+def reject_knowledge_candidate(tenant_id,candidate_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
     x=db.scalar(select(KnowledgeCandidate).where(KnowledgeCandidate.id==candidate_id,KnowledgeCandidate.tenant_id==tenant_id))
     if not x: raise HTTPException(404,"Knowledge candidate not found")
-    x.status="rejected"; db.commit()
-    return {"id":x.id,"status":x.status}
+    x.status="rejected"; db.commit(); return {"id":x.id,"status":"rejected"}
 
-@app.get("/api/v1/tenants/{tenant_id}/calls")
-def list_call_logs(tenant_id, customer_id: str | None = None, limit: int = Query(default=100, ge=1, le=500),
-                   user=Depends(get_current_user), db:Session=Depends(get_db)):
+@app.get("/api/v1/tenants/{tenant_id}/call-logs")
+def list_call_logs(tenant_id,customer_id: str|None=None,limit:int=Query(default=100,ge=1,le=500),user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
     q=select(CallRecord).where(CallRecord.tenant_id==tenant_id)
-    if customer_id: q=q.where(CallRecord.customer_id==customer_id)
+    if customer_id:q=q.where(CallRecord.customer_id==customer_id)
     rows=db.scalars(q.order_by(CallRecord.created_at.desc()).limit(limit)).all()
-    return {"items":[{
-        "id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,
-        "department":x.department,"staff_id":x.staff_id,"language":x.language,
-        "started_at":x.started_at.isoformat() if x.started_at else None,
-        "answered_at":x.answered_at.isoformat() if x.answered_at else None,
-        "ended_at":x.ended_at.isoformat() if x.ended_at else None,
-        "duration_seconds":x.duration_seconds,"call_number":x.call_number,
-        "resolution":x.resolution,"intent":x.intent,"summary":x.summary,
-        "knowledge_hits":x.knowledge_hits,"ai_turns":x.ai_turns,
-        "human_callback_requested":x.human_callback_requested,"transcript":x.transcript
-    } for x in rows]}
+    return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"language":x.language,"started_at":x.started_at.isoformat() if x.started_at else None,"answered_at":x.answered_at.isoformat() if x.answered_at else None,"ended_at":x.ended_at.isoformat() if x.ended_at else None,"duration_seconds":x.duration_seconds,"call_number":x.call_number,"resolution":x.resolution,"intent":x.intent,"summary":x.summary,"knowledge_hits":x.knowledge_hits,"ai_turns":x.ai_turns,"human_callback_requested":x.human_callback_requested,"transcript":x.transcript} for x in rows]}
 
 @app.get("/api/v1/tenants/{tenant_id}/customers/{customer_id}/call-summary")
-def customer_call_summary(tenant_id, customer_id, user=Depends(get_current_user), db:Session=Depends(get_db)):
+def customer_call_summary(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
     rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id,CallRecord.customer_id==customer_id).order_by(CallRecord.created_at)).all()
-    return {
-        "customer_id":customer_id,
-        "total_calls":len(rows),
-        "total_duration_seconds":sum(x.duration_seconds or 0 for x in rows),
-        "last_call_at":rows[-1].created_at.isoformat() if rows else None,
-        "languages":sorted({x.language for x in rows if x.language}),
-        "calls":[{"id":x.id,"call_number":x.call_number,"created_at":x.created_at.isoformat(),
-                  "duration_seconds":x.duration_seconds,"status":x.status,"resolution":x.resolution,
-                  "language":x.language,"human_callback_requested":x.human_callback_requested,
-                  "intent":x.intent,"summary":x.summary} for x in rows]
-    }
+    return {"customer_id":customer_id,"total_calls":len(rows),"total_duration_seconds":sum(x.duration_seconds or 0 for x in rows),"last_call_at":rows[-1].created_at.isoformat() if rows else None,"languages":sorted({x.language for x in rows if x.language}),"calls":[{"id":x.id,"call_number":x.call_number,"created_at":x.created_at.isoformat(),"duration_seconds":x.duration_seconds,"status":x.status,"resolution":x.resolution,"language":x.language,"human_callback_requested":x.human_callback_requested,"intent":x.intent,"summary":x.summary} for x in rows]}
 
-# --- Password reset --------------------------------------------------------------
 @app.post("/api/v1/auth/password-reset/request")
-def password_reset_request(payload: PasswordResetRequest, db:Session=Depends(get_db)):
+def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==payload.email.lower().strip()))
-    # Always return the same response to avoid account enumeration.
     if user and user.is_active:
-        raw=secrets.token_urlsafe(48)
-        digest=hashlib.sha256(raw.encode()).hexdigest()
-        expires=datetime.utcnow()+timedelta(minutes=settings.password_reset_ttl_minutes)
-        db.add(PasswordResetToken(user_id=user.id,token_hash=digest,expires_at=expires))
-        db.commit()
-        send_password_reset(db,user,raw)
+        raw=secrets.token_urlsafe(48); digest=hashlib.sha256(raw.encode()).hexdigest(); expires=datetime.utcnow()+timedelta(minutes=settings.password_reset_ttl_minutes)
+        db.add(PasswordResetToken(user_id=user.id,token_hash=digest,expires_at=expires)); db.commit(); send_password_reset(db,user,raw)
     return {"sent":True,"message":"If the account exists, reset instructions have been sent."}
 
 @app.post("/api/v1/auth/password-reset/confirm")
-def password_reset_confirm(payload: PasswordResetConfirm, db:Session=Depends(get_db)):
-    digest=hashlib.sha256(payload.token.encode()).hexdigest()
-    token=db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash==digest))
-    if not token or token.used_at or token.expires_at < datetime.utcnow():
-        raise HTTPException(400,"Reset link is invalid or expired")
+def password_reset_confirm(payload:PasswordResetConfirm,db:Session=Depends(get_db)):
+    digest=hashlib.sha256(payload.token.encode()).hexdigest(); token=db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash==digest))
+    if not token or token.used_at or token.expires_at<datetime.utcnow(): raise HTTPException(400,"Reset link is invalid or expired")
     user=db.get(User,token.user_id)
     if not user or not user.is_active: raise HTTPException(400,"Reset link is invalid or expired")
-    user.password_hash=hash_password(payload.password)
-    token.used_at=datetime.utcnow()
-    db.commit()
+    user.password_hash=hash_password(payload.password); token.used_at=datetime.utcnow(); db.commit()
     return {"reset":True,"message":"Password updated successfully."}
