@@ -18,6 +18,16 @@ class Settings(BaseSettings):
     platform_admin_email:str=""
     platform_admin_password:str=""
     platform_admin_name:str="Platform Administrator"
+    resend_api_key:str=""
+    notification_from_email:str=""
+    notification_from_name:str="AI Growth OS"
+    password_reset_ttl_minutes:int=30
+    notification_whatsapp_provider:str=""
+    notification_whatsapp_access_token:str=""
+    notification_whatsapp_phone_number_id:str=""
+    notification_whatsapp_openwa_base_url:str=""
+    notification_whatsapp_openwa_api_key:str=""
+    notification_whatsapp_openwa_session_id:str=""
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
