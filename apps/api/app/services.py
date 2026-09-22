@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .config import settings
 from .models import Tenant, User, Customer, Lead, Service, Product
-from .integrations import WhatsAppAdapter
+from .integrations import WhatsAppAdapter,tenant_whatsapp_adapter
 import jwt
 
 def normalize_phone(phone: str) -> str:
@@ -62,7 +62,7 @@ def upsert_customer(db: Session, tenant_id: str, phone: str, name: str | None, w
         if tenant:
             welcome = f"Hello {customer.name}, welcome to {tenant.name}! You can continue with us here on WhatsApp or open your digital PWA experience: {settings.public_app_url}/customer?business={tenant.slug}&customer={customer.portal_token}"
             try:
-                WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text_sync(customer.phone,welcome)
+                tenant_whatsapp_adapter(db,tenant_id,settings).send_text_sync(customer.phone,welcome)
             except Exception:
                 pass
     return customer
