@@ -12,7 +12,7 @@ def test_oauth_state_round_trip():
 def test_oauth_state_expiry(monkeypatch):
     original = settings.oauth_state_ttl_seconds
     try:
-        settings.oauth_state_ttl_seconds = 0
+        settings.oauth_state_ttl_seconds = -1
         state = _oauth_state("tenant-1", "youtube")
         with pytest.raises(Exception):
             _verify_oauth_state(state)
