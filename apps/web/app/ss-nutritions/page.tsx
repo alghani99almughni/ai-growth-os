@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "SS Nutritions | Natural Wellness & Healthy Living",
   description: "SS Nutritions helps families around Moinabad build healthier everyday habits through a practical, organic-focused wellness approach.",
+  manifest: "/ss-nutritions/manifest.webmanifest",
 };
 
 const whatsappMessage = encodeURIComponent("Hi SS Nutritions, I would like to know more about your wellness programs.");
@@ -14,7 +15,7 @@ export default function SSNutritions() {
       <header className="ss-nav">
         <a className="ss-brand" href="#top"><span>SS</span> Nutritions</a>
         <nav><a href="#about">About</a><a href="#wellness">Wellness</a><a href="#contact">Contact</a></nav>
-        <a className="ss-nav-cta" href={whatsappLink} target="_blank" rel="noreferrer">WhatsApp</a>
+        <div className="ss-nav-actions"><a className="ss-nav-cta" href="#contact">Talk to us</a><a className="ss-nav-cta ss-nav-wa" href={whatsappLink} target="_blank" rel="noreferrer">WhatsApp</a></div>
       </header>
 
       <section id="top" className="ss-hero">
