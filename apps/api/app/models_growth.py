@@ -4,6 +4,23 @@ from sqlalchemy.orm import Mapped,mapped_column
 from .db import Base
 import uuid
 def uid(): return str(uuid.uuid4())
+class AIProviderUsage(Base):
+    __tablename__="ai_provider_usage"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    tenant_id:Mapped[str|None]=mapped_column(ForeignKey("tenants.id"),nullable=True,index=True)
+    provider:Mapped[str]=mapped_column(String(60),index=True)
+    model:Mapped[str]=mapped_column(String(120))
+    request_count:Mapped[int]=mapped_column(Integer,default=0)
+    success_count:Mapped[int]=mapped_column(Integer,default=0)
+    failure_count:Mapped[int]=mapped_column(Integer,default=0)
+    rate_limit_count:Mapped[int]=mapped_column(Integer,default=0)
+    estimated_input_tokens:Mapped[int]=mapped_column(Integer,default=0)
+    estimated_output_tokens:Mapped[int]=mapped_column(Integer,default=0)
+    last_error:Mapped[str|None]=mapped_column(Text,nullable=True)
+    last_used_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    cooldown_until:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
+
 class KnowledgeItem(Base):
     __tablename__="knowledge_items"
     id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
