@@ -1,16 +1,15 @@
 "use client";
-import {useState} from "react";
-import {useSearchParams} from "next/navigation";
+import {useEffect,useState} from "react";
 
 const api=()=>process.env.NEXT_PUBLIC_API_URL||"https://ai-growth-os-api.onrender.com";
 
 export default function ResetPassword(){
- const params=useSearchParams();
- const token=params.get("token")||"";
+ const [token,setToken]=useState("");
  const [password,setPassword]=useState("");
  const [confirm,setConfirm]=useState("");
  const [show,setShow]=useState(false);
  const [status,setStatus]=useState("");
+ useEffect(()=>{setToken(new URLSearchParams(window.location.search).get("token")||"")},[]);
  async function submit(e:any){
   e.preventDefault();
   if(password.length<8){setStatus("Password must be at least 8 characters.");return}
