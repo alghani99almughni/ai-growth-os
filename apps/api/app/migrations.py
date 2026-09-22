@@ -90,4 +90,13 @@ def ensure_schema():
             if "source" not in appointment_cols: conn.execute(text("ALTER TABLE appointments ADD COLUMN source VARCHAR(40) DEFAULT 'manual'"))
             if "queue_token" not in appointment_cols: conn.execute(text("ALTER TABLE appointments ADD COLUMN queue_token VARCHAR(40)"))
             if "queue_status" not in appointment_cols: conn.execute(text("ALTER TABLE appointments ADD COLUMN queue_status VARCHAR(40)"))
+            conn.execute(text("CREATE TABLE IF NOT EXISTS knowledge_candidates (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, question TEXT NOT NULL, answer TEXT NOT NULL, language VARCHAR(16) NOT NULL DEFAULT 'en', intent VARCHAR(120), status VARCHAR(30) NOT NULL DEFAULT 'pending', source VARCHAR(40) NOT NULL DEFAULT 'voice', provider VARCHAR(60) NOT NULL DEFAULT 'ai', times_asked INTEGER NOT NULL DEFAULT 1, first_asked_at DATETIME NOT NULL, last_asked_at DATETIME NOT NULL, created_at DATETIME NOT NULL)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_tenant_id ON knowledge_candidates(tenant_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_knowledge_candidates_status ON knowledge_candidates(status)"))
+            knowledge_cols={r[1] for r in conn.execute(text("PRAGMA table_info(knowledge_items)"))}
+            for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("source","VARCHAR(60) DEFAULT 'manual'"),("approval_status","VARCHAR(30) DEFAULT 'approved'"),("usage_count","INTEGER DEFAULT 0"),("last_used_at","DATETIME")]:
+                if name not in knowledge_cols: conn.execute(text(f"ALTER TABLE knowledge_items ADD COLUMN {name} {definition}"))
+            call_cols={r[1] for r in conn.execute(text("PRAGMA table_info(call_records)"))}
+            for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("started_at","DATETIME"),("answered_at","DATETIME"),("ended_at","DATETIME"),("duration_seconds","INTEGER DEFAULT 0"),("call_number","INTEGER DEFAULT 1"),("resolution","VARCHAR(50)"),("knowledge_hits","INTEGER DEFAULT 0"),("ai_turns","INTEGER DEFAULT 0"),("human_callback_requested","BOOLEAN DEFAULT 0")]:
+                if name not in call_cols: conn.execute(text(f"ALTER TABLE call_records ADD COLUMN {name} {definition}"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS service_requests (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, customer_id VARCHAR(36), appointment_id VARCHAR(36), context_token VARCHAR(100), request_type VARCHAR(50) NOT NULL DEFAULT 'waiter', message TEXT, status VARCHAR(40) NOT NULL DEFAULT 'requested', assigned_staff_id VARCHAR(36), created_at DATETIME NOT NULL, acknowledged_at DATETIME, completed_at DATETIME)"))
