@@ -28,7 +28,8 @@ import websockets
 import jwt,secrets
 
 import asyncio
-app=FastAPI(title="AI Growth OS API",version="1.0.0")\napp.include_router(integration_router)
+app=FastAPI(title="AI Growth OS API",version="1.0.0")
+app.include_router(integration_router)
 app.include_router(social_router)
 app.add_middleware(
     CORSMiddleware,
