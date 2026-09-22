@@ -1434,7 +1434,7 @@ def create_qr(tenant_id,kind:str="business",label:str="Business QR",user=Depends
 def scan_qr(token,db:Session=Depends(get_db)):
     q=db.scalar(select(QrEntry).where(QrEntry.token==token))
     if not q: raise HTTPException(404,"QR not found")
-    q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url+"/customer","kind":q.kind}
+    q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url.rstrip("/")+"/pwa/"+t.slug+"?qr="+q.token,"kind":q.kind}
 
 class PublicCallStartRequest(BaseModel):
     name:str=Field(min_length=1,max_length=160)
@@ -1611,12 +1611,16 @@ def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_
     require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
 @app.get("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}")
 def loyalty_balance(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,tenant_id); rows=db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==customer_id)).all(); return {"points":sum(x.points for x in rows)}
+    require_tenant(user,tenant_id)
+    if not _feature_config(db,tenant_id).get("loyalty",False): raise HTTPException(403,"Loyalty is disabled for this business")
+    rows=db.scalars(select(LoyaltyTransaction).where(LoyaltyTransaction.tenant_id==tenant_id,LoyaltyTransaction.customer_id==customer_id)).all(); return {"points":sum(x.points for x in rows)}
 
 class LoyaltyCreate(BaseModel): points:int; reason:str; reference_id:str|None=None
 @app.post("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}",status_code=201)
 def add_loyalty(tenant_id,customer_id,payload:LoyaltyCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
-    require_tenant(user,tenant_id); x=LoyaltyTransaction(tenant_id=tenant_id,customer_id=customer_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"points":x.points}
+    require_tenant(user,tenant_id)
+    if not _feature_config(db,tenant_id).get("loyalty",False): raise HTTPException(403,"Loyalty is disabled for this business")
+    x=LoyaltyTransaction(tenant_id=tenant_id,customer_id=customer_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x); return {"id":x.id,"points":x.points}
 
 @app.patch("/api/v1/tenants/{tenant_id}/calls/{call_id}")
 def update_call(tenant_id,call_id,payload:dict,user=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -1658,6 +1662,51 @@ def reject_knowledge_candidate(tenant_id,candidate_id,user=Depends(get_current_u
     if not x: raise HTTPException(404,"Knowledge candidate not found")
     x.status="rejected"; db.commit(); return {"id":x.id,"status":"rejected"}
 
+class CallResolution(BaseModel):
+    status: str = Field(default="resolved", max_length=40)
+    summary: str = Field(min_length=1, max_length=8000)
+    knowledge_answer: str | None = Field(default=None, max_length=8000)
+    language: str | None = Field(default=None, max_length=16)
+
+@app.post("/api/v1/tenants/{tenant_id}/calls/{call_id}/resolve")
+def resolve_call(tenant_id,call_id,payload:CallResolution,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404,"Call not found")
+    call.status=payload.status
+    call.resolution="human_resolved"
+    call.summary=payload.summary
+    if payload.language: call.language=payload.language
+    if call.ended_at is None: call.ended_at=datetime.utcnow()
+    if call.started_at: call.duration_seconds=max(0,int((call.ended_at-call.started_at).total_seconds()))
+    candidate=None
+    if payload.knowledge_answer:
+        question=""
+        if call.transcript:
+            parts=[x.removeprefix("CUSTOMER: ").strip() for x in call.transcript.split("\\n") if x.startswith("CUSTOMER: ")]
+            question=parts[-1] if parts else ""
+        if question:
+            existing=db.scalar(select(KnowledgeCandidate).where(
+                KnowledgeCandidate.tenant_id==tenant_id,
+                KnowledgeCandidate.question==question,
+                KnowledgeCandidate.status.in_(["pending","approved"])
+            ))
+            if existing:
+                existing.answer=payload.knowledge_answer
+                existing.times_asked=(existing.times_asked or 0)+1
+                existing.last_asked_at=datetime.utcnow()
+                candidate=existing
+            else:
+                candidate=KnowledgeCandidate(
+                    tenant_id=tenant_id,question=question,answer=payload.knowledge_answer,
+                    language=payload.language or call.language or "en",intent=call.intent,status="pending",
+                    source="human_callback",provider="human",times_asked=1
+                )
+                db.add(candidate)
+    db.commit()
+    return {"call_id":call.id,"status":call.status,"resolution":call.resolution,
+            "knowledge_candidate_id":candidate.id if candidate else None}
+
 @app.get("/api/v1/tenants/{tenant_id}/call-logs")
 def list_call_logs(tenant_id,customer_id: str|None=None,limit:int=Query(default=100,ge=1,le=500),user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
@@ -1673,11 +1722,11 @@ def customer_call_summary(tenant_id,customer_id,user=Depends(get_current_user),d
     return {"customer_id":customer_id,"total_calls":len(rows),"total_duration_seconds":sum(x.duration_seconds or 0 for x in rows),"last_call_at":rows[-1].created_at.isoformat() if rows else None,"languages":sorted({x.language for x in rows if x.language}),"calls":[{"id":x.id,"call_number":x.call_number,"created_at":x.created_at.isoformat(),"duration_seconds":x.duration_seconds,"status":x.status,"resolution":x.resolution,"language":x.language,"human_callback_requested":x.human_callback_requested,"intent":x.intent,"summary":x.summary} for x in rows]}
 
 @app.post("/api/v1/auth/password-reset/request")
-def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
+async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==payload.email.lower().strip()))
     if user and user.is_active:
         raw=secrets.token_urlsafe(48); digest=hashlib.sha256(raw.encode()).hexdigest(); expires=datetime.utcnow()+timedelta(minutes=settings.password_reset_ttl_minutes)
-        db.add(PasswordResetToken(user_id=user.id,token_hash=digest,expires_at=expires)); db.commit(); send_password_reset(db,user,raw)
+        db.add(PasswordResetToken(user_id=user.id,token_hash=digest,expires_at=expires)); db.commit(); tenant=db.get(Tenant,user.tenant_id); await send_password_reset(user,tenant,raw) if tenant else None
     return {"sent":True,"message":"If the account exists, reset instructions have been sent."}
 
 @app.post("/api/v1/auth/password-reset/confirm")
