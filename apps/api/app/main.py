@@ -536,6 +536,7 @@ class PlatformTenantProvisionOut(BaseModel):
     tenant: dict
     owner: dict
     status: str
+    notifications: dict = {}
 
 DEFAULT_DEPARTMENTS = {
     "health": ["Administration","Consultation","Customer Support","Sales"],
