@@ -46,6 +46,8 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS approval_status VARCHAR(30) DEFAULT 'approved'"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS usage_count INTEGER DEFAULT 0"))
             conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS embedding_json TEXT"))
+            conn.execute(text("ALTER TABLE knowledge_items ADD COLUMN IF NOT EXISTS embedding_model VARCHAR(80)"))
             conn.execute(text("ALTER TABLE call_records ADD COLUMN IF NOT EXISTS language VARCHAR(16) DEFAULT 'en'"))
             conn.execute(text("ALTER TABLE call_records ADD COLUMN IF NOT EXISTS started_at TIMESTAMP"))
             conn.execute(text("ALTER TABLE call_records ADD COLUMN IF NOT EXISTS answered_at TIMESTAMP"))
@@ -101,7 +103,7 @@ def ensure_schema():
             ai_usage_cols={r[1] for r in conn.execute(text("PRAGMA table_info(ai_provider_usage)"))}
             if "credential_ref" not in ai_usage_cols: conn.execute(text("ALTER TABLE ai_provider_usage ADD COLUMN credential_ref VARCHAR(32) DEFAULT 'default'"))
             knowledge_cols={r[1] for r in conn.execute(text("PRAGMA table_info(knowledge_items)"))}
-            for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("source","VARCHAR(60) DEFAULT 'manual'"),("approval_status","VARCHAR(30) DEFAULT 'approved'"),("usage_count","INTEGER DEFAULT 0"),("last_used_at","DATETIME")]:
+            for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("source","VARCHAR(60) DEFAULT 'manual'"),("approval_status","VARCHAR(30) DEFAULT 'approved'"),("usage_count","INTEGER DEFAULT 0"),("last_used_at","DATETIME"),("embedding_json","TEXT"),("embedding_model","VARCHAR(80)")]:
                 if name not in knowledge_cols: conn.execute(text(f"ALTER TABLE knowledge_items ADD COLUMN {name} {definition}"))
             call_cols={r[1] for r in conn.execute(text("PRAGMA table_info(call_records)"))}
             for name,definition in [("language","VARCHAR(16) DEFAULT 'en'"),("started_at","DATETIME"),("answered_at","DATETIME"),("ended_at","DATETIME"),("duration_seconds","INTEGER DEFAULT 0"),("call_number","INTEGER DEFAULT 1"),("resolution","VARCHAR(50)"),("knowledge_hits","INTEGER DEFAULT 0"),("ai_turns","INTEGER DEFAULT 0"),("human_callback_requested","BOOLEAN DEFAULT 0")]:
