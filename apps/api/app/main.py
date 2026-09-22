@@ -1,6 +1,7 @@
 from fastapi import FastAPI,Depends,HTTPException,Query,Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
@@ -26,7 +27,35 @@ import websockets
 import jwt,secrets
 
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
-app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[x.strip() for x in settings.allowed_origins.split(",") if x.strip()],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Lightweight per-process abuse protection. Production multi-instance deployments should
+# place the same limits at the edge/API gateway as well.
+_rate_buckets={}
+_rate_lock=asyncio.Lock()
+
+@app.middleware("http")
+async def rate_limit(request:Request, call_next):
+    if request.url.path in {"/health","/docs","/openapi.json"}:
+        return await call_next(request)
+    now=asyncio.get_running_loop().time()
+    client=request.client.host if request.client else "unknown"
+    key=(client,request.url.path)
+    async with _rate_lock:
+        bucket=_rate_buckets.get(key)
+        if not bucket or now-bucket[0]>=settings.rate_limit_window_seconds:
+            _rate_buckets[key]=[now,1]
+        else:
+            bucket[1]+=1
+            if bucket[1]>settings.rate_limit_requests:
+                return JSONResponse(status_code=429,content={"detail":"Too many requests"})
+    return await call_next(request)
 
 @app.websocket("/ws/tenants/{tenant_id}/events")
 async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(default=None)):
