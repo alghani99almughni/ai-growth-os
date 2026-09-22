@@ -376,7 +376,7 @@ async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db
     # Existing customers may interact freely; new customers must have both mobile + name before AI/business actions.
     result=await generate_reply(db,tenant_id,body,None,"whatsapp")
     reply=result.get("reply") or "Thanks. How can I help you today?"
-    await WhatsAppAdapter(provider=settings.whatsapp_provider,openwa_base_url=settings.openwa_base_url,openwa_api_key=settings.openwa_api_key,openwa_session_id=settings.openwa_session_id,access_token=settings.whatsapp_access_token,phone_number_id=settings.whatsapp_phone_number_id).send_text(existing.phone,reply)
+    await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(existing.phone,reply)
     return {"ok":True,"customer_id":existing.id,"reply":reply}
 
 @app.post("/api/v1/leads",status_code=201)
