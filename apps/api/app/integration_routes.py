@@ -85,7 +85,7 @@ def _platform_available(key):
 def _out(row):
     cfg={}
     if row.config_encrypted:
-        try: cfg=decrypt_channel_config(row.config_encrypted, settings.whatsapp_credential_encryption_key)
+        try: cfg=decrypt_channel_config(row.config_encrypted, (settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
         except Exception: pass
     return {
       "key":row.integration_key,"provider":row.provider,"mode":row.mode,"status":row.status,
@@ -131,11 +131,11 @@ def save_integration(tenant_id: str, key: str, payload: IntegrationPayload, cred
     existing=db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key==key))
     if existing and any(k in SECRET_FIELDS.get(key,[]) and v for k,v in config.items()):
         try:
-            old=decrypt_channel_config(existing.config_encrypted,settings.whatsapp_credential_encryption_key) if existing.config_encrypted else {}
+            old=decrypt_channel_config(existing.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)) if existing.config_encrypted else {}
             for k in SECRET_FIELDS.get(key,[]):
                 if k not in config and old.get(k): config[k]=old[k]
         except Exception: pass
-    encrypted=encrypt_channel_config(config,settings.whatsapp_credential_encryption_key) if config else ""
+    encrypted=encrypt_channel_config(config,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)) if config else ""
     if not existing:
         existing=TenantIntegration(tenant_id=tenant_id,integration_key=key,provider=payload.provider,mode=payload.mode)
         db.add(existing)
@@ -169,7 +169,7 @@ def update_platform_ai_provider(provider_id: str, payload: dict, credentials=Dep
     row=db.get(PlatformAIProvider,provider_id)
     if not row: raise HTTPException(404,"AI provider not found")
     if "api_key" in payload and payload["api_key"]:
-        row.config_encrypted=encrypt_channel_config({"api_key":payload["api_key"]},settings.whatsapp_credential_encryption_key)
+        row.config_encrypted=encrypt_channel_config({"api_key":payload["api_key"]},(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
     for k in ("model","priority","enabled"):
         if k in payload: setattr(row,k,payload[k])
     db.commit(); return {"id":row.id,"provider":row.provider,"model":row.model,"priority":row.priority,"enabled":row.enabled}
@@ -179,7 +179,7 @@ def create_platform_ai_provider(payload: dict, credentials=Depends(__import__("f
     user=_user(credentials,db)
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin required")
     row=PlatformAIProvider(provider=payload.get("provider","gemini"),model=payload.get("model",""),priority=int(payload.get("priority",100)),enabled=bool(payload.get("enabled",True)))
-    if payload.get("api_key"): row.config_encrypted=encrypt_channel_config({"api_key":payload["api_key"]},settings.whatsapp_credential_encryption_key)
+    if payload.get("api_key"): row.config_encrypted=encrypt_channel_config({"api_key":payload["api_key"]},(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
     db.add(row); db.commit(); db.refresh(row); return {"id":row.id,"provider":row.provider,"model":row.model,"priority":row.priority,"enabled":row.enabled}
 
 
@@ -212,7 +212,7 @@ async def builtin_whatsapp_connect(tenant_id: str, payload: BuiltinWhatsAppConne
     if not row:
         row=TenantWhatsAppConnection(id=__import__("secrets").token_hex(18),tenant_id=tenant_id)
         db.add(row)
-    row.provider="openwa"; row.status="connecting"; row.config_encrypted=encrypt_channel_config({"provider":"openwa","base_url":settings.openwa_base_url,"api_key":settings.openwa_api_key,"session_id":sid,"connected_phone":payload.phone},settings.whatsapp_credential_encryption_key); row.connected_phone=payload.phone; row.display_name=tenant.name; row.updated_at=datetime.utcnow(); db.commit()
+    row.provider="openwa"; row.status="connecting"; row.config_encrypted=encrypt_channel_config({"provider":"openwa","base_url":settings.openwa_base_url,"api_key":settings.openwa_api_key,"session_id":sid,"connected_phone":payload.phone},(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)); row.connected_phone=payload.phone; row.display_name=tenant.name; row.updated_at=datetime.utcnow(); db.commit()
     if payload.method=="pairing":
         result=await _openwa_request("POST",settings.openwa_base_url.rstrip("/")+"/api/sessions/"+sid+"/pairing-code",settings.openwa_api_key,json={"phoneNumber":payload.phone})
         return {"session_id":sid,"method":"pairing","status":"connecting","pairing_code":result.get("code") or result.get("pairingCode")}
@@ -224,7 +224,7 @@ async def builtin_whatsapp_status(tenant_id: str, credentials: HTTPAuthorization
     from .models import TenantWhatsAppConnection
     row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
     if not row or not row.config_encrypted: return {"status":"disconnected","connected_phone":None,"display_name":None}
-    cfg=decrypt_channel_config(row.config_encrypted,settings.whatsapp_credential_encryption_key)
+    cfg=decrypt_channel_config(row.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
     try:
         info=await _openwa_request("GET",cfg["base_url"].rstrip("/")+"/api/sessions/"+cfg["session_id"],cfg["api_key"])
         state=info.get("status") or info.get("state") or row.status
@@ -241,5 +241,5 @@ async def builtin_whatsapp_qr(tenant_id: str, credentials: HTTPAuthorizationCred
     from .models import TenantWhatsAppConnection
     row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
     if not row or not row.config_encrypted: raise HTTPException(404,"Built-in WhatsApp session not found")
-    cfg=decrypt_channel_config(row.config_encrypted,settings.whatsapp_credential_encryption_key)
+    cfg=decrypt_channel_config(row.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
     return await _openwa_request("GET",cfg["base_url"].rstrip("/")+"/api/sessions/"+cfg["session_id"]+"/qr",cfg["api_key"])
