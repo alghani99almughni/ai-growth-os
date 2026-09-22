@@ -1662,6 +1662,51 @@ def reject_knowledge_candidate(tenant_id,candidate_id,user=Depends(get_current_u
     if not x: raise HTTPException(404,"Knowledge candidate not found")
     x.status="rejected"; db.commit(); return {"id":x.id,"status":"rejected"}
 
+class CallResolution(BaseModel):
+    status: str = Field(default="resolved", max_length=40)
+    summary: str = Field(min_length=1, max_length=8000)
+    knowledge_answer: str | None = Field(default=None, max_length=8000)
+    language: str | None = Field(default=None, max_length=16)
+
+@app.post("/api/v1/tenants/{tenant_id}/calls/{call_id}/resolve")
+def resolve_call(tenant_id,call_id,payload:CallResolution,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==tenant_id))
+    if not call: raise HTTPException(404,"Call not found")
+    call.status=payload.status
+    call.resolution="human_resolved"
+    call.summary=payload.summary
+    if payload.language: call.language=payload.language
+    if call.ended_at is None: call.ended_at=datetime.utcnow()
+    if call.started_at: call.duration_seconds=max(0,int((call.ended_at-call.started_at).total_seconds()))
+    candidate=None
+    if payload.knowledge_answer:
+        question=""
+        if call.transcript:
+            parts=[x.removeprefix("CUSTOMER: ").strip() for x in call.transcript.split("\\n") if x.startswith("CUSTOMER: ")]
+            question=parts[-1] if parts else ""
+        if question:
+            existing=db.scalar(select(KnowledgeCandidate).where(
+                KnowledgeCandidate.tenant_id==tenant_id,
+                KnowledgeCandidate.question==question,
+                KnowledgeCandidate.status.in_(["pending","approved"])
+            ))
+            if existing:
+                existing.answer=payload.knowledge_answer
+                existing.times_asked=(existing.times_asked or 0)+1
+                existing.last_asked_at=datetime.utcnow()
+                candidate=existing
+            else:
+                candidate=KnowledgeCandidate(
+                    tenant_id=tenant_id,question=question,answer=payload.knowledge_answer,
+                    language=payload.language or call.language or "en",intent=call.intent,status="pending",
+                    source="human_callback",provider="human",times_asked=1
+                )
+                db.add(candidate)
+    db.commit()
+    return {"call_id":call.id,"status":call.status,"resolution":call.resolution,
+            "knowledge_candidate_id":candidate.id if candidate else None}
+
 @app.get("/api/v1/tenants/{tenant_id}/call-logs")
 def list_call_logs(tenant_id,customer_id: str|None=None,limit:int=Query(default=100,ge=1,le=500),user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
