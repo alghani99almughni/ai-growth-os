@@ -47,7 +47,7 @@ export default function SSNutritions(){
   const [phone,setPhone]=useState("");
   const [callError,setCallError]=useState("");
   const [transcript,setTranscript]=useState<Array<{role:string;text:string}>>([]);
-  const [muted,setMuted]=useState(false);
+  const [muted,setMuted]=useState(false);\n  const mutedRef=useRef(false);
   const socketRef=useRef<WebSocket|null>(null);
   const streamRef=useRef<MediaStream|null>(null);
   const audioContextRef=useRef<AudioContext|null>(null);
@@ -134,7 +134,7 @@ export default function SSNutritions(){
         sourceRef.current=source;
         processorRef.current=processor;
         processor.onaudioprocess=(event)=>{
-          if(muted || ws.readyState!==WebSocket.OPEN) return;
+          if(mutedRef.current || ws.readyState!==WebSocket.OPEN) return;
           const input=event.inputBuffer.getChannelData(0);
           ws.send(JSON.stringify({type:"audio",data:encodePcm16(input,ctx.sampleRate,16000)}));
         };
@@ -264,7 +264,7 @@ export default function SSNutritions(){
           <div className={"ss-call-pulse "+(callState==="connected"?"active":"")}><span>☎</span></div>
           <strong>{callState==="connected"?"AI is listening…":callState==="connecting"?"Connecting…":"Call ended"}</strong>
           <div className="ss-transcript">{transcript.length?transcript.map((item,i)=><p key={i}><b>{item.role==="ai"?"AI":"You"}:</b> {item.text}</p>):<span>Your conversation transcript will appear here.</span>}</div>
-          {callState!=="ended"&&<div className="ss-live-actions"><button type="button" onClick={()=>setMuted(v=>!v)}>{muted?"Unmute":"Mute"}</button><button type="button" className="ss-end-call" onClick={endCall}>End call</button></div>}
+          {callState!=="ended"&&<div className="ss-live-actions"><button type="button" onClick={()=>{setMuted(v=>{const next=!v;mutedRef.current=next;return next})}}>{muted?"Unmute":"Mute"}</button><button type="button" className="ss-end-call" onClick={endCall}>End call</button></div>}
           {callError&&<p className="ss-call-error">{callError}</p>}
         </div>}
       </div>
