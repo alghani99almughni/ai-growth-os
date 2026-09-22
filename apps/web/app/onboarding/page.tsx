@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 export default function Onboarding() {
   const [form, setForm] = useState({name:"", email:"", password:"", business_name:"", slug:"", industry:"dental"});
   const [result, setResult] = useState("");
+  const [pwaUrl, setPwaUrl] = useState("");
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -19,8 +20,14 @@ export default function Onboarding() {
     localStorage.setItem("ago_access_token", data.access_token);
     localStorage.setItem("ago_user", JSON.stringify(data.user));
     localStorage.setItem("ago_tenant", JSON.stringify(data.tenant));
-    setResult("Business created successfully. Your secure workspace is ready.");
-    window.location.href = "/dashboard";
+    const qr=await fetch(base+"/api/v1/tenants/"+data.tenant.id+"/qr?kind=business&label="+encodeURIComponent(data.tenant.name+" Customer PWA"),{headers:{"Authorization":"Bearer "+data.access_token}});
+    const qrData=await qr.json();
+    if(qr.ok&&qrData.url){
+      setPwaUrl(qrData.url);
+      localStorage.setItem("ago_pwa_url",qrData.url);
+      setResult("Business created. Your category-based customer PWA is ready.");
+    }else setResult("Business created. Your workspace is ready; the customer PWA link can be generated from the dashboard.");
+    window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});
   }
 
   const inputStyle={display:"block",width:"100%",padding:12,margin:"6px 0 16px"};
@@ -38,6 +45,6 @@ export default function Onboarding() {
         <option value="dental">Dental</option><option value="restaurant">Restaurant</option><option value="hotel">Hotel</option><option value="salon">Salon</option><option value="gym">Gym</option><option value="real-estate">Real Estate</option>
       </select></label>
       <button type="submit" style={{padding:"12px 18px"}}>Create secure workspace</button>
-    </form>{result&&<p>{result}</p>}
+    </form>{result&&<p>{result}</p>}{pwaUrl&&<div className="card" style={{marginTop:16}}><strong>Your customer PWA</strong><p><a href={pwaUrl} target="_blank" rel="noreferrer">{pwaUrl}</a></p><p>Share this link or turn the tenant QR into your scan-to-open experience.</p><button type="button" onClick={()=>window.location.href="/dashboard"}>Continue to dashboard</button></div>}
   </div></main>
 }
