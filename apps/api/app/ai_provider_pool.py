@@ -35,7 +35,7 @@ def _tenant_provider(db: Session, tenant_id: str):
         row=by.get(key)
         if not row or not row.config_encrypted: continue
         try:
-            cfg=decrypt_channel_config(row.config_encrypted,settings.whatsapp_credential_encryption_key)
+            cfg=decrypt_channel_config(row.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
             if cfg.get("api_key"):
                 return key,cfg.get("api_key"),cfg.get("model") or getattr(settings,key+"_model", "")
         except Exception:
