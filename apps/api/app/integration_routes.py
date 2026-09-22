@@ -112,14 +112,14 @@ def integrations(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depen
     return {"items":items}
 
 @router.get("/tenants/{tenant_id}/integrations/{key}")
-def integration_status(tenant_id: str, key: str, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def integration_status(tenant_id: str, key: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     row=db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key==key))
     if not row: return {"key":key,"status":"disconnected","provider":"platform","mode":"platform","configured":False,"config":{}}
     out=_out(row); out["configured"]=bool(row.config_encrypted) or row.mode in ("platform","oauth"); return out
 
 @router.put("/tenants/{tenant_id}/integrations/{key}")
-def save_integration(tenant_id: str, key: str, payload: IntegrationPayload, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def save_integration(tenant_id: str, key: str, payload: IntegrationPayload, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     item=_catalog_item(key)
     if not item: raise HTTPException(404,"Integration not found")
@@ -148,7 +148,7 @@ def save_integration(tenant_id: str, key: str, payload: IntegrationPayload, cred
     return _out(existing)
 
 @router.delete("/tenants/{tenant_id}/integrations/{key}")
-def disconnect_integration(tenant_id: str, key: str, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def disconnect_integration(tenant_id: str, key: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     row=db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key==key))
     if row:
@@ -156,14 +156,14 @@ def disconnect_integration(tenant_id: str, key: str, credentials=Depends(__impor
     return {"key":key,"status":"disconnected"}
 
 @router.get("/platform/ai/providers")
-def platform_ai_providers(credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def platform_ai_providers(credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db)
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin required")
     rows=db.scalars(select(PlatformAIProvider).order_by(PlatformAIProvider.priority)).all()
     return {"items":[{"id":x.id,"provider":x.provider,"model":x.model,"priority":x.priority,"enabled":x.enabled,"status":x.status,"last_error":x.last_error,"last_used_at":x.last_used_at.isoformat() if x.last_used_at else None} for x in rows]}
 
 @router.put("/platform/ai/providers/{provider_id}")
-def update_platform_ai_provider(provider_id: str, payload: dict, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def update_platform_ai_provider(provider_id: str, payload: dict, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db)
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin required")
     row=db.get(PlatformAIProvider,provider_id)
@@ -175,7 +175,7 @@ def update_platform_ai_provider(provider_id: str, payload: dict, credentials=Dep
     db.commit(); return {"id":row.id,"provider":row.provider,"model":row.model,"priority":row.priority,"enabled":row.enabled}
 
 @router.post("/platform/ai/providers")
-def create_platform_ai_provider(payload: dict, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def create_platform_ai_provider(payload: dict, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db)
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin required")
     row=PlatformAIProvider(provider=payload.get("provider","gemini"),model=payload.get("model",""),priority=int(payload.get("priority",100)),enabled=bool(payload.get("enabled",True)))
@@ -207,8 +207,8 @@ async def builtin_whatsapp_connect(tenant_id: str, payload: BuiltinWhatsAppConne
     sid=created.get("id")
     if not sid: raise HTTPException(502,"OpenWA did not return a session ID")
     await _openwa_request("POST",settings.openwa_base_url.rstrip("/")+"/api/sessions/"+sid+"/start",settings.openwa_api_key,json={})
-    row=db.scalar(select(__import__("apps.api.app.models",fromlist=["TenantWhatsAppConnection"]).TenantWhatsAppConnection).where(__import__("apps.api.app.models",fromlist=["TenantWhatsAppConnection"]).TenantWhatsAppConnection.tenant_id==tenant_id))
     from .models import TenantWhatsAppConnection
+    row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
     if not row:
         row=TenantWhatsAppConnection(id=__import__("secrets").token_hex(18),tenant_id=tenant_id)
         db.add(row)
