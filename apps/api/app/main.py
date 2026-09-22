@@ -656,6 +656,7 @@ class DepartmentCreate(BaseModel):
 
 class StaffCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    user_id: str | None = None
     department_id: str | None = None
     skills: str = ""
     is_available: bool = True
@@ -679,12 +680,17 @@ def staff(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)
     require_tenant(user, tenant_id)
     from .models_ai import StaffMember
     rows=db.scalars(select(StaffMember).where(StaffMember.tenant_id==tenant_id)).all()
-    return {"items":[{"id":x.id,"name":x.name,"department_id":x.department_id,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available} for x in rows]}
+    return {"items":[{"id":x.id,"name":x.name,"user_id":x.user_id,"department_id":x.department_id,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available} for x in rows]}
 
 @app.post("/api/v1/tenants/{tenant_id}/staff", status_code=201)
 def add_staff(tenant_id, payload: StaffCreate, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
     from .models_ai import StaffMember
+    if payload.user_id:
+        linked=db.scalar(select(User).where(User.id==payload.user_id,User.tenant_id==tenant_id,User.is_active==True))
+        if not linked: raise HTTPException(400,"Invalid staff user for this tenant")
+        existing=db.scalar(select(StaffMember).where(StaffMember.user_id==payload.user_id))
+        if existing: raise HTTPException(409,"User is already linked to a staff member")
     x=StaffMember(tenant_id=tenant_id, **payload.model_dump())
     db.add(x); db.commit(); db.refresh(x)
     return {"id":x.id,"name":x.name,"department_id":x.department_id,"skills":x.skills,"is_available":x.is_available}
