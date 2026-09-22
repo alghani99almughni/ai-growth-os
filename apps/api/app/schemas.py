@@ -186,6 +186,7 @@ class WhatsAppConnectionConfig(BaseModel):
     session_id: Optional[str] = None
     access_token: Optional[str] = None
     phone_number_id: Optional[str] = None
+    waba_id: Optional[str] = None
     connected_phone: Optional[str] = Field(default=None, max_length=32)
     display_name: Optional[str] = Field(default=None, max_length=160)
 
