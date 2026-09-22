@@ -198,20 +198,23 @@ async def youtube_upload(tenant_id: str, title: str=Form(...), description: str=
     if not (video.content_type or "").startswith("video/"): raise HTTPException(400,"Only video files are accepted")
     meta={"snippet":{"title":title,"description":description,"categoryId":category_id},
           "status":{"privacyStatus":privacy_status}}
-    # YouTube requires a resumable upload session for reliable large uploads.
-    data=await video.read()
-    if len(data)>256*1024*1024*1024: raise HTTPException(413,"Video exceeds YouTube's 256GB limit")
+    # Use a resumable session and stream the uploaded file object rather than loading
+    # the entire video into RAM.
+    video.file.seek(0,2)
+    size=video.file.tell()
+    video.file.seek(0)
+    if size>256*1024*1024*1024: raise HTTPException(413,"Video exceeds YouTube's 256GB limit")
     init=await _request("POST","https://www.googleapis.com/upload/youtube/v3/videos",
                         params={"uploadType":"resumable","part":"snippet,status"},
                         headers={"Authorization":"Bearer "+access,"Content-Type":"application/json",
-                                 "X-Upload-Content-Length":str(len(data)),
+                                 "X-Upload-Content-Length":str(size),
                                  "X-Upload-Content-Type":video.content_type},
                         json=meta)
     upload_url=init.headers.get("location")
     if not upload_url: raise HTTPException(502,"YouTube did not return an upload session")
     async with httpx.AsyncClient(timeout=300) as client:
         up=await client.put(upload_url,headers={"Authorization":"Bearer "+access,"Content-Type":video.content_type,
-                                                 "Content-Length":str(len(data))},content=data)
+                                                 "Content-Length":str(size)},content=video.file)
         if up.status_code>=400:
             raise HTTPException(up.status_code,up.text[:1000])
     db.commit()
