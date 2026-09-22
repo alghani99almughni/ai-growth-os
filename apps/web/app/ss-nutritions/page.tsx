@@ -174,7 +174,11 @@ export default function SSNutritions(){
       });
       const payload=await start.json();
       if(!start.ok) throw new Error(payload.detail||"Unable to start the call.");
-      setCallState("connected");
+      // The customer identity was already captured in the start-call form.
+      // Prefer the provider-neutral realtime gateway so the AI greets first and
+      // we do not depend on browser SpeechRecognition for the primary call path.
+      await connectLiveAi(payload);
+      return;
 
       const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
       if(!Recognition){
