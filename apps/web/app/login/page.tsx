@@ -21,6 +21,6 @@ export default function Login() {
       <label>Email<input required type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} style={{display:"block",width:"100%",padding:12,margin:"6px 0 16px"}}/></label>
       <label>Password<input required type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} style={{display:"block",width:"100%",padding:12,margin:"6px 0 16px"}}/></label>
       <button type="submit" style={{padding:"12px 18px"}}>Sign in</button>
-    </form>{error&&<p>{error}</p>}
+    </form><p><a href="/forgot-password">Forgot password?</a></p>{error&&<p>{error}</p>}
   </div></main>
 }
