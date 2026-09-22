@@ -248,3 +248,103 @@ async def builtin_whatsapp_qr(tenant_id: str, credentials: HTTPAuthorizationCred
     if not row or not row.config_encrypted: raise HTTPException(404,"Built-in WhatsApp session not found")
     cfg=decrypt_channel_config(row.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
     return await _openwa_request("GET",cfg["base_url"].rstrip("/")+"/api/sessions/"+cfg["session_id"]+"/qr",cfg["api_key"])
+
+
+# OAuth connections for tenant-owned social accounts.
+import base64, hashlib, hmac, secrets as _secrets
+from urllib.parse import urlencode
+
+def _oauth_state(tenant_id: str, key: str):
+    raw=f"{tenant_id}:{key}:{_secrets.token_urlsafe(18)}"
+    sig=hmac.new(settings.jwt_secret.encode(),raw.encode(),hashlib.sha256).hexdigest()
+    return base64.urlsafe_b64encode((raw+"."+sig).encode()).decode()
+
+def _verify_oauth_state(state: str):
+    try:
+        raw=base64.urlsafe_b64decode(state.encode()).decode()
+        value,sig=raw.rsplit(".",1)
+        expected=hmac.new(settings.jwt_secret.encode(),value.encode(),hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig,expected): raise ValueError("bad signature")
+        tenant_id,key,_=value.split(":",2)
+        return tenant_id,key
+    except Exception:
+        raise HTTPException(400,"Invalid OAuth state")
+
+def _oauth_row(db, tenant_id, key):
+    return db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key==key))
+
+async def _http_json(method,url,**kwargs):
+    import httpx
+    async with httpx.AsyncClient(timeout=30) as client:
+        r=await client.request(method,url,**kwargs)
+        r.raise_for_status()
+        return r.json()
+
+@router.get("/oauth/{provider}/start")
+def oauth_start(provider: str, tenant_id: str, integration_key: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+    user=_user(credentials,db); _require(user,tenant_id)
+    state=_oauth_state(tenant_id,integration_key)
+    if provider=="meta":
+        if not settings.meta_client_id or not settings.meta_redirect_uri: raise HTTPException(503,"Meta OAuth is not configured")
+        scopes="pages_show_list,pages_read_engagement,pages_manage_metadata,business_management,instagram_basic,instagram_content_publish,ads_read,ads_management"
+        url="https://www.facebook.com/v23.0/dialog/oauth?"+urlencode({"client_id":settings.meta_client_id,"redirect_uri":settings.meta_redirect_uri,"state":state,"scope":scopes})
+    elif provider=="google":
+        if not settings.google_client_id or not settings.google_redirect_uri: raise HTTPException(503,"Google OAuth is not configured")
+        scopes={
+          "youtube":"https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.readonly",
+          "google_business":"https://www.googleapis.com/auth/business.manage"
+        }.get(integration_key)
+        if not scopes: raise HTTPException(400,"Unsupported Google integration")
+        url="https://accounts.google.com/o/oauth2/v2/auth?"+urlencode({"client_id":settings.google_client_id,"redirect_uri":settings.google_redirect_uri,"response_type":"code","access_type":"offline","prompt":"consent","include_granted_scopes":"true","scope":scopes,"state":state})
+    else: raise HTTPException(400,"Unsupported OAuth provider")
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url)
+
+@router.get("/oauth/meta/callback")
+async def oauth_meta_callback(code: str, state: str, db: Session=Depends(get_db)):
+    tenant_id,key=_verify_oauth_state(state)
+    if not settings.meta_client_id or not settings.meta_client_secret: raise HTTPException(503,"Meta OAuth is not configured")
+    token=await _http_json("GET","https://graph.facebook.com/v23.0/oauth/access_token",params={"client_id":settings.meta_client_id,"client_secret":settings.meta_client_secret,"redirect_uri":settings.meta_redirect_uri,"code":code})
+    access_token=token["access_token"]
+    me=await _http_json("GET","https://graph.facebook.com/v23.0/me",params={"fields":"id,name","access_token":access_token})
+    account_id=me.get("id"); account_name=me.get("name")
+    if key in ("facebook","meta_business","instagram","meta_ads"):
+        if key in ("facebook","meta_business"):
+            pages=await _http_json("GET","https://graph.facebook.com/v23.0/me/accounts",params={"fields":"id,name,access_token,instagram_business_account","access_token":access_token})
+            page=(pages.get("data") or [{}])[0]
+            account_id=page.get("id") or account_id; account_name=page.get("name") or account_name
+            if page.get("access_token"): access_token=page["access_token"]
+        elif key=="instagram":
+            pages=await _http_json("GET","https://graph.facebook.com/v23.0/me/accounts",params={"fields":"id,name,instagram_business_account","access_token":access_token})
+            page=next((p for p in pages.get("data",[]) if p.get("instagram_business_account")),None)
+            if page:
+                ig=await _http_json("GET",f"https://graph.facebook.com/v23.0/{page['instagram_business_account']['id']}",params={"fields":"id,username,name","access_token":access_token})
+                account_id=ig.get("id") or account_id; account_name=ig.get("username") or ig.get("name") or account_name
+        elif key=="meta_ads":
+            ads=await _http_json("GET","https://graph.facebook.com/v23.0/me/adaccounts",params={"fields":"id,name,account_id","access_token":access_token})
+            ad=(ads.get("data") or [{}])[0]
+            account_id=ad.get("id") or ad.get("account_id") or account_id; account_name=ad.get("name") or account_name
+    row=_oauth_row(db,tenant_id,key)
+    if not row: row=TenantIntegration(tenant_id=tenant_id,integration_key=key,provider="meta",mode="oauth"); db.add(row)
+    row.status="connected"; row.config_encrypted=encrypt_channel_config({"access_token":access_token},(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)); row.account_id=account_id; row.account_name=account_name; row.metadata_json=json.dumps({"oauth":"meta","connected_at":datetime.utcnow().isoformat()}); db.commit()
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(settings.public_app_url+"/dashboard?integration="+key+"&connected=1")
+
+@router.get("/oauth/google/callback")
+async def oauth_google_callback(code: str, state: str, db: Session=Depends(get_db)):
+    tenant_id,key=_verify_oauth_state(state)
+    if not settings.google_client_id or not settings.google_client_secret: raise HTTPException(503,"Google OAuth is not configured")
+    token=await _http_json("POST","https://oauth2.googleapis.com/token",data={"code":code,"client_id":settings.google_client_id,"client_secret":settings.google_client_secret,"redirect_uri":settings.google_redirect_uri,"grant_type":"authorization_code"})
+    cfg={"access_token":token.get("access_token"),"refresh_token":token.get("refresh_token"),"token_type":token.get("token_type"),"scope":token.get("scope")}
+    account_id=None; account_name=None
+    if key=="youtube":
+        info=await _http_json("GET","https://www.googleapis.com/youtube/v3/channels",params={"part":"snippet,contentDetails","mine":"true"},headers={"Authorization":"Bearer "+cfg["access_token"]})
+        item=(info.get("items") or [{}])[0]; account_id=item.get("id"); account_name=(item.get("snippet") or {}).get("title")
+    elif key=="google_business":
+        accounts=await _http_json("GET","https://mybusinessaccountmanagement.googleapis.com/v1/accounts",headers={"Authorization":"Bearer "+cfg["access_token"]})
+        item=(accounts.get("accounts") or [{}])[0]; account_id=item.get("name"); account_name=item.get("accountName")
+    row=_oauth_row(db,tenant_id,key)
+    if not row: row=TenantIntegration(tenant_id=tenant_id,integration_key=key,provider="google",mode="oauth"); db.add(row)
+    row.status="connected"; row.config_encrypted=encrypt_channel_config(cfg,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)); row.account_id=account_id; row.account_name=account_name; row.metadata_json=json.dumps({"oauth":"google","connected_at":datetime.utcnow().isoformat()}); db.commit()
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(settings.public_app_url+"/dashboard?integration="+key+"&connected=1")
