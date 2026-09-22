@@ -196,3 +196,40 @@ class WhatsAppConnectionStatus(BaseModel):
     connected_phone: Optional[str] = None
     display_name: Optional[str] = None
     configured: bool
+
+
+class TenantProvisionRequest(BaseModel):
+    business_name: str = Field(min_length=2, max_length=160)
+    slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+    industry: str = Field(min_length=2, max_length=80)
+    owner_name: str = Field(min_length=2, max_length=160)
+    owner_email: EmailStr
+    owner_password: str = Field(min_length=8, max_length=128)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    whatsapp_number: Optional[str] = Field(default=None, max_length=32)
+    address: Optional[str] = None
+    template: Optional[str] = None
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    description: Optional[str] = None
+    skills: str = ""
+
+class RoleDefinitionCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    permissions: list[str] = []
+
+class StaffCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    role: str = "staff"
+    department_id: Optional[str] = None
+    skills: str = ""
+
+class StaffUpdate(BaseModel):
+    role: Optional[str] = None
+    department_id: Optional[str] = None
+    skills: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_available: Optional[bool] = None
