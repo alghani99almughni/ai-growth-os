@@ -100,22 +100,43 @@ async def public_business_events(websocket,slug:str,context_token:str|None=Query
         try: await websocket.close()
         except Exception: pass
 
+def issue_call_room_token(call_id:str,audience:str):
+    return jwt.encode(
+        {"sub":call_id,"call_id":call_id,"aud":audience,"exp":datetime.utcnow().timestamp()+600},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+def verify_call_room_token(token:str,call_id:str,audience:str):
+    try:
+        p=jwt.decode(token,settings.jwt_secret,algorithms=[settings.jwt_algorithm],options={"require":["exp","sub","aud"]},audience=audience)
+        return p.get("call_id")==call_id
+    except jwt.InvalidTokenError:
+        return False
+
 @app.websocket("/ws/calls/{call_id}")
-async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None)):
+async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None),room_token:str|None=Query(default=None)):
     db=SessionLocal()
     call=db.get(CallRecord,call_id)
     if not call:
         await websocket.close(code=4404); db.close(); return
     allow_staff=False
+    allow_customer=bool(room_token and verify_call_room_token(room_token,call_id,"call-customer"))
     if access_token:
         try:
             p=jwt.decode(access_token,settings.jwt_secret,algorithms=[settings.jwt_algorithm])
             uid=p.get("sub")
             user=db.get(User,uid)
-            allow_staff=bool(user and user.is_active and user.tenant_id==call.tenant_id)
+            staff=db.scalar(select(StaffMember).where(StaffMember.user_id==uid,StaffMember.tenant_id==call.tenant_id))
+            allow_staff=bool(
+                user and user.is_active and user.tenant_id==call.tenant_id and
+                (user.role in ("owner","admin","super_admin","platform_admin") or (staff and staff.id==call.staff_id))
+            )
         except jwt.InvalidTokenError:
             allow_staff=False
     db.close()
+    if not allow_staff and not allow_customer:
+        await websocket.close(code=4403); return
     await signal(websocket,call_id,allow_staff=allow_staff)
 
 security=HTTPBearer(auto_error=False)
@@ -729,7 +750,7 @@ def handoff_call(tenant_id, call_id, user=Depends(get_current_user), db: Session
     call.room_id="call-"+call.id
     call.status="handoff_requested"
     db.commit()
-    return {**routed,"call_id":call.id,"status":call.status,"room_id":call.room_id}
+    return {**routed,"call_id":call.id,"status":call.status,"room_id":call.room_id,"room_token":issue_call_room_token(call.id,"call-customer")}
 
 class HandoffDecision(BaseModel):
     decision: str = Field(pattern="^(accept|decline)$")
@@ -741,6 +762,8 @@ def handoff_decision(tenant_id, call_id, payload: HandoffDecision, user=Depends(
     if not call: raise HTTPException(404, "Call not found")
     if not call.staff_id: raise HTTPException(409, "No staff assigned")
     staff=db.get(StaffMember, call.staff_id)
+    if not (user.role in ("owner","admin","super_admin","platform_admin") or (staff and staff.user_id==user.id)):
+        raise HTTPException(403, "Only the assigned staff member or a tenant administrator can accept this call")
     if not staff or not staff.is_active: raise HTTPException(409, "Assigned staff is unavailable")
     if payload.decision=="accept":
         call.status="handoff_accepted"
@@ -1056,7 +1079,7 @@ def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
     call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==t.id))
     if not call: raise HTTPException(404,"Call not found")
     staff=db.get(StaffMember,call.staff_id) if call.staff_id else None
-    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"staff":{"id":staff.id,"name":staff.name} if staff else None}
+    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"room_token":issue_call_room_token(call.id,"call-customer") if call.room_id and call.status in ("handoff_requested","handoff_accepted","connected") else None,"staff":{"id":staff.id,"name":staff.name} if staff else None}
 
 @app.get("/api/v1/public/business/{slug}/voice/ice")
 def public_voice_ice(slug:str, db:Session=Depends(get_db)):
