@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     telephony_provider:str=""; telephony_api_key:str=""; telephony_webhook_secret:str=""
     ai_voice_enabled:bool=False
     meta_client_id:str=""; meta_client_secret:str=""; meta_redirect_uri:str=""
+    meta_graph_api_version:str="v23.0"
     google_client_id:str=""; google_client_secret:str=""; google_redirect_uri:str=""
     oauth_state_ttl_seconds:int=600
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
