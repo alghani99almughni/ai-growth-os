@@ -14,7 +14,6 @@ from .config import settings
 router = APIRouter(prefix="/api/v1", tags=["integrations"])
 
 CATALOG = [
-    {"key":"whatsapp","name":"WhatsApp","category":"Communication","mode":"provider","providers":[{"id":"openwa","name":"Built-in WhatsApp","type":"built_in"},{"id":"meta","name":"Meta WhatsApp Cloud API","type":"credentials"}]},
     {"key":"razorpay","name":"Razorpay","category":"Payments","mode":"provider","providers":[{"id":"platform","name":"Platform Razorpay","type":"platform"},{"id":"razorpay","name":"My Razorpay Account","type":"credentials"}]},
     {"key":"gemini","name":"Gemini","category":"AI","mode":"provider","providers":[{"id":"platform","name":"Platform Gemini","type":"platform"},{"id":"gemini","name":"My Gemini API Key","type":"credentials"}]},
     {"key":"openai","name":"OpenAI / ChatGPT","category":"AI","mode":"provider","providers":[{"id":"platform","name":"Platform OpenAI","type":"platform"},{"id":"openai","name":"My OpenAI API Key","type":"credentials"}]},
