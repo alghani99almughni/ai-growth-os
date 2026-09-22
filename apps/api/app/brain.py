@@ -5,7 +5,8 @@ from .models import Tenant, Service, Product
 from .models_growth import KnowledgeItem,TenantSetting
 from .models_ai import Conversation, ConversationMessage
 from .config import settings
-from .ai_router import detect_language, faq_match, structured_match, knowledge_match\nfrom .ai_provider_pool import last_resort_reply
+from .ai_router import detect_language, faq_match, structured_match, knowledge_match
+from .ai_provider_pool import last_resort_reply
 
 def knowledge_context(db: Session, tenant_id: str) -> str:
     tenant=db.get(Tenant,tenant_id)
