@@ -124,3 +124,22 @@ OPENWA_API_KEY=
 ```
 
 The tenant never sees the platform OpenWA URL/API key/session credentials. The Business Admin only enters its WhatsApp number and connects by pairing code or QR.
+
+
+## Social Studio
+
+The tenant dashboard links to **Social Studio** for connected-account publishing and analytics:
+
+- Facebook Page publishing
+- Instagram image publishing
+- Meta Ads campaign insights
+- YouTube video upload through resumable OAuth upload
+- Google Business Profile local posts and location discovery
+- Provider health checks
+- Provider-side OAuth revocation plus local secret removal
+
+API routes are tenant-scoped under `/api/v1/tenants/{tenant_id}/social/*`.
+
+Google OAuth uses offline access so the service can refresh access tokens without requiring the tenant to reconnect each time. YouTube's upload API requires OAuth authorization and unverified API projects may be restricted to private uploads until Google's audit requirements are satisfied. citeturn0search2turn0search7
+
+Google Business Profile API access is subject to Google's eligibility and API access requirements; the implementation does not bypass those requirements. citeturn0search13
