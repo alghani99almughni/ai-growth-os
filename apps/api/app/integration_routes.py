@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 import json, asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .db import SessionLocal
 from .models import Tenant
@@ -255,7 +255,9 @@ import base64, hashlib, hmac, secrets as _secrets
 from urllib.parse import urlencode
 
 def _oauth_state(tenant_id: str, key: str):
-    raw=f"{tenant_id}:{key}:{_secrets.token_urlsafe(18)}"
+    issued_at = str(int(datetime.now(timezone.utc).timestamp()))
+    nonce = _secrets.token_urlsafe(18)
+    raw=f"{tenant_id}:{key}:{issued_at}:{nonce}"
     sig=hmac.new(settings.jwt_secret.encode(),raw.encode(),hashlib.sha256).hexdigest()
     return base64.urlsafe_b64encode((raw+"."+sig).encode()).decode()
 
@@ -265,10 +267,12 @@ def _verify_oauth_state(state: str):
         value,sig=raw.rsplit(".",1)
         expected=hmac.new(settings.jwt_secret.encode(),value.encode(),hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig,expected): raise ValueError("bad signature")
-        tenant_id,key,_=value.split(":",2)
+        tenant_id,key,issued_at,nonce=value.split(":",3)
+        age=int(datetime.now(timezone.utc).timestamp())-int(issued_at)
+        if age < 0 or age > settings.oauth_state_ttl_seconds: raise ValueError("expired state")
         return tenant_id,key
     except Exception:
-        raise HTTPException(400,"Invalid OAuth state")
+        raise HTTPException(400,"Invalid or expired OAuth state")
 
 def _oauth_row(db, tenant_id, key):
     return db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key==key))
@@ -283,6 +287,7 @@ async def _http_json(method,url,**kwargs):
 @router.get("/oauth/{provider}/start")
 def oauth_start(provider: str, tenant_id: str, integration_key: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
+    if integration_key not in {"meta_business","facebook","instagram","meta_ads","youtube","google_business"}: raise HTTPException(400,"Unsupported OAuth integration")
     state=_oauth_state(tenant_id,integration_key)
     if provider=="meta":
         if not settings.meta_client_id or not settings.meta_redirect_uri: raise HTTPException(503,"Meta OAuth is not configured")
