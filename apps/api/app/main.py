@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
 from .db import SessionLocal
-from .models import Tenant,User,Customer,Lead,Service,Product
+from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
 from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
 from .schemas import *
@@ -15,7 +15,7 @@ from .brain import generate_reply,knowledge_context
 from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
-from .integrations import WhatsAppAdapter,PaymentAdapter
+from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
@@ -209,6 +209,46 @@ def login(payload:LoginRequest,db:Session=Depends(get_db)):
 @app.get("/api/v1/auth/me",response_model=AuthResponse)
 def me(user:User=Depends(get_current_user),db:Session=Depends(get_db)):
     return {"access_token":"","token_type":"bearer","user":user_out(user),"tenant":db.get(Tenant,user.tenant_id)}
+
+@app.get("/api/v1/tenants/{tenant_id}/integrations/whatsapp",response_model=WhatsAppConnectionStatus)
+def whatsapp_connection(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
+    if not row: return {"provider":settings.whatsapp_provider,"status":"disconnected","connected_phone":None,"display_name":None,"configured":False}
+    return {"provider":row.provider,"status":row.status,"connected_phone":row.connected_phone,"display_name":row.display_name,"configured":bool(row.config_encrypted)}
+
+@app.put("/api/v1/tenants/{tenant_id}/integrations/whatsapp",response_model=WhatsAppConnectionStatus)
+async def configure_whatsapp(tenant_id,payload:WhatsAppConnectionConfig,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    data=payload.model_dump(exclude_none=True)
+    provider=data.pop("provider")
+    if provider=="openwa" and not all(data.get(k) for k in ("base_url","api_key","session_id")): raise HTTPException(400,"OpenWA requires base URL, API key and session ID")
+    if provider=="meta" and not all(data.get(k) for k in ("access_token","phone_number_id")): raise HTTPException(400,"Meta requires access token and phone number ID")
+    try:
+        adapter=WhatsAppAdapter(provider=provider,openwa_base_url=data.get("base_url",""),openwa_api_key=data.get("api_key",""),openwa_session_id=data.get("session_id",""),access_token=data.get("access_token",""),phone_number_id=data.get("phone_number_id",""))
+        if provider=="openwa":
+            async with __import__("httpx").AsyncClient(timeout=15) as client:
+                rr=await client.get(data["base_url"].rstrip("/")+"/api/sessions/"+data["session_id"],headers={"X-API-Key":data["api_key"]}); rr.raise_for_status()
+                session=rr.json(); data["connected_phone"]=data.get("connected_phone") or session.get("phoneNumber") or session.get("phone")
+        else:
+            async with __import__("httpx").AsyncClient(timeout=15) as client:
+                rr=await client.get("https://graph.facebook.com/v23.0/"+data["phone_number_id"],headers={"Authorization":"Bearer "+data["access_token"]}); rr.raise_for_status()
+                info=rr.json(); data["connected_phone"]=data.get("connected_phone") or info.get("display_phone_number"); data["display_name"]=data.get("display_name") or info.get("verified_name")
+    except Exception as exc:
+        raise HTTPException(400,"WhatsApp provider credentials could not be validated: "+str(exc))
+    row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
+    now=datetime.utcnow()
+    encrypted=encrypt_channel_config({"provider":provider,**data},settings.whatsapp_credential_encryption_key)
+    if not row: row=TenantWhatsAppConnection(id=secrets.token_hex(18),tenant_id=tenant_id); db.add(row)
+    row.provider=provider; row.status="connected"; row.config_encrypted=encrypted; row.connected_phone=data.get("connected_phone"); row.display_name=data.get("display_name"); row.updated_at=now; db.commit(); db.refresh(row)
+    return {"provider":row.provider,"status":row.status,"connected_phone":row.connected_phone,"display_name":row.display_name,"configured":True}
+
+@app.delete("/api/v1/tenants/{tenant_id}/integrations/whatsapp",response_model=WhatsAppConnectionStatus)
+def disconnect_whatsapp(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
+    if row: row.status="disconnected"; row.config_encrypted=""; row.updated_at=datetime.utcnow(); db.commit()
+    return {"provider":row.provider if row else settings.whatsapp_provider,"status":"disconnected","connected_phone":None,"display_name":None,"configured":False}
 
 @app.get("/api/v1/tenants/{tenant_id}",response_model=TenantOut)
 def get_tenant(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
