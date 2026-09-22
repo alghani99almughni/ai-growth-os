@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException\nfrom fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -86,12 +86,12 @@ def _out(row):
     }
 
 @router.get("/tenants/{tenant_id}/integrations/catalog")
-def integration_catalog(tenant_id: str, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def integration_catalog(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     return {"items":CATALOG}
 
 @router.get("/tenants/{tenant_id}/integrations")
-def integrations(tenant_id: str, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+def integrations(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     rows=db.scalars(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id)).all()
     return {"items":[_out(x) for x in rows]}
