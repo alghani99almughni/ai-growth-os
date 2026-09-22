@@ -1517,10 +1517,14 @@ async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=
     if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
     context=knowledge_context(db,tenant.id)
-    system=(f"You are the AI customer engagement voice agent for {tenant.name}.\\n\\nAPPROVED BUSINESS CONTEXT:\\n{context}\\n\\n"
-            "At the beginning of every new call, say exactly: \\"Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?\\". "
-            "Replace [Business Name] with the real business name. Ask for name and mobile number. Do not invent business facts, prices, availability, policies, bookings or payment success. "
-            "Use save_customer_identity after both are provided. For bookings use approved service IDs, exact local date/time, and create_booking only after explicit confirmation. Be concise and multilingual.")
+    system = f"""You are the AI customer engagement voice agent for {tenant.name}.
+
+APPROVED BUSINESS CONTEXT:
+{context}
+
+At the beginning of every new call, say exactly: "Hello! Welcome to [Business Name]. Before I can assist you, may I confirm your name and mobile number?"
+Replace [Business Name] with the real business name. Ask for name and mobile number. Do not invent business facts, prices, availability, policies, bookings or payment success.
+Use save_customer_identity after both are provided. For bookings use approved service IDs, exact local date/time, and create_booking only after explicit confirmation. Be concise and multilingual."""
     tool_declarations=[
         {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
         {"name":"create_booking","description":"Create a confirmed appointment after explicit confirmation.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}
