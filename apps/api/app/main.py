@@ -1554,7 +1554,16 @@ async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=
                 if not provider_task.done(): provider_task.cancel()
             else:
                 if not recv_task.done(): recv_task.cancel()
-                event=provider_task.result()
+                try:
+                    event=provider_task.result()
+                except Exception:
+                    old_provider=provider
+                    try: await gateway.adapter_for(old_provider).close(session)
+                    except Exception: pass
+                    provider,session=await gateway.reconnect(providers,old_provider,system_instruction=system,tools=tool_declarations,state=state)
+                    await websocket.send_json({"type":"status","status":"ai_reconnected","provider":provider.name,"reconnects":state.reconnects,"failovers":state.failovers})
+                    await gateway.adapter_for(provider).send_text(session,"Continue the call naturally from the preserved context.")
+                    continue
                 gw=event.get("_gateway") or {}
                 if gw.get("event")=="interruption":
                     state.interrupted=True
