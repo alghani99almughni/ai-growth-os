@@ -207,3 +207,12 @@ The latest API/web commits were queued or in progress when this entry was writte
 ## 2026-09-22 — CRM voice intelligence
 - **Implementation:** PWA calls now have call number, start/answer/end timestamps, duration, language, resolution, knowledge-hit count, AI-turn count, transcript, and human-callback flag.
 - **Recovery path:** unresolved voice turns mark the call for human callback and route it through the existing staff routing system.
+
+## 2026-09-22 — production voice connection stuck on "Connecting..."
+- **Symptom:** SS Nutritions customer voice modal accepted the customer's name/mobile number but remained on `Connecting...` instead of establishing the voice session.
+- **Observed production error:** Render API logs reported `SyntaxError: '(' was never closed` while loading `apps/api/app/main.py`.
+- **Root cause:** A malformed parenthesized voice-agent system prompt introduced a Python syntax error in the production API entrypoint. This prevented the affected API deployment from loading the voice implementation correctly.
+- **Recovery:** Corrected the malformed prompt expression in `apps/api/app/main.py`.
+- **Fix commit:** `60c8b4b36a776afdc284e03baad9a0de224a38b6` — `Fix voice agent prompt syntax error`.
+- **Verification status:** Render deployment was triggered automatically from the fix commit and was still `update_in_progress` at the time this entry was recorded. Final verification must confirm the deployment is `live`, API startup is clean, `/health` returns 200, and a real SS Nutritions call reaches the connected voice state.
+- **Prevention:** Run a Python syntax/compile check on `apps/api/app/main.py` before production deployment, and include the affected voice flow in every production smoke test.
