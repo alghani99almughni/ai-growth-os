@@ -280,7 +280,8 @@ def public_customer_portal(portal_token, db:Session=Depends(get_db)):
     return {"business":{"name":t.name,"slug":t.slug},"customer":{"name":c.name,"phone":c.phone},"pwa_url":settings.public_app_url+"/customer?business="+t.slug+"&customer="+portal_token}
 
 class LandlineCallRequest(BaseModel):
-    caller_phone: str = Field(min_length=5,max_length=32)
+    caller_phone: str | None = Field(default=None,max_length=32)
+    mobile_number: str = Field(min_length=5,max_length=32)
     name: str = Field(min_length=1,max_length=160)
     department: str = "Reception"
     staff_id: str | None = None
@@ -290,7 +291,7 @@ class LandlineCallRequest(BaseModel):
 def inbound_landline_call(tenant_id,payload:LandlineCallRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
     try:
-        c=upsert_customer(db,tenant_id,payload.caller_phone,payload.name,False,source="landline")
+        c=upsert_customer(db,tenant_id,payload.mobile_number,payload.name,False,source="landline")
     except ValueError as exc:
         raise HTTPException(400,str(exc))
     call=CallRecord(tenant_id=tenant_id,customer_id=c.id,source="landline",status="connected",department=payload.department,staff_id=payload.staff_id)
