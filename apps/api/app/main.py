@@ -978,10 +978,12 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
         customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False)
     call=CallRecord(tenant_id=t.id,customer_id=customer.id if customer else None,source="pwa_voice",status="ringing")
     db.add(call); db.commit(); db.refresh(call)
-    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name}
+    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"voice_token":issue_call_room_token(call.id,"call-ai")}
 
 @app.websocket("/ws/public/voice/{call_id}")
-async def public_voice(websocket,call_id:str):
+async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=None)):
+    if not voice_token or not verify_call_room_token(voice_token,call_id,"call-ai"):
+        await websocket.close(code=4403); return
     await websocket.accept()
     db=SessionLocal(); call=db.get(CallRecord,call_id)
     if not call:
