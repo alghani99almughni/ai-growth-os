@@ -61,9 +61,13 @@ def structured_match(db: Session, tenant_id: str, message: str) -> str | None:
 
 
 def knowledge_match(db: Session, tenant_id: str, message: str) -> str | None:
-    """Tokenless tenant-library retrieval. This must run before any paid/limited model call."""
+    """Tokenless tenant-library retrieval. Runs before every model call."""
     from .models_growth import KnowledgeItem
-    rows=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True)).all()
+    rows=db.scalars(select(KnowledgeItem).where(
+        KnowledgeItem.tenant_id==tenant_id,
+        KnowledgeItem.is_active==True,
+        KnowledgeItem.approval_status.in_(["approved","system"])
+    )).all()
     incoming=normalize(message)
     if not incoming: return None
     best=None; best_score=0.0
@@ -72,7 +76,8 @@ def knowledge_match(db: Session, tenant_id: str, message: str) -> str | None:
         if not source: continue
         overlap=len(incoming & source)/max(1,len(incoming))
         similarity=SequenceMatcher(None,message.lower(),(row.title or "")+" "+(row.content or "")).ratio()
-        score=max(overlap, similarity*0.65)
+        language_bonus=0.05 if row.language and row.language != "en" and any("\u0c00" <= ch <= "\u0c7f" for ch in message) else 0
+        score=max(overlap, similarity*0.65)+language_bonus
         if score>best_score:
             best_score=score; best=row
     return best.content if best and best_score >= 0.35 else None
