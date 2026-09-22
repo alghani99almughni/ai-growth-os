@@ -20,6 +20,35 @@ from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
+from .voice_gateway import VoiceGateway, VoiceProvider
+
+class GeminiLiveAdapter:
+    name = "gemini"
+
+    async def connect(self, provider, *, system_instruction, tools):
+        import websockets
+        ws_url = (
+            "wss://generativelanguage.googleapis.com/ws/"
+            "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+            "?key=" + provider.api_key
+        )
+        ws = await websockets.connect(ws_url, max_size=8*1024*1024, ping_interval=20, ping_timeout=20)
+        setup = {
+            "setup": {
+                "model": "models/" + provider.model,
+                "generationConfig": {"responseModalities": ["AUDIO"]},
+                "systemInstruction": {"parts": [{"text": system_instruction}]},
+                "inputAudioTranscription": {},
+                "outputAudioTranscription": {},
+                "sessionResumption": {},
+                "tools": [{"functionDeclarations": tools}],
+            }
+        }
+        await ws.send(json.dumps(setup))
+        return ws
+
+voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter()})
+
 from .routing import route_call, available_staff
 from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
 from .integration_routes import router as integration_router
@@ -1521,11 +1550,20 @@ APPROVED BUSINESS CONTEXT:\
              "Do not invent business facts, prices, availability, policies, bookings or payment success. "
              "When the customer has provided both their name and mobile number, call save_customer_identity before continuing. "
              "After identity is saved, say a short confirmation and ask how you can help. For booking requests, use the approved service IDs in the business context, ask for an exact date and time, and call create_booking only after the customer explicitly confirms the selected slot. Never claim a booking is confirmed unless the tool returns confirmed=true. If a queue token is returned, tell the customer the token and estimated wait. Be concise, natural and multilingual when appropriate.")
-    ws_url="wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key="+settings.gemini_api_key
-    setup={"setup":{"model":"models/"+settings.gemini_live_model,"generationConfig":{"responseModalities":["AUDIO"]},"systemInstruction":{"parts":[{"text":system}]},"inputAudioTranscription":{},"outputAudioTranscription":{},"sessionResumption":{},"tools":[{"functionDeclarations":[{"name":"save_customer_identity","description":"Save and verify the customer's name and mobile number after the customer has stated both during the call.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},{"name":"create_booking","description":"Create a confirmed appointment after the customer explicitly confirms an exact service, date and time. starts_at is local business time without timezone offset.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}]}]}}
+    tool_declarations=[
+        {"name":"save_customer_identity","description":"Save and verify the customer's name and mobile number after the customer has stated both during the call.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
+        {"name":"create_booking","description":"Create a confirmed appointment after the customer explicitly confirms an exact service, date and time. starts_at is local business time without timezone offset.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}
+    ]
+    providers=[VoiceProvider("gemini",settings.gemini_live_model,settings.gemini_api_key,priority=100)]
+    providers=voice_gateway.ordered(providers)
+    if not providers:
+        await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
+    provider=providers[0]
     try:
-        async with websockets.connect(ws_url,max_size=8*1024*1024,ping_interval=20,ping_timeout=20) as gemini:
-            await gemini.send(json.dumps(setup)); await websocket.send_json({"type":"status","status":"ai_connected"})
+        gemini=await voice_gateway.adapter_for(provider).connect(provider,system_instruction=system,tools=tool_declarations)
+        try:
+            await websocket.send_json({"type":"status","status":"ai_connected","provider":provider.name})
+            await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}})
             await gemini.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":"Begin the call now."}]}],"turnComplete":True}}))
             async def browser_to_gemini():
                 while True:
@@ -1584,6 +1622,8 @@ APPROVED BUSINESS CONTEXT:\
             done,_=await asyncio.wait(tasks,return_when=asyncio.FIRST_COMPLETED)
             for task in tasks:
                 if not task.done(): task.cancel()
+        finally:
+            await gemini.close()
     except Exception as exc:
         try: await websocket.send_json({"type":"error","message":"Voice session ended: "+str(exc)})
         except Exception: pass
