@@ -12,6 +12,10 @@ class WhatsAppAdapter:
     access_token: str = ""
     phone_number_id: str = ""
 
+    def send_text_sync(self, to: str, text: str) -> dict:
+        import asyncio
+        return asyncio.run(self.send_text(to, text))
+
     async def send_text(self, to: str, text: str) -> dict:
         provider = (self.provider or "openwa").lower()
         if provider == "openwa":
