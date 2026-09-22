@@ -491,7 +491,7 @@ def require_platform_admin(user:User):
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
 
 @app.post("/api/v1/auth/password-reset/request")
-async async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
+async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
     user=db.scalar(select(User).where(User.email==payload.email.lower(),User.is_active==True))
     if not user:
         return {"accepted":True}
