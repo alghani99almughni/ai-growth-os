@@ -1,6 +1,7 @@
 from fastapi import FastAPI,Depends,HTTPException,Query,Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
@@ -25,8 +26,37 @@ from datetime import datetime,date,time,timedelta
 import websockets
 import jwt,secrets
 
+import asyncio
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
-app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_credentials=False,allow_methods=["*"],allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[x.strip() for x in settings.allowed_origins.split(",") if x.strip()],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Lightweight per-process abuse protection. Production multi-instance deployments should
+# place the same limits at the edge/API gateway as well.
+_rate_buckets={}
+_rate_lock=asyncio.Lock()
+
+@app.middleware("http")
+async def rate_limit(request:Request, call_next):
+    if request.url.path in {"/health","/docs","/openapi.json"}:
+        return await call_next(request)
+    now=asyncio.get_running_loop().time()
+    client=request.client.host if request.client else "unknown"
+    key=(client,request.url.path)
+    async with _rate_lock:
+        bucket=_rate_buckets.get(key)
+        if not bucket or now-bucket[0]>=settings.rate_limit_window_seconds:
+            _rate_buckets[key]=[now,1]
+        else:
+            bucket[1]+=1
+            if bucket[1]>settings.rate_limit_requests:
+                return JSONResponse(status_code=429,content={"detail":"Too many requests"})
+    return await call_next(request)
 
 @app.websocket("/ws/tenants/{tenant_id}/events")
 async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(default=None)):
@@ -70,22 +100,43 @@ async def public_business_events(websocket,slug:str,context_token:str|None=Query
         try: await websocket.close()
         except Exception: pass
 
+def issue_call_room_token(call_id:str,audience:str):
+    return jwt.encode(
+        {"sub":call_id,"call_id":call_id,"aud":audience,"exp":datetime.utcnow().timestamp()+600},
+        settings.jwt_secret,
+        algorithm=settings.jwt_algorithm,
+    )
+
+def verify_call_room_token(token:str,call_id:str,audience:str):
+    try:
+        p=jwt.decode(token,settings.jwt_secret,algorithms=[settings.jwt_algorithm],options={"require":["exp","sub","aud"]},audience=audience)
+        return p.get("call_id")==call_id
+    except jwt.InvalidTokenError:
+        return False
+
 @app.websocket("/ws/calls/{call_id}")
-async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None)):
+async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None),room_token:str|None=Query(default=None)):
     db=SessionLocal()
     call=db.get(CallRecord,call_id)
     if not call:
         await websocket.close(code=4404); db.close(); return
     allow_staff=False
+    allow_customer=bool(room_token and verify_call_room_token(room_token,call_id,"call-customer"))
     if access_token:
         try:
             p=jwt.decode(access_token,settings.jwt_secret,algorithms=[settings.jwt_algorithm])
             uid=p.get("sub")
             user=db.get(User,uid)
-            allow_staff=bool(user and user.is_active and user.tenant_id==call.tenant_id)
+            staff=db.scalar(select(StaffMember).where(StaffMember.user_id==uid,StaffMember.tenant_id==call.tenant_id))
+            allow_staff=bool(
+                user and user.is_active and user.tenant_id==call.tenant_id and
+                (user.role in ("owner","admin","super_admin","platform_admin") or (staff and staff.id==call.staff_id))
+            )
         except jwt.InvalidTokenError:
             allow_staff=False
     db.close()
+    if not allow_staff and not allow_customer:
+        await websocket.close(code=4403); return
     await signal(websocket,call_id,allow_staff=allow_staff)
 
 security=HTTPBearer(auto_error=False)
@@ -115,6 +166,8 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     except jwt.InvalidTokenError: raise HTTPException(401,"Invalid or expired token")
     u=db.get(User,uid)
     if not u or not u.is_active or p.get("tenant_id")!=u.tenant_id: raise HTTPException(401,"Invalid tenant context")
+    tenant=db.get(Tenant,u.tenant_id)
+    if not tenant or tenant.status!="active": raise HTTPException(403,"Tenant is not active")
     return u
 FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":True,"referrals":True,"feedback":True,"google_review":True,"bookings":True,"queue":True}
 GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id":"brick","name":"Brick Breaker"},{"id":"flappy","name":"Flappy"},{"id":"tap","name":"Tap Target"},{"id":"2048","name":"2048"}]
@@ -256,6 +309,27 @@ class HoursUpdate(BaseModel):
 
 def require_platform_admin(user:User):
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
+
+class TenantStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(active|suspended|pending|closed)$")
+
+@app.get("/api/v1/platform/tenants")
+def platform_tenants(user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    tenants=db.scalars(select(Tenant).order_by(Tenant.created_at.desc())).all()
+    return {"items":[
+        {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status,"created_at":t.created_at.isoformat()}
+        for t in tenants
+    ]}
+
+@app.patch("/api/v1/platform/tenants/{tenant_id}/status")
+def platform_tenant_status(tenant_id,payload:TenantStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    tenant=db.get(Tenant,tenant_id)
+    if not tenant: raise HTTPException(404,"Tenant not found")
+    tenant.status=payload.status
+    db.commit()
+    return {"id":tenant.id,"status":tenant.status}
 
 @app.get("/api/v1/platform/feature-defaults")
 def platform_feature_defaults(user=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -541,8 +615,13 @@ def save_game_score(slug,game:str,score:int=Query(ge=0,le=1000000),customer_id:s
     customer=None
     if customer_id:
         customer=db.scalar(select(Customer).where(Customer.id==customer_id,Customer.tenant_id==t.id))
-    # Reward is deliberately capped and based on completed play, not score inflation.
+    # Reward is deliberately capped and limited to three rewarded plays per game/day/customer.
     reward=0 if not customer else min(25,max(1,score//20))
+    if customer and reward:
+        day_start=datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0)
+        rewarded_today=db.scalar(select(GameScore.id).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start).limit(3))
+        rewarded_count=len(db.scalars(select(GameScore.id).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start)).all())
+        if rewarded_count>=3: reward=0
     row=GameScore(tenant_id=t.id,customer_id=customer.id if customer else None,game=game,score=score,reward_points=reward)
     db.add(row); db.flush()
     if customer and reward and _feature_config(db,t.id).get("loyalty",True):
@@ -571,6 +650,9 @@ def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(ge
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     bill=db.scalar(select(Bill).where(Bill.id==bill_id,Bill.tenant_id==t.id)) if t else None
     if not bill: raise HTTPException(404,"Bill not found")
+    if bill.status=="paid":
+        if bill.payment_id and bill.payment_id!=payload.razorpay_payment_id: raise HTTPException(409,"Bill is already paid with another payment")
+        return {"paid":True,"bill_id":bill.id,"payment_id":bill.payment_id}
     expected=hmac.new(settings.razorpay_key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected,payload.razorpay_signature): raise HTTPException(400,"Invalid payment signature")
     bill.payment_id=payload.razorpay_payment_id; bill.status="paid"; bill.paid_at=datetime.utcnow()
@@ -590,9 +672,9 @@ async def razorpay_webhook(request:Request,db:Session=Depends(get_db)):
     payload=json.loads(raw.decode("utf-8"))
     entity=payload.get("payload",{}).get("payment",{}).get("entity",{})
     receipt=(entity.get("notes") or {}).get("receipt") or ""
-    if receipt.startswith("bill-"):
+    if receipt.startswith("bill-") and entity.get("status") in ("captured","authorized"):
         bill=db.scalar(select(Bill).where(Bill.id==receipt[5:]))
-        if bill:
+        if bill and bill.status!="paid":
             bill.status="paid"; bill.payment_id=entity.get("id"); bill.paid_at=datetime.utcnow()
             order=db.get(Order,bill.order_id)
             if order: order.payment_status="paid"
@@ -626,6 +708,7 @@ class DepartmentCreate(BaseModel):
 
 class StaffCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    user_id: str | None = None
     department_id: str | None = None
     skills: str = ""
     is_available: bool = True
@@ -649,12 +732,17 @@ def staff(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)
     require_tenant(user, tenant_id)
     from .models_ai import StaffMember
     rows=db.scalars(select(StaffMember).where(StaffMember.tenant_id==tenant_id)).all()
-    return {"items":[{"id":x.id,"name":x.name,"department_id":x.department_id,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available} for x in rows]}
+    return {"items":[{"id":x.id,"name":x.name,"user_id":x.user_id,"department_id":x.department_id,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available} for x in rows]}
 
 @app.post("/api/v1/tenants/{tenant_id}/staff", status_code=201)
 def add_staff(tenant_id, payload: StaffCreate, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
     from .models_ai import StaffMember
+    if payload.user_id:
+        linked=db.scalar(select(User).where(User.id==payload.user_id,User.tenant_id==tenant_id,User.is_active==True))
+        if not linked: raise HTTPException(400,"Invalid staff user for this tenant")
+        existing=db.scalar(select(StaffMember).where(StaffMember.user_id==payload.user_id))
+        if existing: raise HTTPException(409,"User is already linked to a staff member")
     x=StaffMember(tenant_id=tenant_id, **payload.model_dump())
     db.add(x); db.commit(); db.refresh(x)
     return {"id":x.id,"name":x.name,"department_id":x.department_id,"skills":x.skills,"is_available":x.is_available}
@@ -693,7 +781,7 @@ def handoff_call(tenant_id, call_id, user=Depends(get_current_user), db: Session
     call.room_id="call-"+call.id
     call.status="handoff_requested"
     db.commit()
-    return {**routed,"call_id":call.id,"status":call.status,"room_id":call.room_id}
+    return {**routed,"call_id":call.id,"status":call.status,"room_id":call.room_id,"room_token":issue_call_room_token(call.id,"call-customer")}
 
 class HandoffDecision(BaseModel):
     decision: str = Field(pattern="^(accept|decline)$")
@@ -705,6 +793,8 @@ def handoff_decision(tenant_id, call_id, payload: HandoffDecision, user=Depends(
     if not call: raise HTTPException(404, "Call not found")
     if not call.staff_id: raise HTTPException(409, "No staff assigned")
     staff=db.get(StaffMember, call.staff_id)
+    if not (user.role in ("owner","admin","super_admin","platform_admin") or (staff and staff.user_id==user.id)):
+        raise HTTPException(403, "Only the assigned staff member or a tenant administrator can accept this call")
     if not staff or not staff.is_active: raise HTTPException(409, "Assigned staff is unavailable")
     if payload.decision=="accept":
         call.status="handoff_accepted"
@@ -919,10 +1009,12 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
         customer=upsert_customer(db,t.id,payload.phone.strip(),payload.name.strip(),False)
     call=CallRecord(tenant_id=t.id,customer_id=customer.id if customer else None,source="pwa_voice",status="ringing")
     db.add(call); db.commit(); db.refresh(call)
-    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name}
+    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"voice_token":issue_call_room_token(call.id,"call-ai")}
 
 @app.websocket("/ws/public/voice/{call_id}")
-async def public_voice(websocket,call_id:str):
+async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=None)):
+    if not voice_token or not verify_call_room_token(voice_token,call_id,"call-ai"):
+        await websocket.close(code=4403); return
     await websocket.accept()
     db=SessionLocal(); call=db.get(CallRecord,call_id)
     if not call:
@@ -1020,7 +1112,7 @@ def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
     call=db.scalar(select(CallRecord).where(CallRecord.id==call_id,CallRecord.tenant_id==t.id))
     if not call: raise HTTPException(404,"Call not found")
     staff=db.get(StaffMember,call.staff_id) if call.staff_id else None
-    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"staff":{"id":staff.id,"name":staff.name} if staff else None}
+    return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"room_token":issue_call_room_token(call.id,"call-customer") if call.room_id and call.status in ("handoff_requested","handoff_accepted","connected") else None,"staff":{"id":staff.id,"name":staff.name} if staff else None}
 
 @app.get("/api/v1/public/business/{slug}/voice/ice")
 def public_voice_ice(slug:str, db:Session=Depends(get_db)):

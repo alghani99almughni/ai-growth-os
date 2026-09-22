@@ -8,6 +8,9 @@ def ensure_schema():
     with engine.begin() as conn:
         dialect=engine.dialect.name
         if dialect=="postgresql":
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS status VARCHAR(30) DEFAULT 'active'"))
+            conn.execute(text("ALTER TABLE staff_members ADD COLUMN IF NOT EXISTS user_id VARCHAR(36)"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_staff_members_user_id ON staff_members(user_id) WHERE user_id IS NOT NULL"))
             conn.execute(text("ALTER TABLE call_records ADD COLUMN IF NOT EXISTS staff_id VARCHAR(36)"))
             conn.execute(text("ALTER TABLE call_records ADD COLUMN IF NOT EXISTS room_id VARCHAR(80)"))
             conn.execute(text("ALTER TABLE customers ADD COLUMN IF NOT EXISTS email VARCHAR(320)"))
@@ -26,6 +29,11 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS queue_status VARCHAR(40)"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS service_requests (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, customer_id VARCHAR(36), appointment_id VARCHAR(36), context_token VARCHAR(100), request_type VARCHAR(50) NOT NULL DEFAULT 'waiter', message TEXT, status VARCHAR(40) NOT NULL DEFAULT 'requested', assigned_staff_id VARCHAR(36), created_at TIMESTAMP NOT NULL, acknowledged_at TIMESTAMP, completed_at TIMESTAMP)"))
         elif dialect=="sqlite":
+            tenant_cols={r[1] for r in conn.execute(text("PRAGMA table_info(tenants)"))}
+            if "status" not in tenant_cols: conn.execute(text("ALTER TABLE tenants ADD COLUMN status VARCHAR(30) DEFAULT 'active'"))
+            staff_cols={r[1] for r in conn.execute(text("PRAGMA table_info(staff_members)"))}
+            if "user_id" not in staff_cols: conn.execute(text("ALTER TABLE staff_members ADD COLUMN user_id VARCHAR(36)"))
+            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_staff_members_user_id ON staff_members(user_id)"))
             cols={r[1] for r in conn.execute(text("PRAGMA table_info(call_records)"))}
             if "staff_id" not in cols: conn.execute(text("ALTER TABLE call_records ADD COLUMN staff_id VARCHAR(36)"))
             if "room_id" not in cols: conn.execute(text("ALTER TABLE call_records ADD COLUMN room_id VARCHAR(80)"))

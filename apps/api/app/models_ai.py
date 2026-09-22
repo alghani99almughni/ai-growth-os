@@ -57,6 +57,7 @@ class StaffMember(Base):
     __tablename__ = "staff_members"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     department_id: Mapped[str | None] = mapped_column(ForeignKey("departments.id"), nullable=True)
     skills: Mapped[str] = mapped_column(Text, default="")
