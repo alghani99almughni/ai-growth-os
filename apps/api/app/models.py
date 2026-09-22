@@ -9,6 +9,7 @@ class Tenant(Base):
     name: Mapped[str] = mapped_column(String(160))
     slug: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     industry: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="active", index=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     whatsapp_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
