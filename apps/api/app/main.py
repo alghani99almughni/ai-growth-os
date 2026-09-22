@@ -21,6 +21,7 @@ from .faq_seed import FAQS
 from .ai_router import detect_language
 from .routing import route_call, available_staff
 from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot\nfrom .integration_routes import router as integration_router
+from .social_routes import router as social_router
 import asyncio,json,base64
 from datetime import datetime,date,time,timedelta
 import websockets
@@ -28,6 +29,7 @@ import jwt,secrets
 
 import asyncio
 app=FastAPI(title="AI Growth OS API",version="1.0.0")\napp.include_router(integration_router)
+app.include_router(social_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in settings.allowed_origins.split(",") if x.strip()],
