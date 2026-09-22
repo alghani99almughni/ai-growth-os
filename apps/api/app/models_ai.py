@@ -64,3 +64,13 @@ class StaffMember(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_available: Mapped[bool] = mapped_column(Boolean, default=True)
     max_concurrent_calls: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class RoleDefinition(Base):
+    __tablename__ = "role_definitions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    permissions_json: Mapped[str] = mapped_column(Text, default="[]")
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
