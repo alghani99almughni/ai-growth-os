@@ -1,4 +1,4 @@
-import httpx, json, math
+import httpx, json, math, hashlib
 from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,11 +14,16 @@ COOLDOWN_MINUTES = 2
 def _estimate_tokens(text: str) -> int:
     return max(1, math.ceil(len(text or "") / 4))
 
-def _usage_row(db: Session, tenant_id: str|None, provider: str, model: str) -> AIProviderUsage:
+def _credential_ref(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode()).hexdigest()[:32]
+
+def _usage_row(db: Session, tenant_id: str|None, provider: str, model: str, api_key: str) -> AIProviderUsage:
+    ref=_credential_ref(api_key)
     row=db.scalar(select(AIProviderUsage).where(
         AIProviderUsage.tenant_id==tenant_id,
         AIProviderUsage.provider==provider,
-        AIProviderUsage.model==model
+        AIProviderUsage.model==model,
+        AIProviderUsage.credential_ref==ref
     ))
     if not row:
         row=AIProviderUsage(tenant_id=tenant_id,provider=provider,model=model)
@@ -28,8 +33,8 @@ def _usage_row(db: Session, tenant_id: str|None, provider: str, model: str) -> A
 def _available(row: AIProviderUsage|None) -> bool:
     return not row or not row.cooldown_until or row.cooldown_until <= datetime.utcnow()
 
-def _record(db, tenant_id, provider, model, *, success=False, error="", rate_limited=False, input_tokens=0, output_tokens=0):
-    row=_usage_row(db,tenant_id,provider,model)
+def _record(db, tenant_id, provider, model, api_key, *, success=False, error="", rate_limited=False, input_tokens=0, output_tokens=0):
+    row=_usage_row(db,tenant_id,provider,model,api_key)
     row.request_count=(row.request_count or 0)+1
     row.success_count=(row.success_count or 0)+(1 if success else 0)
     row.failure_count=(row.failure_count or 0)+(0 if success else 1)
@@ -124,7 +129,8 @@ async def last_resort_reply(db: Session, tenant_id: str, prompt: str) -> tuple[s
         usage=db.scalar(select(AIProviderUsage).where(
             AIProviderUsage.tenant_id==tenant_id,
             AIProviderUsage.provider==provider,
-            AIProviderUsage.model==model
+            AIProviderUsage.model==model,
+            AIProviderUsage.credential_ref==_credential_ref(key)
         ))
         if not _available(usage):
             continue
@@ -132,11 +138,11 @@ async def last_resort_reply(db: Session, tenant_id: str, prompt: str) -> tuple[s
             reply=await _call(provider,key,model,prompt)
             if not reply.strip():
                 raise RuntimeError("Provider returned an empty response")
-            _record(db,tenant_id,provider,model,success=True,input_tokens=input_tokens,output_tokens=_estimate_tokens(reply))
+            _record(db,tenant_id,provider,model,key,success=True,input_tokens=input_tokens,output_tokens=_estimate_tokens(reply))
             return reply.strip(),provider
         except Exception as exc:
             code=getattr(exc,"status_code",0)
             rate_limited=code in (402,403,408,409,425,429,500,502,503,504)
-            _record(db,tenant_id,provider,model,error=str(exc),rate_limited=rate_limited,input_tokens=input_tokens)
+            _record(db,tenant_id,provider,model,key,error=str(exc),rate_limited=rate_limited,input_tokens=input_tokens)
             continue
     return "", "none"
