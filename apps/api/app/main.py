@@ -231,6 +231,32 @@ def require_tenant(user:User,tenant_id:str):
     if user.tenant_id!=tenant_id: raise HTTPException(403,"Tenant access denied")
 def user_out(u): return UserOut(id=u.id,email=u.email,name=u.name,tenant_id=u.tenant_id,role=u.role)
 
+class PlatformAIProviderRequest(BaseModel):
+    provider:str=Field(min_length=2,max_length=60)
+    model:str=Field(min_length=2,max_length=120)
+    api_key:str=Field(min_length=8,max_length=500)
+    priority:int=Field(default=100,ge=1,le=10000)
+    enabled:bool=True
+
+@app.post("/api/v1/platform/ai/providers")
+def platform_ai_provider_add(payload:PlatformAIProviderRequest,user:User=Depends(get_current_user),db:Session=Depends(get_db)):
+    if user.role not in ("platform_admin","super_admin"):
+        raise HTTPException(403,"Platform admin access required")
+    key=(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)
+    if not key:
+        raise HTTPException(500,"Credential encryption is not configured")
+    existing=db.scalar(select(PlatformAIProvider).where(
+        PlatformAIProvider.provider==payload.provider.lower(),
+        PlatformAIProvider.model==payload.model,
+        PlatformAIProvider.config_encrypted==encrypt_channel_config({"api_key":payload.api_key},key)
+    ))
+    if existing:
+        existing.priority=payload.priority; existing.enabled=payload.enabled; existing.status="healthy"
+    else:
+        db.add(PlatformAIProvider(provider=payload.provider.lower(),model=payload.model,priority=payload.priority,enabled=payload.enabled,status="healthy",config_encrypted=encrypt_channel_config({"api_key":payload.api_key},key)))
+    db.commit()
+    return {"ok":True,"provider":payload.provider.lower(),"model":payload.model,"priority":payload.priority,"enabled":payload.enabled}
+
 @app.get("/api/v1/platform/ai/providers")
 def platform_ai_provider_status(user:User=Depends(get_current_user),db:Session=Depends(get_db)):
     if user.role not in ("platform_admin","super_admin"):
