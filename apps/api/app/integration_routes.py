@@ -72,6 +72,16 @@ def _catalog_item(key):
 def _safe_config(key, config):
     return {k: ("configured" if k in SECRET_FIELDS.get(key,[]) and v else v) for k,v in config.items()}
 
+def _platform_available(key):
+    if key=="razorpay": return bool(settings.razorpay_key_id and settings.razorpay_key_secret)
+    if key=="gemini": return bool(settings.gemini_api_key)
+    if key=="openai": return bool(settings.openai_api_key)
+    if key=="openrouter": return bool(settings.openrouter_api_key)
+    if key=="anthropic": return bool(settings.anthropic_api_key)
+    if key=="email": return True
+    if key=="voice": return bool(settings.telephony_provider and settings.telephony_api_key)
+    return False
+
 def _out(row):
     cfg={}
     if row.config_encrypted:
@@ -93,7 +103,13 @@ def integration_catalog(tenant_id: str, credentials: HTTPAuthorizationCredential
 def integrations(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     rows=db.scalars(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id)).all()
-    return {"items":[_out(x) for x in rows]}
+    items=[_out(x) for x in rows]
+    existing={x["key"] for x in items}
+    for item in CATALOG:
+        platform=next((p for p in item["providers"] if p["type"]=="platform"),None)
+        if platform and item["key"] not in existing:
+            items.append({"key":item["key"],"provider":"platform","mode":"platform","status":"connected" if _platform_available(item["key"]) else "available","account_name":"Platform service","account_id":None,"config":{},"metadata":{}})
+    return {"items":items}
 
 @router.get("/tenants/{tenant_id}/integrations/{key}")
 def integration_status(tenant_id: str, key: str, credentials=Depends(__import__("fastapi").security.HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
