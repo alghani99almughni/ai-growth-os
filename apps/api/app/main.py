@@ -1434,7 +1434,7 @@ def create_qr(tenant_id,kind:str="business",label:str="Business QR",user=Depends
 def scan_qr(token,db:Session=Depends(get_db)):
     q=db.scalar(select(QrEntry).where(QrEntry.token==token))
     if not q: raise HTTPException(404,"QR not found")
-    q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url+"/customer","kind":q.kind}
+    q.scans+=1; db.commit(); t=db.get(Tenant,q.tenant_id); return {"tenant_id":t.id,"slug":t.slug,"url":settings.public_app_url.rstrip("/")+"/pwa/"+t.slug+"?qr="+q.token,"kind":q.kind}
 
 class PublicCallStartRequest(BaseModel):
     name:str=Field(min_length=1,max_length=160)
