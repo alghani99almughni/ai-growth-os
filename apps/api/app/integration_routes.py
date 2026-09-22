@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException\nfrom fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -115,7 +116,11 @@ def integrations(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depen
 def integration_status(tenant_id: str, key: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
     row=db.scalar(select(TenantIntegration).where(TenantIntegration.tenant_id==tenant_id,TenantIntegration.integration_key==key))
-    if not row:\n        item=_catalog_item(key)\n        platform=next((p for p in item["providers"] if p["type"]=="platform"),None) if item else None\n        if platform: return {"key":key,"status":"connected" if _platform_available(key) else "available","provider":"platform","mode":"platform","configured":_platform_available(key),"config":{}}\n        return {"key":key,"status":"disconnected","provider":item["providers"][0]["id"] if item else "platform","mode":item["mode"] if item else "platform","configured":False,"config":{}}
+    if not row:
+        item=_catalog_item(key)
+        platform=next((p for p in item["providers"] if p["type"]=="platform"),None) if item else None
+        if platform: return {"key":key,"status":"connected" if _platform_available(key) else "available","provider":"platform","mode":"platform","configured":_platform_available(key),"config":{}}
+        return {"key":key,"status":"disconnected","provider":item["providers"][0]["id"] if item else "platform","mode":item["mode"] if item else "platform","configured":False,"config":{}}
     out=_out(row); out["configured"]=bool(row.config_encrypted) or row.mode in ("platform","oauth"); return out
 
 @router.put("/tenants/{tenant_id}/integrations/{key}")
