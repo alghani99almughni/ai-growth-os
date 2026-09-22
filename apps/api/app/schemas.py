@@ -175,11 +175,32 @@ class FeedbackCreate(BaseModel):
     comment: str | None = None
 
 class LoyaltyRuleCreate(BaseModel):
-    event_type: str
-    name: str
-    points: int = Field(ge=0)
+    event_type: str = Field(min_length=2, max_length=60)
+    name: str = Field(min_length=2, max_length=160)
+    points: int = Field(ge=0, le=100000)
     is_active: bool = True
     config: dict = {}
+
+class LoyaltyRuleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=160)
+    points: int | None = Field(default=None, ge=0, le=100000)
+    is_active: bool | None = None
+    config: dict | None = None
+
+class LoyaltyRewardCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    points_cost: int = Field(ge=1, le=10000000)
+    description: str | None = None
+    is_active: bool = True
+
+class LoyaltyRewardUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=160)
+    points_cost: int | None = Field(default=None, ge=1, le=10000000)
+    description: str | None = None
+    is_active: bool | None = None
+
+class LoyaltyRedeemRequest(BaseModel):
+    customer_id: str
 
 class PaymentVerify(BaseModel):
     razorpay_order_id: str
