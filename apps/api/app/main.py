@@ -273,6 +273,42 @@ def disconnect_whatsapp(tenant_id,user=Depends(get_current_user),db:Session=Depe
     if row: row.status="disconnected"; row.config_encrypted=""; row.updated_at=datetime.utcnow(); db.commit()
     return {"provider":row.provider if row else settings.whatsapp_provider,"status":"disconnected","connected_phone":None,"display_name":None,"configured":False}
 
+class WebsiteContentUpdate(BaseModel):
+    eyebrow: str = Field(default="MOINABAD · RANGAREDDY · TELANGANA", max_length=160)
+    hero_title: str = Field(default="Feel better.", max_length=160)
+    hero_emphasis: str = Field(default="Live consciously.", max_length=160)
+    hero_description: str = Field(default="Practical wellness for modern life, with an organic-focused approach to healthier everyday choices.", max_length=1000)
+    about_title: str = Field(default="Health consciousness starts with what you do every day.", max_length=300)
+    about_text: str = Field(default="SS Nutritions is a local wellness brand based in Moinabad, focused on helping people make informed, sustainable lifestyle choices.", max_length=3000)
+    whatsapp_number: str = Field(default="", max_length=32)
+    contact_heading: str = Field(default="Your wellness journey can start with one conversation.", max_length=300)
+    contact_text: str = Field(default="Tell us what you are looking for and our team can guide you on the next step.", max_length=1000)
+    quote: str = Field(default="Wellness is not about changing everything overnight. It is about making better choices, consistently.", max_length=500)
+    published: bool = True
+
+DEFAULT_WEBSITE_CONTENT={"eyebrow":"MOINABAD · RANGAREDDY · TELANGANA","hero_title":"Feel better.","hero_emphasis":"Live consciously.","hero_description":"Practical wellness for modern life, with an organic-focused approach to healthier everyday choices.","about_title":"Health consciousness starts with what you do every day.","about_text":"SS Nutritions is a local wellness brand based in Moinabad, focused on helping people make informed, sustainable lifestyle choices.","whatsapp_number":"","contact_heading":"Your wellness journey can start with one conversation.","contact_text":"Tell us what you are looking for and our team can guide you on the next step.","quote":"Wellness is not about changing everything overnight. It is about making better choices, consistently.","published":True}
+
+@app.get("/api/v1/public/business/{slug}/website")
+def public_website(slug:str,db:Session=Depends(get_db)):
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower(),Tenant.status=="active"))
+    if not t: raise HTTPException(404,"Business not found")
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==t.id,TenantSetting.key=="website_content"))
+    try: content={**DEFAULT_WEBSITE_CONTENT,**(json.loads(row.value_json) if row else {})}
+    except Exception: content=dict(DEFAULT_WEBSITE_CONTENT)
+    return {"business":{"id":t.id,"name":t.name,"slug":t.slug,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"description":t.description},"content":content}
+
+@app.get("/api/v1/tenants/{tenant_id}/website")
+def tenant_website(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="website_content"))
+    try: return {**DEFAULT_WEBSITE_CONTENT,**(json.loads(row.value_json) if row else {})}
+    except Exception: return dict(DEFAULT_WEBSITE_CONTENT)
+
+@app.put("/api/v1/tenants/{tenant_id}/website")
+def update_website(tenant_id,payload:WebsiteContentUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    return _set_setting(db,tenant_id,"website_content",payload.model_dump())
+
 @app.get("/api/v1/tenants/{tenant_id}",response_model=TenantOut)
 def get_tenant(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); t=db.get(Tenant,tenant_id)
