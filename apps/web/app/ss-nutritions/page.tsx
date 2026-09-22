@@ -57,8 +57,13 @@ export default function SSNutritions(){
   const nextAudioTimeRef=useRef(0);
 
   useEffect(()=>{
-    fetch(api()+"/api/v1/public/business/ss-nutritions/website")
+    fetch(api()+"/api/v1/public/business/resolve?name="+encodeURIComponent("SS Nutritions"))
       .then(r=>r.ok?r.json():null)
+      .then(async resolved=>{
+        if(!resolved?.slug) return null;
+        const r=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(resolved.slug)+"/website");
+        return r.ok?r.json():resolved;
+      })
       .then(setData)
       .catch(()=>{});
   },[]);
@@ -109,7 +114,7 @@ export default function SSNutritions(){
     }
     setCallState("starting");
     try{
-      const start=await fetch(api()+"/api/v1/public/business/ss-nutritions/call",{
+      const start=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/call",{
         method:"POST",
         headers:{"Content-Type":"application/json"},
         body:JSON.stringify({name:name.trim(),phone:phone.trim()})
@@ -243,7 +248,7 @@ export default function SSNutritions(){
           <button type="button" className="ss-wa ss-call-card" onClick={openCall}>☎ Call AI <span>Talk now ↗</span></button>
           <a href={whatsappLink} target="_blank" rel="noreferrer" className="ss-wa">💬 Continue on WhatsApp <span>↗</span></a>
         </div>
-        <p className="ss-note">Your call stays inside this PWA. The AI asks for your name and mobile number first, then helps with approved SS Nutritions information and bookings.</p>
+        
       </div>
     </section>
 
@@ -252,9 +257,8 @@ export default function SSNutritions(){
     {callOpen&&<div className="ss-call-backdrop" role="dialog" aria-modal="true" aria-label="Call SS Nutritions AI">
       <div className="ss-call-modal">
         <button className="ss-call-close" type="button" onClick={closeCall} aria-label="Close">×</button>
-        <p className="ss-eyebrow">PRIVATE IN-PWA CALL</p>
-        <h2>Talk to SS Nutritions AI</h2>
-        <p className="ss-call-sub">No phone dialer. Your browser microphone connects directly to the AI voice agent.</p>
+        <h2>Talk to SS Nutritions</h2>
+        <p className="ss-call-sub">Please enter your name and mobile number.</p>
         {(callState==="idle"||callState==="starting"||callState==="error")&&<div className="ss-call-form">
           <label>Name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name" autoComplete="name"/></label>
           <label>Mobile number<input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+91 98765 43210" autoComplete="tel" inputMode="tel"/></label>
