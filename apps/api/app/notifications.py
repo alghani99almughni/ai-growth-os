@@ -74,7 +74,7 @@ async def send_owner_credentials(tenant,owner,temp_password:str)->dict:
         whatsapp_result=await send_platform_whatsapp(tenant.phone,body)
     return {"email":email_result,"whatsapp":whatsapp_result}
 
-async def send_password_reset(user,token:str)->dict:
+async def send_password_reset(user,tenant,token:str)->dict:
     reset_url=settings.public_app_url.rstrip("/")+"/reset-password?token="+token
     body=(
         f"Password reset requested for {user.email}.\\n\\n"
@@ -88,4 +88,7 @@ async def send_password_reset(user,token:str)->dict:
     )
     email_result=await send_email(user.email,"Reset your AI Growth OS password",body,html)
     whatsapp_result={"sent":False,"status":"not_configured","channel":"whatsapp"}
+    phone=getattr(tenant,"whatsapp_number",None) or getattr(tenant,"phone",None)
+    if phone:
+        whatsapp_result=await send_platform_whatsapp(phone,body)
     return {"email":email_result,"whatsapp":whatsapp_result,"reset_url":reset_url}
