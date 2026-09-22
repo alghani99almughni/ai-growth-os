@@ -2,7 +2,7 @@ import httpx, json
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .config import settings
-from .models_integrations import TenantIntegration
+from .models_integrations import TenantIntegration, PlatformAIProvider
 from .integrations import decrypt_channel_config
 
 # This module is deliberately NOT imported by ai_router. The router is tokenless.
@@ -42,7 +42,17 @@ def _tenant_provider(db: Session, tenant_id: str):
             continue
     return None
 
-def _platform_providers():
+def _platform_providers(db: Session):
+    db_rows=db.scalars(select(PlatformAIProvider).where(PlatformAIProvider.enabled==True).order_by(PlatformAIProvider.priority)).all()
+    result=[]
+    for row in db_rows:
+        try:
+            cfg=decrypt_channel_config(row.config_encrypted,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key))
+            if cfg.get("api_key"):
+                result.append((row.provider,cfg["api_key"],row.model,row))
+        except Exception:
+            continue
+    if result: return result
     return [
       ("gemini",settings.gemini_api_key,settings.gemini_model),
       ("openrouter",settings.openrouter_api_key,settings.openrouter_model),
@@ -54,7 +64,7 @@ async def last_resort_reply(db: Session, tenant_id: str, prompt: str) -> tuple[s
     # Tenant-owned provider first; platform pool is only the final fallback.
     tenant=_tenant_provider(db,tenant_id)
     candidates=[tenant] if tenant else []
-    candidates += [(p,k,m) for p,k,m in _platform_providers() if k]
+    candidates += [(x[0],x[1],x[2]) for x in _platform_providers(db) if x[1]]
     for provider,key,model in candidates:
         try:
             reply=await _call(provider,key,model,prompt)
