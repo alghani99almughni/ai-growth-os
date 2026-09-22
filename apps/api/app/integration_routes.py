@@ -166,3 +166,65 @@ def create_platform_ai_provider(payload: dict, credentials=Depends(__import__("f
     row=PlatformAIProvider(provider=payload.get("provider","gemini"),model=payload.get("model",""),priority=int(payload.get("priority",100)),enabled=bool(payload.get("enabled",True)))
     if payload.get("api_key"): row.config_encrypted=encrypt_channel_config({"api_key":payload["api_key"]},settings.whatsapp_credential_encryption_key)
     db.add(row); db.commit(); db.refresh(row); return {"id":row.id,"provider":row.provider,"model":row.model,"priority":row.priority,"enabled":row.enabled}
+
+
+class BuiltinWhatsAppConnect(BaseModel):
+    phone: str = Field(min_length=8,max_length=32)
+    method: str = Field(default="pairing", pattern=r"^(pairing|qr)$")
+
+async def _openwa_request(method, url, api_key, **kwargs):
+    import httpx
+    headers=kwargs.pop("headers",{})
+    headers["X-API-Key"]=api_key
+    async with httpx.AsyncClient(timeout=20) as client:
+        r=await client.request(method,url,headers=headers,**kwargs)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+@router.post("/tenants/{tenant_id}/integrations/whatsapp/builtin/connect")
+async def builtin_whatsapp_connect(tenant_id: str, payload: BuiltinWhatsAppConnect, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+    user=_user(credentials,db); _require(user,tenant_id)
+    if not settings.openwa_base_url or not settings.openwa_api_key:
+        raise HTTPException(503,"Built-in WhatsApp service is not configured on the platform")
+    tenant=db.get(Tenant,tenant_id)
+    if not tenant: raise HTTPException(404,"Tenant not found")
+    created=await _openwa_request("POST",settings.openwa_base_url.rstrip("/")+"/api/sessions",settings.openwa_api_key,json={"name":"tenant-"+tenant.slug})
+    sid=created.get("id")
+    if not sid: raise HTTPException(502,"OpenWA did not return a session ID")
+    await _openwa_request("POST",settings.openwa_base_url.rstrip("/")+"/api/sessions/"+sid+"/start",settings.openwa_api_key,json={})
+    row=db.scalar(select(__import__("apps.api.app.models",fromlist=["TenantWhatsAppConnection"]).TenantWhatsAppConnection).where(__import__("apps.api.app.models",fromlist=["TenantWhatsAppConnection"]).TenantWhatsAppConnection.tenant_id==tenant_id))
+    from .models import TenantWhatsAppConnection
+    if not row:
+        row=TenantWhatsAppConnection(id=__import__("secrets").token_hex(18),tenant_id=tenant_id)
+        db.add(row)
+    row.provider="openwa"; row.status="connecting"; row.config_encrypted=encrypt_channel_config({"provider":"openwa","base_url":settings.openwa_base_url,"api_key":settings.openwa_api_key,"session_id":sid,"connected_phone":payload.phone},settings.whatsapp_credential_encryption_key); row.connected_phone=payload.phone; row.display_name=tenant.name; row.updated_at=datetime.utcnow(); db.commit()
+    if payload.method=="pairing":
+        result=await _openwa_request("POST",settings.openwa_base_url.rstrip("/")+"/api/sessions/"+sid+"/pairing-code",settings.openwa_api_key,json={"phoneNumber":payload.phone})
+        return {"session_id":sid,"method":"pairing","status":"connecting","pairing_code":result.get("code") or result.get("pairingCode")}
+    return {"session_id":sid,"method":"qr","status":"connecting","qr_url":"/api/v1/tenants/"+tenant_id+"/integrations/whatsapp/builtin/qr"}
+
+@router.get("/tenants/{tenant_id}/integrations/whatsapp/builtin/status")
+async def builtin_whatsapp_status(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+    user=_user(credentials,db); _require(user,tenant_id)
+    from .models import TenantWhatsAppConnection
+    row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
+    if not row or not row.config_encrypted: return {"status":"disconnected","connected_phone":None,"display_name":None}
+    cfg=decrypt_channel_config(row.config_encrypted,settings.whatsapp_credential_encryption_key)
+    try:
+        info=await _openwa_request("GET",cfg["base_url"].rstrip("/")+"/api/sessions/"+cfg["session_id"],cfg["api_key"])
+        state=info.get("status") or info.get("state") or row.status
+        row.status="connected" if state in ("ready","connected") else ("connecting" if state in ("connecting","qr") else state)
+        row.connected_phone=info.get("phone") or info.get("phoneNumber") or row.connected_phone
+        db.commit()
+    except Exception:
+        state=row.status
+    return {"session_id":cfg.get("session_id"),"status":row.status,"connected_phone":row.connected_phone,"display_name":row.display_name}
+
+@router.get("/tenants/{tenant_id}/integrations/whatsapp/builtin/qr")
+async def builtin_whatsapp_qr(tenant_id: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+    user=_user(credentials,db); _require(user,tenant_id)
+    from .models import TenantWhatsAppConnection
+    row=db.scalar(select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id==tenant_id))
+    if not row or not row.config_encrypted: raise HTTPException(404,"Built-in WhatsApp session not found")
+    cfg=decrypt_channel_config(row.config_encrypted,settings.whatsapp_credential_encryption_key)
+    return await _openwa_request("GET",cfg["base_url"].rstrip("/")+"/api/sessions/"+cfg["session_id"]+"/qr",cfg["api_key"])
