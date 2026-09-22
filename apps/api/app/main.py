@@ -308,6 +308,27 @@ class HoursUpdate(BaseModel):
 def require_platform_admin(user:User):
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
 
+class TenantStatusUpdate(BaseModel):
+    status: str = Field(pattern="^(active|suspended|pending|closed)$")
+
+@app.get("/api/v1/platform/tenants")
+def platform_tenants(user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    tenants=db.scalars(select(Tenant).order_by(Tenant.created_at.desc())).all()
+    return {"items":[
+        {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status,"created_at":t.created_at.isoformat()}
+        for t in tenants
+    ]}
+
+@app.patch("/api/v1/platform/tenants/{tenant_id}/status")
+def platform_tenant_status(tenant_id,payload:TenantStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    tenant=db.get(Tenant,tenant_id)
+    if not tenant: raise HTTPException(404,"Tenant not found")
+    tenant.status=payload.status
+    db.commit()
+    return {"id":tenant.id,"status":tenant.status}
+
 @app.get("/api/v1/platform/feature-defaults")
 def platform_feature_defaults(user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_platform_admin(user)
