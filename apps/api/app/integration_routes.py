@@ -297,8 +297,11 @@ def oauth_start(provider: str, tenant_id: str, integration_key: str, credentials
         if not scopes: raise HTTPException(400,"Unsupported Google integration")
         url="https://accounts.google.com/o/oauth2/v2/auth?"+urlencode({"client_id":settings.google_client_id,"redirect_uri":settings.google_redirect_uri,"response_type":"code","access_type":"offline","prompt":"consent","include_granted_scopes":"true","scope":scopes,"state":state})
     else: raise HTTPException(400,"Unsupported OAuth provider")
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url)
+    return {"authorization_url":url}
+
+@router.post("/oauth/{provider}/start")
+async def oauth_start_post(provider: str, payload: dict, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
+    return oauth_start(provider, str(payload.get("tenant_id")), str(payload.get("integration_key")), credentials, db)
 
 @router.get("/oauth/meta/callback")
 async def oauth_meta_callback(code: str, state: str, db: Session=Depends(get_db)):
