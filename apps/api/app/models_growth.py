@@ -194,3 +194,13 @@ class PlatformSetting(Base):
     key:Mapped[str]=mapped_column(String(160),unique=True,index=True)
     value_json:Mapped[str]=mapped_column(Text,default="{}")
     updated_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow,onupdate=datetime.utcnow)
+
+
+class PasswordResetToken(Base):
+    __tablename__="password_reset_tokens"
+    id:Mapped[str]=mapped_column(String(36),primary_key=True,default=uid)
+    user_id:Mapped[str]=mapped_column(ForeignKey("users.id"),index=True)
+    token_hash:Mapped[str]=mapped_column(String(128),unique=True,index=True)
+    expires_at:Mapped[datetime]=mapped_column(DateTime,index=True)
+    used_at:Mapped[datetime|None]=mapped_column(DateTime,nullable=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime,default=datetime.utcnow)
