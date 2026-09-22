@@ -8,7 +8,7 @@ from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
 from .models_growth import KnowledgeItem,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore
-from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember
+from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,RoleDefinition
 from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context
@@ -162,6 +162,17 @@ async def startup():
             for industry,language,intent,question,answer,keywords in FAQS:
                 db.add(GlobalFaq(industry=industry,language=language,intent=intent,question=question,answer=answer,keywords=keywords))
             db.commit()
+        if settings.platform_admin_email and settings.platform_admin_password:
+            existing=db.scalar(select(User).where(User.email==settings.platform_admin_email.lower()))
+            platform_tenant=db.scalar(select(Tenant).where(Tenant.slug=="__platform__"))
+            if not platform_tenant:
+                platform_tenant=Tenant(id=str(uuid.uuid4()),name="AI Growth OS Platform",slug="__platform__",industry="platform",status="active")
+                db.add(platform_tenant); db.commit(); db.refresh(platform_tenant)
+            if not existing:
+                existing=User(id=str(uuid.uuid4()),name=settings.platform_admin_name,email=settings.platform_admin_email.lower(),password_hash=hash_password(settings.platform_admin_password),tenant_id=platform_tenant.id,role="platform_admin")
+                db.add(existing); db.commit()
+            elif existing.role!="platform_admin":
+                existing.role="platform_admin"; existing.tenant_id=platform_tenant.id; db.commit()
     finally:
         db.close()
 def get_db():
@@ -409,6 +420,62 @@ def require_platform_admin(user:User):
 class TenantStatusUpdate(BaseModel):
     status: str = Field(pattern="^(active|suspended|pending|closed)$")
 
+class PlatformTenantProvisionOut(BaseModel):
+    tenant_id: str
+    tenant: dict
+    owner: dict
+    status: str
+
+DEFAULT_DEPARTMENTS = {
+    "health": ["Administration","Consultation","Customer Support","Sales"],
+    "wellness": ["Administration","Consultation","Customer Support","Sales"],
+    "dental": ["Reception","Consultation","Treatment","Billing"],
+    "restaurant": ["Management","Kitchen","Service","Billing"],
+    "hotel": ["Management","Front Office","Housekeeping","Food & Beverage"],
+    "salon": ["Management","Reception","Stylist","Billing"],
+    "gym": ["Management","Trainers","Membership","Front Desk"],
+    "real-estate": ["Management","Sales","Site Visits","Support"],
+    "education": ["Administration","Admissions","Teaching","Support"],
+}
+DEFAULT_PERMISSIONS = ["dashboard.view","customers.view","leads.view","bookings.view","tasks.view"]
+ROLE_PRESETS = {
+    "owner": ["*"], "admin": ["*"],
+    "manager": DEFAULT_PERMISSIONS + ["customers.manage","leads.manage","bookings.manage","staff.view","reports.view"],
+    "staff": DEFAULT_PERMISSIONS, "reception": ["dashboard.view","customers.view","leads.view","bookings.view"],
+    "sales": ["dashboard.view","customers.view","leads.view","leads.manage","bookings.view"],
+    "support": ["dashboard.view","customers.view","leads.view","bookings.view","tasks.view"],
+    "billing": ["dashboard.view","customers.view","payments.view","payments.manage"],
+}
+
+def provision_defaults(db, tenant, industry):
+    key=industry.lower().replace("_","-")
+    for name in DEFAULT_DEPARTMENTS.get(key, ["Administration","Sales","Customer Support"]):
+        if not db.scalar(select(Department).where(Department.tenant_id==tenant.id,Department.name==name)):
+            db.add(Department(tenant_id=tenant.id,name=name))
+    for name,permissions in ROLE_PRESETS.items():
+        if not db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant.id,RoleDefinition.name==name)):
+            db.add(RoleDefinition(tenant_id=tenant.id,name=name,permissions_json=json.dumps(permissions),is_system=True))
+    db.commit()
+
+@app.post("/api/v1/platform/tenants/provision",response_model=PlatformTenantProvisionOut,status_code=201)
+def platform_provision_tenant(payload:TenantProvisionRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    if db.scalar(select(Tenant).where(Tenant.slug==payload.slug.lower())): raise HTTPException(409,"Business slug already exists")
+    if db.scalar(select(User).where(User.email==payload.owner_email.lower())): raise HTTPException(409,"Owner email already registered")
+    t=create_tenant(db,payload.business_name,payload.slug,payload.industry)
+    t.phone=payload.phone; t.whatsapp_number=payload.whatsapp_number; t.address=payload.address
+    db.commit(); db.refresh(t)
+    owner=create_owner(db,payload.owner_name,payload.owner_email,payload.owner_password,t)
+    provision_defaults(db,t,payload.template or payload.industry)
+    return {"tenant_id":t.id,"tenant":{"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status},"owner":{"id":owner.id,"name":owner.name,"email":owner.email,"role":owner.role},"status":"active"}
+
+@app.get("/api/v1/platform/tenants/{tenant_id}")
+def platform_tenant_detail(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_platform_admin(user)
+    t=db.get(Tenant,tenant_id)
+    if not t: raise HTTPException(404,"Tenant not found")
+    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"email":t.email,"address":t.address}
+
 @app.get("/api/v1/platform/tenants")
 def platform_tenants(user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_platform_admin(user)
@@ -445,6 +512,70 @@ def update_platform_feature_defaults(payload:FeatureUpdate,user=Depends(get_curr
     else: row.value_json=json.dumps(cfg)
     db.commit()
     return {"features":cfg}
+
+@app.get("/api/v1/tenants/{tenant_id}/departments")
+def list_departments(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=db.scalars(select(Department).where(Department.tenant_id==tenant_id).order_by(Department.name)).all()
+    return {"items":[{"id":x.id,"name":x.name,"description":x.description,"skills":x.skills,"is_active":x.is_active} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/departments",status_code=201)
+def create_department(tenant_id,payload:DepartmentCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=Department(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x)
+    return {"id":x.id,"name":x.name,"description":x.description,"skills":x.skills,"is_active":x.is_active}
+
+@app.get("/api/v1/tenants/{tenant_id}/roles")
+def list_roles(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=db.scalars(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id).order_by(RoleDefinition.name)).all()
+    return {"items":[{"id":x.id,"name":x.name,"permissions":json.loads(x.permissions_json or "[]"),"is_system":x.is_system} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/roles",status_code=201)
+def create_role(tenant_id,payload:RoleDefinitionCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    if db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id,RoleDefinition.name==payload.name)): raise HTTPException(409,"Role already exists")
+    x=RoleDefinition(tenant_id=tenant_id,name=payload.name,permissions_json=json.dumps(payload.permissions),is_system=False)
+    db.add(x); db.commit(); db.refresh(x)
+    return {"id":x.id,"name":x.name,"permissions":payload.permissions,"is_system":False}
+
+@app.get("/api/v1/tenants/{tenant_id}/staff")
+def list_staff(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=db.scalars(select(StaffMember).where(StaffMember.tenant_id==tenant_id).order_by(StaffMember.name)).all()
+    result=[]
+    for x in rows:
+        u=db.get(User,x.user_id) if x.user_id else None
+        d=db.get(Department,x.department_id) if x.department_id else None
+        result.append({"id":x.id,"name":x.name,"email":u.email if u else None,"role":u.role if u else "staff","department_id":x.department_id,"department_name":d.name if d else None,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available})
+    return {"items":result}
+
+@app.post("/api/v1/tenants/{tenant_id}/staff",status_code=201)
+def create_staff(tenant_id,payload:StaffCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    if db.scalar(select(User).where(User.email==payload.email.lower())): raise HTTPException(409,"Email already registered")
+    if payload.department_id and not db.scalar(select(Department).where(Department.id==payload.department_id,Department.tenant_id==tenant_id)): raise HTTPException(400,"Invalid department")
+    if not db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id,RoleDefinition.name==payload.role)): raise HTTPException(400,"Invalid role")
+    u=User(id=str(uuid.uuid4()),name=payload.name,email=payload.email.lower(),password_hash=hash_password(payload.password),tenant_id=tenant_id,role=payload.role)
+    db.add(u); db.flush()
+    s=StaffMember(tenant_id=tenant_id,user_id=u.id,name=payload.name,department_id=payload.department_id,skills=payload.skills)
+    db.add(s); db.commit(); db.refresh(s)
+    return {"id":s.id,"name":s.name,"email":u.email,"role":u.role,"department_id":s.department_id}
+
+@app.patch("/api/v1/tenants/{tenant_id}/staff/{staff_id}")
+def update_staff(tenant_id,staff_id,payload:StaffUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    s=db.scalar(select(StaffMember).where(StaffMember.id==staff_id,StaffMember.tenant_id==tenant_id))
+    if not s: raise HTTPException(404,"Staff member not found")
+    u=db.get(User,s.user_id) if s.user_id else None
+    if payload.department_id is not None and not db.scalar(select(Department).where(Department.id==payload.department_id,Department.tenant_id==tenant_id)): raise HTTPException(400,"Invalid department")
+    if payload.role is not None and not db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id,RoleDefinition.name==payload.role)): raise HTTPException(400,"Invalid role")
+    if payload.role is not None and u: u.role=payload.role
+    for key in ("department_id","skills","is_active","is_available"):
+        value=getattr(payload,key)
+        if value is not None: setattr(s,key,value)
+    db.commit()
+    return {"id":s.id,"role":u.role if u else None,"department_id":s.department_id,"is_active":s.is_active,"is_available":s.is_available}
 
 @app.get("/api/v1/tenants/{tenant_id}/features")
 def tenant_features(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
