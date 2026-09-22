@@ -592,8 +592,13 @@ def save_game_score(slug,game:str,score:int=Query(ge=0,le=1000000),customer_id:s
     customer=None
     if customer_id:
         customer=db.scalar(select(Customer).where(Customer.id==customer_id,Customer.tenant_id==t.id))
-    # Reward is deliberately capped and based on completed play, not score inflation.
+    # Reward is deliberately capped and limited to three rewarded plays per game/day/customer.
     reward=0 if not customer else min(25,max(1,score//20))
+    if customer and reward:
+        day_start=datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0)
+        rewarded_today=db.scalar(select(GameScore.id).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start).limit(3))
+        rewarded_count=len(db.scalars(select(GameScore.id).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start)).all())
+        if rewarded_count>=3: reward=0
     row=GameScore(tenant_id=t.id,customer_id=customer.id if customer else None,game=game,score=score,reward_points=reward)
     db.add(row); db.flush()
     if customer and reward and _feature_config(db,t.id).get("loyalty",True):
@@ -622,6 +627,9 @@ def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(ge
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     bill=db.scalar(select(Bill).where(Bill.id==bill_id,Bill.tenant_id==t.id)) if t else None
     if not bill: raise HTTPException(404,"Bill not found")
+    if bill.status=="paid":
+        if bill.payment_id and bill.payment_id!=payload.razorpay_payment_id: raise HTTPException(409,"Bill is already paid with another payment")
+        return {"paid":True,"bill_id":bill.id,"payment_id":bill.payment_id}
     expected=hmac.new(settings.razorpay_key_secret.encode(),(payload.razorpay_order_id+"|"+payload.razorpay_payment_id).encode(),hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected,payload.razorpay_signature): raise HTTPException(400,"Invalid payment signature")
     bill.payment_id=payload.razorpay_payment_id; bill.status="paid"; bill.paid_at=datetime.utcnow()
@@ -641,9 +649,9 @@ async def razorpay_webhook(request:Request,db:Session=Depends(get_db)):
     payload=json.loads(raw.decode("utf-8"))
     entity=payload.get("payload",{}).get("payment",{}).get("entity",{})
     receipt=(entity.get("notes") or {}).get("receipt") or ""
-    if receipt.startswith("bill-"):
+    if receipt.startswith("bill-") and entity.get("status") in ("captured","authorized"):
         bill=db.scalar(select(Bill).where(Bill.id==receipt[5:]))
-        if bill:
+        if bill and bill.status!="paid":
             bill.status="paid"; bill.payment_id=entity.get("id"); bill.paid_at=datetime.utcnow()
             order=db.get(Order,bill.order_id)
             if order: order.payment_status="paid"
