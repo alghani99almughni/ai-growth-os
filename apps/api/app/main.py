@@ -166,6 +166,8 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     except jwt.InvalidTokenError: raise HTTPException(401,"Invalid or expired token")
     u=db.get(User,uid)
     if not u or not u.is_active or p.get("tenant_id")!=u.tenant_id: raise HTTPException(401,"Invalid tenant context")
+    tenant=db.get(Tenant,u.tenant_id)
+    if not tenant or tenant.status!="active": raise HTTPException(403,"Tenant is not active")
     return u
 FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":True,"referrals":True,"feedback":True,"google_review":True,"bookings":True,"queue":True}
 GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id":"brick","name":"Brick Breaker"},{"id":"flappy","name":"Flappy"},{"id":"tap","name":"Tap Target"},{"id":"2048","name":"2048"}]
