@@ -22,6 +22,18 @@ class Tenant(Base):
     queue_avg_service_minutes: Mapped[int] = mapped_column(Integer, default=15)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+class TenantWhatsAppConnection(Base):
+    __tablename__ = "tenant_whatsapp_connections"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(30), default="openwa")
+    status: Mapped[str] = mapped_column(String(30), default="disconnected")
+    config_encrypted: Mapped[str] = mapped_column(Text, default="")
+    connected_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

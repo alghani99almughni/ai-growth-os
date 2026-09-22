@@ -1,3 +1,5 @@
+from cryptography.fernet import Fernet
+import json
 from dataclasses import dataclass
 import hashlib
 import hmac
@@ -76,3 +78,33 @@ class PaymentAdapter:
         async with httpx.AsyncClient(timeout=20) as client:
             r=await client.post("https://api.razorpay.com/v1/orders",headers={"Authorization":"Basic "+auth},json={"amount":amount_paise,"currency":currency,"receipt":receipt})
             r.raise_for_status(); return r.json()
+
+
+def encrypt_channel_config(config: dict, key: str) -> str:
+    if not key: raise RuntimeError("WHATSAPP_CREDENTIAL_ENCRYPTION_KEY is not configured")
+    return Fernet(key.encode()).encrypt(json.dumps(config).encode()).decode()
+
+def decrypt_channel_config(value: str, key: str) -> dict:
+    if not key: raise RuntimeError("WHATSAPP_CREDENTIAL_ENCRYPTION_KEY is not configured")
+    return json.loads(Fernet(key.encode()).decrypt(value.encode()).decode())
+
+def whatsapp_adapter_from_config(config: dict) -> WhatsAppAdapter:
+    return WhatsAppAdapter(
+        provider=config.get("provider","openwa"),
+        openwa_base_url=config.get("base_url",""),
+        openwa_api_key=config.get("api_key",""),
+        openwa_session_id=config.get("session_id",""),
+        access_token=config.get("access_token",""),
+        phone_number_id=config.get("phone_number_id",""),
+    )
+
+
+def tenant_whatsapp_adapter(db, tenant_id: str, settings_obj) -> WhatsAppAdapter:
+    from .models import TenantWhatsAppConnection
+    row = db.scalar(__import__("sqlalchemy").select(TenantWhatsAppConnection).where(TenantWhatsAppConnection.tenant_id == tenant_id))
+    if row and row.config_encrypted:
+        try:
+            return whatsapp_adapter_from_config(decrypt_channel_config(row.config_encrypted, settings_obj.whatsapp_credential_encryption_key))
+        except Exception:
+            pass
+    return WhatsAppAdapter(provider=settings_obj.whatsapp_provider,openwa_base_url=settings_obj.openwa_base_url,openwa_api_key=settings_obj.openwa_api_key,openwa_session_id=settings_obj.openwa_session_id,access_token=settings_obj.whatsapp_access_token,phone_number_id=settings_obj.whatsapp_phone_number_id)
