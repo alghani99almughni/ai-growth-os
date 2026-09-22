@@ -55,6 +55,7 @@ export default function SSNutritions(){
   const processorRef=useRef<ScriptProcessorNode|null>(null);
   const sourceRef=useRef<MediaStreamAudioSourceNode|null>(null);
   const nextAudioTimeRef=useRef(0);
+  const recognitionRef=useRef<any>(null);
 
   useEffect(()=>{
     fetch(api()+"/api/v1/public/business/resolve?name="+encodeURIComponent("SS Nutritions"))
@@ -105,82 +106,134 @@ export default function SSNutritions(){
     nextAudioTimeRef.current+=buffer.duration;
   },[]);
 
+  const speakKnowledgeAnswer=useCallback((text:string,language:string)=>{
+    if(typeof window==="undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const map:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
+    const utter=new SpeechSynthesisUtterance(text);
+    utter.lang=map[language]||"en-IN";
+    const voices=window.speechSynthesis.getVoices();
+    utter.voice=voices.find(v=>v.lang.toLowerCase()===utter.lang.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(utter.lang.slice(0,2).toLowerCase()))||null;
+    utter.rate=0.98;
+    window.speechSynthesis.speak(utter);
+  },[]);
+
+  const connectLiveAi=useCallback(async(payload:any)=>{
+    const AudioCtx=window.AudioContext||((window as any).webkitAudioContext);
+    if(!AudioCtx) throw new Error("This browser does not support in-browser calling.");
+    const ctx=new AudioCtx();
+    audioContextRef.current=ctx;
+    await ctx.resume();
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    streamRef.current=stream;
+    const wsUrl=api().replace(/^http:/,"ws:").replace(/^https:/,"wss:")+"/ws/public/voice/"+payload.call_id+"?voice_token="+encodeURIComponent(payload.voice_token);
+    const ws=new WebSocket(wsUrl);
+    socketRef.current=ws;
+    setCallState("connecting");
+    ws.onopen=()=>{
+      setCallState("connected");
+      const source=ctx.createMediaStreamSource(stream);
+      const processor=ctx.createScriptProcessor(4096,1,1);
+      sourceRef.current=source;
+      processorRef.current=processor;
+      processor.onaudioprocess=(event)=>{
+        if(mutedRef.current || ws.readyState!==WebSocket.OPEN) return;
+        const input=event.inputBuffer.getChannelData(0);
+        ws.send(JSON.stringify({type:"audio",data:encodePcm16(input,ctx.sampleRate,16000)}));
+      };
+      source.connect(processor); processor.connect(ctx.destination);
+    };
+    ws.onmessage=(event)=>{
+      try{
+        const msg=JSON.parse(event.data);
+        if(msg.type==="status" && msg.status==="ai_connected") return;
+        if(msg.type==="transcript"){
+          setTranscript(prev=>[...prev,{role:msg.role,text:msg.text}]);
+          return;
+        }
+        if(msg.type==="error"){
+          setCallError(msg.message||"The AI call could not continue."); setCallState("error"); return;
+        }
+        const parts=msg?.serverContent?.modelTurn?.parts||[];
+        for(const part of parts){ const data=part?.inlineData?.data; if(data) playPcm(data); }
+      }catch{}
+    };
+    ws.onerror=()=>{setCallError("The AI call connection failed. Please try again.");setCallState("error");};
+    ws.onclose=()=>{setCallState(prev=>prev==="error"?"error":"ended");cleanupCall();};
+  },[cleanupCall,playPcm]);
+
   const startCall=async()=>{
-    setCallError("");
-    setTranscript([]);
+    setCallError(""); setTranscript([]);
     if(name.trim().length<1 || phone.replace(/\D/g,"").length<5){
-      setCallError("Please enter your name and mobile number first.");
-      return;
+      setCallError("Please enter your name and mobile number first."); return;
     }
     setCallState("starting");
     try{
       const start=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/call",{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({name:name.trim(),phone:phone.trim()})
+        method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name.trim(),phone:phone.trim()})
       });
       const payload=await start.json();
-      if(!start.ok) throw new Error(payload.detail||"Unable to start the AI call.");
-      const AudioCtx=window.AudioContext||((window as any).webkitAudioContext);
-      if(!AudioCtx) throw new Error("This browser does not support in-browser calling.");
-      const ctx=new AudioCtx();
-      audioContextRef.current=ctx;
-      await ctx.resume();
-      const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
-      streamRef.current=stream;
-      const wsUrl=api().replace(/^http:/,"ws:").replace(/^https:/,"wss:")+"/ws/public/voice/"+payload.call_id+"?voice_token="+encodeURIComponent(payload.voice_token);
-      const ws=new WebSocket(wsUrl);
-      socketRef.current=ws;
-      setCallState("connecting");
+      if(!start.ok) throw new Error(payload.detail||"Unable to start the call.");
+      setCallState("connected");
 
-      ws.onopen=()=>{
-        setCallState("connected");
-        const source=ctx.createMediaStreamSource(stream);
-        const processor=ctx.createScriptProcessor(4096,1,1);
-        sourceRef.current=source;
-        processorRef.current=processor;
-        processor.onaudioprocess=(event)=>{
-          if(mutedRef.current || ws.readyState!==WebSocket.OPEN) return;
-          const input=event.inputBuffer.getChannelData(0);
-          ws.send(JSON.stringify({type:"audio",data:encodePcm16(input,ctx.sampleRate,16000)}));
-        };
-        source.connect(processor);
-        processor.connect(ctx.destination);
-      };
-
-      ws.onmessage=(event)=>{
-        try{
-          const msg=JSON.parse(event.data);
-          if(msg.type==="status" && msg.status==="ai_connected") return;
-          if(msg.type==="transcript"){
-            setTranscript(prev=>[...prev,{role:msg.role,text:msg.text}]);
-            return;
+      const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
+      if(!Recognition){
+        await connectLiveAi(payload);
+        return;
+      }
+      const recognition=new Recognition();
+      recognitionRef.current=recognition;
+      recognition.continuous=true;
+      recognition.interimResults=false;
+      recognition.maxAlternatives=1;
+      recognition.lang="en-IN";
+      recognition.onresult=async(event:any)=>{
+        for(let i=event.resultIndex;i<event.results.length;i++){
+          const result=event.results[i];
+          if(!result.isFinal) continue;
+          const text=String(result[0]?.transcript||"").trim();
+          if(!text) continue;
+          setTranscript(prev=>[...prev,{role:"customer",text}]);
+          try{
+            const rr=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/voice/turn",{
+              method:"POST",headers:{"Content-Type":"application/json"},
+              body:JSON.stringify({transcript:text,call_id:payload.call_id,channel:"voice"})
+            });
+            const answer=await rr.json();
+            if(!rr.ok) throw new Error(answer.detail||"Voice answer failed.");
+            setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
+            speakKnowledgeAnswer(answer.reply,answer.language||"en");
+            if(answer.handoff_required){
+              try{recognition.stop();}catch{}
+              setCallError("Our team will call you back shortly.");
+              setCallState("ended");
+            }
+          }catch(error:any){
+            try{recognition.stop();}catch{}
+            try{await connectLiveAi(payload);}catch(e:any){setCallError(e?.message||"The voice call could not continue.");setCallState("error");}
           }
-          if(msg.type==="error"){
-            setCallError(msg.message||"The AI call could not continue.");
-            setCallState("error");
-            return;
-          }
-          const parts=msg?.serverContent?.modelTurn?.parts||[];
-          for(const part of parts){
-            const data=part?.inlineData?.data;
-            if(data) playPcm(data);
-          }
-        }catch{}
+        }
       };
-      ws.onerror=()=>{setCallError("The AI call connection failed. Please try again.");setCallState("error");};
-      ws.onclose=()=>{
-        setCallState(prev=>prev==="error"?"error":"ended");
-        cleanupCall();
+      recognition.onerror=(event:any)=>{
+        if(event?.error==="not-allowed"||event?.error==="service-not-allowed"){
+          connectLiveAi(payload).catch((e:any)=>{setCallError(e?.message||"Voice recognition is unavailable.");setCallState("error");});
+        }
       };
+      recognition.onend=()=>{
+        if(recognitionRef.current===recognition && callState!=="ended"){
+          try{recognition.start();}catch{}
+        }
+      };
+      try{recognition.start();}catch{await connectLiveAi(payload);}
     }catch(error:any){
-      cleanupCall();
-      setCallError(error?.message||"Unable to start the call.");
-      setCallState("error");
+      cleanupCall(); setCallError(error?.message||"Unable to start the call."); setCallState("error");
     }
   };
 
   const endCall=()=>{
+    try{recognitionRef.current?.stop()}catch{}
+    recognitionRef.current=null;
+    try{window.speechSynthesis?.cancel()}catch{}
     try{socketRef.current?.send(JSON.stringify({type:"stop"}))}catch{}
     cleanupCall();
     setCallState("ended");
