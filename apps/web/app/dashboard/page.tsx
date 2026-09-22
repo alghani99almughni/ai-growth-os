@@ -12,7 +12,7 @@ export default function Dashboard(){
  if(ds.ok)setDepartments((await ds.json()).items||[]);if(rs.ok)setRoles((await rs.json()).items||[]);if(ss.ok)setStaff((await ss.json()).items||[]);
 }
  useEffect(()=>{const raw=localStorage.getItem("ago_tenant");if(!raw){location.href="/login";return}setTenant(JSON.parse(raw))},[]);
- useEffect(()=>{if(!tenant)return;load();const id=window.setInterval(load,5000);return()=>clearInterval(id)},[tenant]);
+ useEffect(()=>{if(!tenant)return;load();const id=window.setInterval(load,15000);return()=>clearInterval(id)},[tenant]);
  async function saveProfile(){const r=await fetch(api()+"/api/v1/tenants/"+tenant.id+"/profile",{method:"PUT",headers:{...headers(),"Content-Type":"application/json"},body:JSON.stringify(profile)});setStatus(r.ok?"Business profile saved":"Unable to save profile");if(r.ok){const x=await r.json();setProfile(x);setTenant(x);localStorage.setItem("ago_tenant",JSON.stringify(x));}}
  async function saveReferrals(){const r=await fetch(api()+"/api/v1/tenants/"+tenant.id+"/referral-settings",{method:"PUT",headers:{...headers(),"Content-Type":"application/json"},body:JSON.stringify(referrals)});setStatus(r.ok?"Referral program saved":"Unable to save referrals");}
  async function addService(){const name=prompt("Service / wellness program name");if(!name)return;const price=Number(prompt("Price in INR","0")||0);const description=prompt("Description","")||"";const duration_minutes=Number(prompt("Duration in minutes","30")||30);const r=await fetch(api()+"/api/v1/tenants/"+tenant.id+"/services",{method:"POST",headers:{...headers(),"Content-Type":"application/json"},body:JSON.stringify({name,price,description,duration_minutes,is_active:true})});setStatus(r.ok?"Service added":"Unable to add service");load();}
