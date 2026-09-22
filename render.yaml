@@ -1,3 +1,4 @@
+# Render Blueprint: keep service/database wiring declarative.
 services:
   - type: web
     name: ai-growth-os-api
