@@ -60,7 +60,7 @@ def upsert_customer(db: Session, tenant_id: str, phone: str, name: str | None, w
     if is_new and settings.whatsapp_welcome_enabled and customer.phone and (settings.whatsapp_provider or "").lower() in ("openwa","meta"):
         tenant = db.get(Tenant, tenant_id)
         if tenant:
-            welcome = f"Hello {customer.name}, welcome to {tenant.name}! You can continue with us here on WhatsApp or open your digital PWA experience: {settings.public_app_url}/customer?business={tenant.slug}&customer={customer.portal_token}"
+            welcome = f"Hello {customer.name}, welcome to {tenant.name}! You can continue with us here on WhatsApp or open your digital experience: {settings.public_app_url}/pwa/{tenant.slug}"
             try:
                 tenant_whatsapp_adapter(db,tenant_id,settings).send_text_sync(customer.phone,welcome)
             except Exception:
