@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     meta_graph_api_version:str="v23.0"
     google_client_id:str=""; google_client_secret:str=""; google_redirect_uri:str=""
     oauth_state_ttl_seconds:int=600
+    platform_admin_email:str=""
+    platform_admin_password:str=""
+    platform_admin_name:str="Platform Administrator"
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
