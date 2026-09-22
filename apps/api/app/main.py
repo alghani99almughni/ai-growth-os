@@ -64,6 +64,10 @@ async def rate_limit(request:Request, call_next):
 
 @app.websocket("/ws/tenants/{tenant_id}/events")
 async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(default=None)):
+    origin=websocket.headers.get("origin")
+    allowed={x.strip().rstrip("/") for x in settings.allowed_origins.split(",") if x.strip()}
+    if origin and origin.rstrip("/") not in allowed:
+        await websocket.close(code=4403); return
     if not access_token:
         await websocket.close(code=4401); return
     db=SessionLocal()
@@ -86,6 +90,10 @@ async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(defa
 
 @app.websocket("/ws/public/business/{slug}/events")
 async def public_business_events(websocket,slug:str,context_token:str|None=Query(default=None)):
+    origin=websocket.headers.get("origin")
+    allowed={x.strip().rstrip("/") for x in settings.allowed_origins.split(",") if x.strip()}
+    if origin and origin.rstrip("/") not in allowed:
+        await websocket.close(code=4403); return
     db=SessionLocal()
     try:
         tenant=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
@@ -657,8 +665,14 @@ def _request_out(r,db):
 def create_service_request(slug,payload:ServiceRequestCreate,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
+    if not _feature_config(db,t.id).get("service_requests",True):
+        raise HTTPException(403,"Service requests are disabled")
+    if payload.request_type=="waiter" and not _feature_config(db,t.id).get("call_waiter",True):
+        raise HTTPException(403,"Call waiter is disabled")
     if payload.request_type=="waiter" and t.industry.lower() not in ("restaurant","cafe","hotel","hospitality","food"):
         raise HTTPException(400,"Waiter calling is not enabled for this business type")
+    if payload.customer_id and not db.scalar(select(Customer.id).where(Customer.id==payload.customer_id,Customer.tenant_id==t.id)):
+        raise HTTPException(400,"Invalid customer")
     staff=None
     dept=db.scalar(select(Department).where(Department.tenant_id==t.id,Department.name.ilike("%service%"),Department.is_active==True))
     if not dept: dept=db.scalar(select(Department).where(Department.tenant_id==t.id,Department.name.ilike("%reception%"),Department.is_active==True))
@@ -684,6 +698,9 @@ def update_service_request(tenant_id,request_id,payload:ServiceRequestStatusUpda
     require_tenant(user,tenant_id)
     r=db.scalar(select(ServiceRequest).where(ServiceRequest.id==request_id,ServiceRequest.tenant_id==tenant_id))
     if not r: raise HTTPException(404,"Service request not found")
+    transitions={"requested":{"acknowledged","cancelled"},"acknowledged":{"in_progress","completed","cancelled"},"in_progress":{"completed","cancelled"},"completed":set(),"cancelled":set()}
+    if payload.status not in transitions.get(r.status,set()):
+        raise HTTPException(409,f"Invalid service request transition: {r.status} -> {payload.status}")
     r.status=payload.status
     if payload.status=="acknowledged": r.acknowledged_at=datetime.utcnow()
     if payload.status in ("completed","cancelled"): r.completed_at=datetime.utcnow()
@@ -707,8 +724,7 @@ def save_game_score(slug,game:str,score:int=Query(ge=0,le=1000000),customer_id:s
     reward=0 if not customer else min(25,max(1,score//20))
     if customer and reward:
         day_start=datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0)
-        rewarded_today=db.scalar(select(GameScore.id).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start).limit(3))
-        rewarded_count=len(db.scalars(select(GameScore.id).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start)).all())
+        rewarded_count=db.scalar(select(__import__("sqlalchemy").func.count(GameScore.id)).where(GameScore.tenant_id==t.id,GameScore.customer_id==customer.id,GameScore.game==game,GameScore.reward_points>0,GameScore.created_at>=day_start)) or 0
         if rewarded_count>=3: reward=0
     row=GameScore(tenant_id=t.id,customer_id=customer.id if customer else None,game=game,score=score,reward_points=reward)
     db.add(row); db.flush()
@@ -727,10 +743,11 @@ def create_bill_payment(slug,bill_id,db:Session=Depends(get_db)):
     if not bill: raise HTTPException(404,"Bill not found")
     if bill.status=="paid": return {"paid":True,"bill_id":bill.id}
     try:
-        result=asyncio.run(tenant_payment_adapter(db,t.id,settings).create_order(int(bill.total)*100,"INR","bill-"+bill.id[:24]))
+        adapter=tenant_payment_adapter(db,t.id,settings)
+        result=asyncio.run(adapter.create_order(int(bill.total)*100,"INR","bill-"+bill.id[:24]))
     except RuntimeError as exc: raise HTTPException(503,str(exc))
     except Exception as exc: raise HTTPException(502,"Unable to create payment order")
-    return {"bill_id":bill.id,"key_id":settings.razorpay_key_id,"amount":result.get("amount"),"currency":result.get("currency"),"razorpay_order_id":result.get("id")}
+    return {"bill_id":bill.id,"key_id":adapter.key_id,"amount":result.get("amount"),"currency":result.get("currency"),"razorpay_order_id":result.get("id")}
 
 @app.post("/api/v1/public/business/{slug}/bills/{bill_id}/verify-payment")
 def verify_bill_payment(slug,bill_id,payload:PaymentVerify,db:Session=Depends(get_db)):
@@ -772,11 +789,13 @@ async def razorpay_webhook(request:Request,db:Session=Depends(get_db)):
     return {"received":True}
 
 @app.get("/api/v1/public/business/{slug}/service-requests/{request_id}")
-def public_service_request(slug,request_id,db:Session=Depends(get_db)):
+def public_service_request(slug,request_id,context_token:str|None=Query(default=None),db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
     r=db.scalar(select(ServiceRequest).where(ServiceRequest.id==request_id,ServiceRequest.tenant_id==t.id))
     if not r: raise HTTPException(404,"Service request not found")
+    if not context_token or r.context_token != context_token:
+        raise HTTPException(403,"Service request context token required")
     return _request_out(r,db)
 
 @app.post("/api/v1/ai/chat")
@@ -1011,10 +1030,12 @@ def create_public_order(slug,payload:PublicOrderCreate,db:Session=Depends(get_db
     return _order_out(o,db)
 
 @app.get("/api/v1/public/business/{slug}/orders/{order_id}")
-def public_order_status(slug,order_id,db:Session=Depends(get_db)):
+def public_order_status(slug,order_id,context_token:str|None=Query(default=None),db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     o=db.scalar(select(Order).where(Order.id==order_id,Order.tenant_id==t.id)) if t else None
     if not o: raise HTTPException(404,"Order not found")
+    if not context_token or o.context_token != context_token:
+        raise HTTPException(403,"Order context token required")
     return _order_out(o,db)
 
 @app.get("/api/v1/tenants/{tenant_id}/orders")
