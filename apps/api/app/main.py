@@ -490,6 +490,44 @@ class HoursUpdate(BaseModel):
 def require_platform_admin(user:User):
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
 
+@app.post("/api/v1/auth/password-reset/request")
+async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
+    user=db.scalar(select(User).where(User.email==payload.email.lower(),User.is_active==True))
+    if not user:
+        return {"accepted":True}
+    tenant=db.get(Tenant,user.tenant_id)
+    if not tenant:
+        return {"accepted":True}
+    now=datetime.utcnow()
+    old=db.scalars(select(PasswordResetToken).where(PasswordResetToken.user_id==user.id,PasswordResetToken.used_at.is_(None))).all()
+    for row in old:
+        row.used_at=now
+    raw=secrets.token_urlsafe(32)
+    row=PasswordResetToken(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        expires_at=now+timedelta(minutes=settings.password_reset_ttl_minutes),
+    )
+    db.add(row); db.commit()
+    await send_password_reset(user,tenant,raw)
+    return {"accepted":True}
+
+@app.post("/api/v1/auth/password-reset/confirm")
+def password_reset_confirm(payload:PasswordResetConfirm,db:Session=Depends(get_db)):
+    digest=hashlib.sha256(payload.token.encode()).hexdigest()
+    row=db.scalar(select(PasswordResetToken).where(PasswordResetToken.token_hash==digest))
+    now=datetime.utcnow()
+    if not row or row.used_at is not None or row.expires_at<=now:
+        raise HTTPException(400,"Reset link is invalid or expired")
+    user=db.get(User,row.user_id)
+    if not user or not user.is_active:
+        raise HTTPException(400,"Reset link is invalid")
+    user.password_hash=hash_password(payload.password)
+    row.used_at=now
+    db.commit()
+    return {"reset":True}
+
 class TenantStatusUpdate(BaseModel):
     status: str = Field(pattern="^(active|suspended|pending|closed)$")
 
@@ -531,7 +569,7 @@ def provision_defaults(db, tenant, industry):
     db.commit()
 
 @app.post("/api/v1/platform/tenants/provision",response_model=PlatformTenantProvisionOut,status_code=201)
-def platform_provision_tenant(payload:TenantProvisionRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
+async def platform_provision_tenant(payload:TenantProvisionRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_platform_admin(user)
     if db.scalar(select(Tenant).where(Tenant.slug==payload.slug.lower())): raise HTTPException(409,"Business slug already exists")
     if db.scalar(select(User).where(User.email==payload.owner_email.lower())): raise HTTPException(409,"Owner email already registered")
@@ -540,7 +578,8 @@ def platform_provision_tenant(payload:TenantProvisionRequest,user=Depends(get_cu
     db.commit(); db.refresh(t)
     owner=create_owner(db,payload.owner_name,payload.owner_email,payload.owner_password,t)
     provision_defaults(db,t,payload.template or payload.industry)
-    return {"tenant_id":t.id,"tenant":{"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status},"owner":{"id":owner.id,"name":owner.name,"email":owner.email,"role":owner.role},"status":"active"}
+    notification_status=await send_owner_credentials(t,owner,payload.owner_password)
+    return {"tenant_id":t.id,"tenant":{"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status},"owner":{"id":owner.id,"name":owner.name,"email":owner.email,"role":owner.role},"status":"active","notifications":notification_status}
 
 @app.get("/api/v1/platform/tenants/{tenant_id}")
 def platform_tenant_detail(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
