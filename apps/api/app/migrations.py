@@ -34,6 +34,9 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS queue_token VARCHAR(40)"))
             conn.execute(text("ALTER TABLE appointments ADD COLUMN IF NOT EXISTS queue_status VARCHAR(40)"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS service_requests (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, customer_id VARCHAR(36), appointment_id VARCHAR(36), context_token VARCHAR(100), request_type VARCHAR(50) NOT NULL DEFAULT 'waiter', message TEXT, status VARCHAR(40) NOT NULL DEFAULT 'requested', assigned_staff_id VARCHAR(36), created_at TIMESTAMP NOT NULL, acknowledged_at TIMESTAMP, completed_at TIMESTAMP)"))
+            conn.execute(text("CREATE TABLE IF NOT EXISTS password_reset_tokens (id VARCHAR(36) PRIMARY KEY, user_id VARCHAR(36) NOT NULL, token_hash VARCHAR(128) NOT NULL UNIQUE, expires_at TIMESTAMP NOT NULL, used_at TIMESTAMP NULL, created_at TIMESTAMP NOT NULL)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens(user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)"))
         elif dialect=="sqlite":
             conn.execute(text("CREATE TABLE IF NOT EXISTS tenant_integrations (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, integration_key VARCHAR(60) NOT NULL, provider VARCHAR(60) NOT NULL, mode VARCHAR(20) NOT NULL DEFAULT 'platform', status VARCHAR(30) NOT NULL DEFAULT 'disconnected', config_encrypted TEXT NOT NULL DEFAULT '', account_name VARCHAR(200), account_id VARCHAR(200), metadata_json TEXT NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_tenant_integrations_tenant_id ON tenant_integrations(tenant_id)"))
@@ -41,6 +44,9 @@ def ensure_schema():
             conn.execute(text("CREATE TABLE IF NOT EXISTS platform_ai_providers (id VARCHAR(36) PRIMARY KEY, provider VARCHAR(60) NOT NULL, model VARCHAR(120) NOT NULL, priority INTEGER NOT NULL DEFAULT 100, enabled BOOLEAN NOT NULL DEFAULT 1, config_encrypted TEXT NOT NULL DEFAULT '', status VARCHAR(30) NOT NULL DEFAULT 'healthy', last_error TEXT, last_used_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"))
 
             conn.execute(text("CREATE TABLE IF NOT EXISTS tenant_whatsapp_connections (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL UNIQUE, provider VARCHAR(30) NOT NULL DEFAULT 'openwa', status VARCHAR(30) NOT NULL DEFAULT 'disconnected', config_encrypted TEXT NOT NULL DEFAULT '', connected_phone VARCHAR(32), display_name VARCHAR(160), created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)"))
+            conn.execute(text("CREATE TABLE IF NOT EXISTS password_reset_tokens (id VARCHAR(36) PRIMARY KEY, user_id VARCHAR(36) NOT NULL, token_hash VARCHAR(128) NOT NULL UNIQUE, expires_at DATETIME NOT NULL, used_at DATETIME NULL, created_at DATETIME NOT NULL)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_user_id ON password_reset_tokens(user_id)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_password_reset_tokens_expires_at ON password_reset_tokens(expires_at)"))
             tenant_cols={r[1] for r in conn.execute(text("PRAGMA table_info(tenants)"))}
             if "status" not in tenant_cols: conn.execute(text("ALTER TABLE tenants ADD COLUMN status VARCHAR(30) DEFAULT 'active'"))
             staff_cols={r[1] for r in conn.execute(text("PRAGMA table_info(staff_members)"))}
