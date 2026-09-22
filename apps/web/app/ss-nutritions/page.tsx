@@ -202,7 +202,7 @@ export default function SSNutritions(){
       <a className="ss-brand" href="#top"><span>SS</span> Nutritions</a>
       <nav><a href="#about">About</a><a href="#wellness">Wellness</a><a href="#contact">Contact</a></nav>
       <div className="ss-nav-actions">
-        <button type="button" className="ss-nav-cta ss-call-outline" onClick={openCall}>☎ Call AI</button>
+        <button type="button" className="ss-nav-cta ss-call-outline" onClick={openCall}>☎ Call us</button>
         <a className="ss-nav-cta ss-nav-wa" href={whatsappLink} target="_blank" rel="noreferrer">WhatsApp</a>
       </div>
     </header>
@@ -213,7 +213,7 @@ export default function SSNutritions(){
         <h1>{c.hero_title}<br/><em>{c.hero_emphasis}</em></h1>
         <p className="ss-lead">{c.hero_description}</p>
         <div className="ss-actions">
-          <button type="button" className="ss-primary ss-call-button" onClick={openCall}>☎ Call our AI <span>↗</span></button>
+          <button type="button" className="ss-primary ss-call-button" onClick={openCall}>☎ Call us <span>↗</span></button>
           <a className="ss-secondary" href={whatsappLink} target="_blank" rel="noreferrer">WhatsApp us</a>
           <a className="ss-secondary" href="#wellness">Explore wellness</a>
         </div>
@@ -245,7 +245,7 @@ export default function SSNutritions(){
       <div className="ss-contact-card">
         <div><span>📍</span><div><strong>Visit / connect</strong><p>{address}</p></div></div>
         <div className="ss-contact-actions">
-          <button type="button" className="ss-wa ss-call-card" onClick={openCall}>☎ Call AI <span>Talk now ↗</span></button>
+          <button type="button" className="ss-wa ss-call-card" onClick={openCall}>☎ Call us <span>Talk now ↗</span></button>
           <a href={whatsappLink} target="_blank" rel="noreferrer" className="ss-wa">💬 Continue on WhatsApp <span>↗</span></a>
         </div>
         
@@ -262,7 +262,7 @@ export default function SSNutritions(){
         {(callState==="idle"||callState==="starting"||callState==="error")&&<div className="ss-call-form">
           <label>Name<input value={name} onChange={e=>setName(e.target.value)} placeholder="Your name" autoComplete="name"/></label>
           <label>Mobile number<input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+91 98765 43210" autoComplete="tel" inputMode="tel"/></label>
-          <button type="button" className="ss-call-start" onClick={startCall} disabled={callState==="starting"}>{callState==="starting"?"Connecting…":"☎ Start AI call"}</button>
+          <button type="button" className="ss-call-start" onClick={startCall} disabled={callState==="starting"}>{callState==="starting"?"Connecting…":"☎ Start call"}</button>
           {callError&&<p className="ss-call-error">{callError}</p>}
         </div>}
         {(callState==="connecting"||callState==="connected"||callState==="ended")&&<div className="ss-call-live">
