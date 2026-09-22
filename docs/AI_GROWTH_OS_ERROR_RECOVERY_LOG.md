@@ -161,3 +161,33 @@ Also changed customer-facing `Call AI` labels to `Call us`.
 6. Deploy through the existing Render auto-deploy/Blueprint setup.
 7. Verify API `/health`, authentication, affected UI, and the relevant end-to-end flow.
 8. Append the new incident, root cause, fix, commit, and verification result to this log.
+
+
+## Incident 012 — Reset-password page failed Next.js production build
+**Symptom:** Render web build failed with `useSearchParams() should be wrapped in a suspense boundary at page "/reset-password"`.
+
+**Root cause:** The new reset page read the URL query using `useSearchParams()` without a Suspense boundary.
+
+**What we did:** Replaced `useSearchParams()` with client-side `window.location.search` parsing inside `useEffect()`.
+
+**Commit:** `88bfcf0b8c8f164476bcb809d911fb934e63280c`
+
+**Recovery:** For simple client-only query parameters, parse the browser URL in an effect or explicitly wrap `useSearchParams()` in Suspense.
+
+## Incident 013 — Platform notification and credential recovery implementation
+**What we did:**
+- Added platform email/WhatsApp notification service.
+- Tenant provisioning now attempts owner confirmation with business name, login email, temporary password and login URL.
+- Added notification delivery status to the Super Admin provisioning result.
+- Added Super Admin password show/hide preview and minimum-length validation.
+- Added `Forgot password?` to login.
+- Added secure, time-limited, single-use password reset tokens stored as hashes.
+- Added `/forgot-password` and `/reset-password` pages.
+- Added Render Blueprint environment declarations for notification providers.
+
+**Configuration:** Email requires a configured Resend API key and sender address. Platform WhatsApp requires configured OpenWA or Meta credentials. Until configured, delivery status is `not_configured`; the platform does not claim delivery.
+
+**Security:** Passwords and reset tokens are stored only as hashes. The initial temporary password is not written to this recovery log.
+
+## Current deployment state
+The latest API/web commits were queued or in progress when this entry was written. Do not call the notification/reset feature fully production-verified until the latest deployments are `live` and the end-to-end flows have been tested.
