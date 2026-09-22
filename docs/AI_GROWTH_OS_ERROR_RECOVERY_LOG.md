@@ -191,3 +191,19 @@ Also changed customer-facing `Call AI` labels to `Call us`.
 
 ## Current deployment state
 The latest API/web commits were queued or in progress when this entry was written. Do not call the notification/reset feature fully production-verified until the latest deployments are `live` and the end-to-end flows have been tested.
+
+
+## 2026-09-22 — main.py entrypoint truncation after password-reset change
+- **Symptom:** Render API deploy failed with `IndentationError: expected an indented block after function definition`; the file ended at an incomplete `create_feedback` function before later recovery endpoints.
+- **Root cause:** A file update replaced/truncated the API entrypoint while attempting to modify imports/model wiring.
+- **Recovery:** Restored `apps/api/app/main.py` from the last known-good commit before the truncation, then layered password-reset and knowledge/CRM changes onto the complete entrypoint.
+- **Prevention:** Never patch a large entrypoint from a partial file response. Fetch/reconstruct the full file, preserve the known-good revision, and verify Python syntax before deployment.
+
+## 2026-09-22 — knowledge-first voice architecture
+- **Requirement:** Common questions should be answered from the approved knowledge library without invoking the AI agent; only exceptions should use AI tokens.
+- **Implementation:** Added approval-aware tenant knowledge retrieval, learned-question candidates, usage counters, multilingual metadata, PWA speech-recognition routing, and AI/human escalation telemetry.
+- **Safety:** AI-generated answers are stored as reviewable candidates first; they are not automatically promoted to permanent tenant knowledge.
+
+## 2026-09-22 — CRM voice intelligence
+- **Implementation:** PWA calls now have call number, start/answer/end timestamps, duration, language, resolution, knowledge-hit count, AI-turn count, transcript, and human-callback flag.
+- **Recovery path:** unresolved voice turns mark the call for human callback and route it through the existing staff routing system.
