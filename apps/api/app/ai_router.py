@@ -3,81 +3,46 @@ from difflib import SequenceMatcher
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models_ai import GlobalFaq
-from .models import Tenant, Service, Product
-
-LANGUAGE_PATTERNS = {
-    "en": r"[a-z]",
-    "hi": r"[\u0900-\u097f]",
-    "te": r"[\u0c00-\u0c7f]",
-    "ta": r"[\u0b80-\u0bff]",
-    "kn": r"[\u0c80-\u0cff]",
-    "ml": r"[\u0d00-\u0d7f]",
-    "mr": r"[\u0900-\u097f]",
-    "bn": r"[\u0980-\u09ff]",
-    "gu": r"[\u0a80-\u0aff]",
-    "pa": r"[\u0a00-\u0a7f]",
-    "or": r"[\u0b00-\u0b7f]",
-    "as": r"[\u0980-\u09ff]",
-    "ur": r"[\u0600-\u06ff]",
-}
-
-def detect_language(text: str) -> str:
-    scores = {k: len(re.findall(p, text)) for k,p in LANGUAGE_PATTERNS.items()}
-    if max(scores.values(), default=0) == 0:
-        return "en"
-    winner=max(scores, key=scores.get)
-    # Hindi/Marathi share script; Marathi marker words improve routing.
-    if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b", text): return "mr"
-    if winner=="bn" and re.search(r"[অআইঈউএও]", text): return "bn"
+from .models import Service, Product
+LANGUAGE_PATTERNS={"en":r"[a-z]","hi":r"[\u0900-\u097f]","te":r"[\u0c00-\u0c7f]","ta":r"[\u0b80-\u0bff]","kn":r"[\u0c80-\u0cff]","ml":r"[\u0d00-\u0d7f]","mr":r"[\u0900-\u097f]","bn":r"[\u0980-\u09ff]","gu":r"[\u0a80-\u0aff]","pa":r"[\u0a00-\u0a7f]","or":r"[\u0b00-\u0b7f]","as":r"[\u0980-\u09ff]","ur":r"[\u0600-\u06ff]"}
+def detect_language(text:str)->str:
+    scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
+    if max(scores.values(),default=0)==0:return "en"
+    winner=max(scores,key=scores.get)
+    if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text):return "mr"
+    if winner=="bn" and re.search(r"[অআইঈউএও]",text):return "bn"
     return winner
-
-def normalize(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]{2,}", text.lower()))
-
-def faq_match(db: Session, industry: str, message: str, language: str) -> GlobalFaq | None:
-    rows=db.scalars(select(GlobalFaq).where(GlobalFaq.is_active==True, GlobalFaq.language.in_([language,"en"]), GlobalFaq.industry.in_([industry,"general"]))).all()
-    incoming=normalize(message)
-    best=None; best_score=0.0
+def normalize(text:str)->set[str]:
+    return {x.casefold() for x in re.findall(r"[\w\u00c0-\uffff]{2,}",text,flags=re.UNICODE)}
+def _score(message:str,candidate:str)->float:
+    incoming,source=normalize(message),normalize(candidate)
+    if not incoming or not source:return 0.0
+    return max(len(incoming&source)/max(1,len(incoming)),SequenceMatcher(None,message.casefold(),candidate.casefold()).ratio()*0.65)
+def faq_match(db:Session,industry:str,message:str,language:str)->GlobalFaq|None:
+    rows=db.scalars(select(GlobalFaq).where(GlobalFaq.is_active==True,GlobalFaq.language.in_([language,"en"]),GlobalFaq.industry.in_([industry,"general"]))).all()
+    best,best_score=None,0.0
     for row in rows:
-        tokens=normalize(row.question+" "+row.keywords)
-        overlap=len(incoming & tokens) / max(1,len(incoming))
-        similarity=SequenceMatcher(None, message.lower(), row.question.lower()).ratio()
-        score=max(overlap, similarity*0.8)
-        if score>best_score:
-            best_score=score; best=row
-    return best if best_score >= 0.55 else None
-
-def structured_match(db: Session, tenant_id: str, message: str) -> str | None:
-    m=message.lower()
+        score=_score(message,(row.question or "")+" "+(row.keywords or ""))
+        if score>best_score:best_score,best=score,row
+    return best if best_score>=0.55 else None
+def structured_match(db:Session,tenant_id:str,message:str)->str|None:
+    m=message.casefold()
     if any(x in m for x in ("price","cost","fee","rate","how much","कीमत","ధర","விலை")):
         services=db.scalars(select(Service).where(Service.tenant_id==tenant_id,Service.is_active==True)).all()
-        if services:
-            return "Here are the currently configured services and prices: " + "; ".join(f"{s.name}: {s.price} {s.currency}" for s in services if s.price is not None)
+        if services:return "Here are the currently configured services and prices: "+"; ".join(f"{s.name}: {s.price} {s.currency}" for s in services if s.price is not None)
     if any(x in m for x in ("product","buy","order","stock","available","उत्पाद","ధర")):
         products=db.scalars(select(Product).where(Product.tenant_id==tenant_id,Product.is_active==True)).all()
-        if products:
-            return "Here are the currently configured products: " + "; ".join(f"{p.name}: {p.price} {p.currency}" for p in products if p.price is not None)
+        if products:return "Here are the currently configured products: "+"; ".join(f"{p.name}: {p.price} {p.currency}" for p in products if p.price is not None)
     return None
-
-
-def knowledge_match(db: Session, tenant_id: str, message: str) -> str | None:
-    """Tokenless tenant-library retrieval. Runs before every model call."""
+def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
     from .models_growth import KnowledgeItem
-    rows=db.scalars(select(KnowledgeItem).where(
-        KnowledgeItem.tenant_id==tenant_id,
-        KnowledgeItem.is_active==True,
-        KnowledgeItem.approval_status.in_(["approved","system"])
-    )).all()
-    incoming=normalize(message)
-    if not incoming: return None
-    best=None; best_score=0.0
+    rows=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True,KnowledgeItem.approval_status.in_(["approved","system"]))).all()
+    language,incoming=detect_language(message),normalize(message)
+    if not incoming:return None
+    best,best_score=None,0.0
     for row in rows:
-        source=normalize((row.title or "")+" "+(row.content or ""))
-        if not source: continue
-        overlap=len(incoming & source)/max(1,len(incoming))
-        similarity=SequenceMatcher(None,message.lower(),(row.title or "")+" "+(row.content or "")).ratio()
-        language_bonus=0.05 if row.language and row.language != "en" and any("\u0c00" <= ch <= "\u0c7f" for ch in message) else 0
-        score=max(overlap, similarity*0.65)+language_bonus
-        if score>best_score:
-            best_score=score; best=row
-    return best.content if best and best_score >= 0.35 else None
+        if row.language and row.language not in {language,"en"}:continue
+        score=_score(message,(row.title or "")+" "+(row.content or ""))
+        if row.language==language:score+=0.08
+        if score>best_score:best_score,best=score,row
+    return best.content if best and best_score>=0.38 else None
