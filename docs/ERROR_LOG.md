@@ -146,3 +146,31 @@ This exposes the actual failure reason to the browser and production logs and av
 - [ ] If validation passes, realtime provider connects
 - [ ] AI greeting is heard
 - [ ] Customer speech receives AI response
+
+
+## ERR-2026-09-23-004 — Realtime WebSocket remains rejected; customer must not be blocked
+
+- **Date:** 2026-09-23
+- **Product area:** SS Nutritions PWA / Public Voice
+- **Environment:** Production (Render)
+- **Severity:** High
+- **Status:** Realtime path under investigation; automatic voice fallback deployed to Web build
+
+### Evidence
+The API deployment containing the accept-before-validation change is Live, yet fresh production attempts still show:
+- POST /api/v1/public/business/ss-nutritions/call → 201 Created
+- WebSocket /ws/public/voice/{call_id} → 403 before the application voice session starts
+
+Render officially supports inbound WebSockets for web services, including FastAPI, so the 403 is not being treated as a general Render WebSocket limitation.
+
+### Customer-protection change
+The SS Nutritions PWA no longer makes the customer retry when the realtime WebSocket fails. The frontend now:
+1. attempts the realtime provider-neutral AI gateway;
+2. if the realtime handshake fails, automatically switches to browser voice recognition + speech synthesis;
+3. gives the customer the greeting immediately;
+4. sends spoken questions through the existing knowledge-first / voice-turn API;
+5. speaks the AI answer back to the customer;
+6. keeps transcript/CRM processing through the existing voice-turn path.
+
+### Important limitation
+The fallback is a browser voice conversation, not the full realtime audio WebSocket path. The realtime WebSocket remains a separate engineering issue and must be fixed before declaring realtime voice production-complete.
