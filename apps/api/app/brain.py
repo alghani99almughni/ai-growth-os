@@ -60,6 +60,11 @@ def local_intent(message:str)->str:
         return "availability"
     if any(x in m for x in ("price","cost","fee","rate","how much","charge","what do you charge","कीमत","ధర","விலை")):
         return "pricing"
+    # Timing questions are deterministic and should win over broad product wording.
+    # Browser STT can produce fragments such as "man of the timings" or "manoj timings".
+    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
+        return "business_hours"
+
     if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
         return "product"
     # Common browser STT misrecognition: “may I know the timings” can arrive as\n    # “Manoj timings”. Treat the phrase as a timing question, but do not\n    # globally rewrite arbitrary names.\n    if re.search(r"\bmanoj\s+(timing|timings)\b", compact):\n        return "business_hours"\n    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
