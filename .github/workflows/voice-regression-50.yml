@@ -130,34 +130,36 @@ jobs:
               sys.exit(1)
           print("HTTP VOICE REGRESSION: PASS")
 
-          # Live WebSocket/provider smoke: validates the actual realtime transport,
-          # provider connection and first AI response (not the browser fallback path).
-          import websocket, json as _json
-          ws_url=base.replace("https://","wss://").replace("http://","ws://")+f"/ws/public/voice/{call_id}"
-          ws=websocket.create_connection(ws_url,timeout=25,origin="https://ai-growth-os-web.onrender.com")
-          live_connected=False
-          live_transcript=False
-          deadline=time.time()+25
-          try:
-              while time.time()<deadline:
-                  raw=ws.recv()
-                  msg=_json.loads(raw)
-                  if msg.get("type")=="status" and msg.get("status")=="ai_connected":
-                      live_connected=True
-                  if msg.get("type")=="transcript" and msg.get("role")=="ai" and msg.get("text"):
-                      live_transcript=True
-                      break
-                  if msg.get("type")=="error":
-                      raise RuntimeError(msg.get("message") or msg.get("code") or "live voice error")
-          finally:
-              try: ws.send(_json.dumps({"type":"stop"}))
-              except Exception: pass
-              try: ws.close()
-              except Exception: pass
-          print(f"LIVE_WS_CONNECTED={live_connected} LIVE_AI_TRANSCRIPT={live_transcript}")
-          if not live_connected or not live_transcript:
-              print("LIVE WEBSOCKET REGRESSION: FAIL")
-              sys.exit(1)
-          print("LIVE WEBSOCKET REGRESSION: PASS")
+          # Real browser smoke: validates the customer-facing PWA, browser WebSocket
+          # upgrade, microphone path and first realtime AI response.
+          python -m pip install -q playwright
+          python -m playwright install chromium
+          python - <<'PY'
+          import time, sys
+          from playwright.sync_api import sync_playwright
+
+          page_url="https://ai-growth-os-web.onrender.com/ss-nutritions"
+          with sync_playwright() as p:
+              browser=p.chromium.launch(headless=True,args=[
+                  "--use-fake-device-for-media-stream",
+                  "--use-fake-ui-for-media-stream",
+                  "--autoplay-policy=no-user-gesture-required",
+              ])
+              context=browser.new_context(permissions=["microphone"])
+              page=context.new_page()
+              page.goto(page_url,wait_until="networkidle",timeout=60_000)
+              page.get_by_role("button",name="Call us").first.click()
+              page.get_by_placeholder("Your name").fill("Voice Browser Test")
+              page.get_by_placeholder("+91 98765 43210").fill("+919999999999")
+              page.get_by_role("button",name="☎ Start call").click()
+              page.get_by_text("AI is listening…").wait_for(timeout=60_000)
+              page.get_by_text("Hello",exact=False).wait_for(timeout=60_000)
+              transcript=page.locator(".ss-transcript").inner_text()
+              print("BROWSER_VOICE_TRANSCRIPT="+transcript.replace("\\n"," | ")[:500])
+              if "AI:" not in transcript:
+                  raise RuntimeError("Browser realtime call connected but no AI transcript was received")
+              page.get_by_role("button",name="End call").click()
+              browser.close()
+          print("BROWSER REALTIME REGRESSION: PASS")
           print("VOICE REGRESSION: PASS")
           PY
