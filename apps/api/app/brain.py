@@ -2,7 +2,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models import Tenant, Service, Product
-from .models_growth import KnowledgeItem,KnowledgeCandidate,TenantSetting
+from .models_growth import KnowledgeItem,KnowledgeCandidate,TenantSetting,BusinessHour
 from .models_ai import Conversation, ConversationMessage
 from .config import settings
 from .ai_router import detect_language, faq_match, structured_match, knowledge_match
@@ -25,10 +25,24 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
 def local_intent(message:str)->str:
     m=message.lower()
     if any(x in m for x in ["book","appointment","schedule","reserve","booking","अपॉइंटमेंट","బుకింగ్"]): return "booking"
+    if any(x in m for x in ["hour","hours","timing","timings","open","closed","opening","closing","when are you open","what time","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
     if any(x in m for x in ["price","cost","fee","rate","how much","कीमत","ధర","விலை"]): return "pricing"
     if any(x in m for x in ["buy","order","product","stock","available","उत्पाद","ఆర్డర్"]): return "product"
     if any(x in m for x in ["call me","human","person","staff","agent","इंसान","వ్యక్తి"]): return "human_handoff"
     return "information"
+
+def business_hours_reply(db: Session, tenant_id: str, message: str, language: str) -> str|None:
+    if local_intent(message) != "business_hours":
+        return None
+    rows=db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id).order_by(BusinessHour.weekday)).all()
+    if not rows:
+        return None
+    names=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    parts=[]
+    for row in rows:
+        label=names[row.weekday] if 0 <= row.weekday < len(names) else str(row.weekday)
+        parts.append(f"{label}: closed" if row.is_closed else f"{label}: {row.open_time.strftime('%I:%M %p')}–{row.close_time.strftime('%I:%M %p')}")
+    return "Our configured timings are: " + "; ".join(parts) + "."
 
 def conversation(db: Session, tenant_id: str, message: str, language: str, channel: str, conversation_id: str|None):
     c=db.get(Conversation,conversation_id) if conversation_id else None
@@ -47,7 +61,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     db.add(ConversationMessage(conversation_id=c.id,role="user",content=message,language=language,intent=intent))
     
     # Library-first policy: these paths consume zero model tokens.
-    direct=structured_match(db,tenant_id,message)
+    hours=business_hours_reply(db,tenant_id,message,language)
+    direct=hours or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
