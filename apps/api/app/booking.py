@@ -130,6 +130,9 @@ def create_appointment(db: Session, tenant: Tenant, customer: Customer, service:
     duration = service.duration_minutes or 30
     starts_utc = local_to_utc_naive(starts_at_local, tenant.timezone)
     ends_utc = starts_utc + timedelta(minutes=duration)
+    # Compare in UTC because starts_utc is normalized from tenant-local time.
+    # Comparing local wall-clock time to datetime.utcnow() can reject valid same-day
+    # appointments in non-UTC timezones such as Asia/Kolkata.
     if starts_utc < datetime.utcnow() - timedelta(minutes=1):
         raise ValueError("Appointment time must be in the future")
     overlaps = overlapping_appointments(db, tenant.id, starts_utc, ends_utc, staff_id)
