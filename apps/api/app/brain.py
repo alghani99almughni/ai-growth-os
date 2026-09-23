@@ -54,13 +54,13 @@ def local_intent(message:str)->str:
     if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति")):
         return "human_handoff"
 
-    if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
+    if any(x in compact for x in ("doctor","dr ","doctor available","which doctor","who is the doctor","may i know the doctor","doctor name","provider","physician")) or any(x in m for x in ("डॉक्टर","डॉक्टर का नाम","డాక్టర్","மருத்துவர்","மருத்துவர் பெயர்")):\n        return "doctor_information"\n    if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
         return "availability"
     if any(x in m for x in ("price","cost","fee","rate","how much","charge","what do you charge","कीमत","ధర","விலை")):
         return "pricing"
     if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
         return "product"
-    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
+    # Common browser STT misrecognition: “may I know the timings” can arrive as\n    # “Manoj timings”. Treat the phrase as a timing question, but do not\n    # globally rewrite arbitrary names.\n    if re.search(r"\\bmanoj\\s+(timing|timings)\\b", compact):\n        return "business_hours"\n    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
         return "business_hours"
     return "information"
 
