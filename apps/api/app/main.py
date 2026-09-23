@@ -1544,6 +1544,8 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
 
 @app.websocket("/ws/public/voice/{call_id}")
 async def public_voice(websocket,call_id:str):
+    import logging
+    logging.getLogger("uvicorn.error").info("PUBLIC_VOICE_WS_HANDSHAKE call_id=%s origin=%s", call_id, websocket.headers.get("origin"))
     # The call id is a cryptographically random UUID created server-side.
     # For the public AI leg, bind the WebSocket directly to the short-lived
     # call record instead of relying on query-string JWT/HMAC exchange.
@@ -1555,6 +1557,7 @@ async def public_voice(websocket,call_id:str):
     # Uvicorn/Render as HTTP 403, which hides the real application reason from the
     # browser and makes production debugging difficult.
     await websocket.accept()
+    logging.getLogger("uvicorn.error").info("PUBLIC_VOICE_WS_ACCEPTED call_id=%s", call_id)
     db=SessionLocal()
     call=db.get(CallRecord,call_id)
     if not call:
