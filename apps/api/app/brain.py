@@ -216,7 +216,64 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
     return ctx
 
 
-def booking_reply_from_state(db: Session, c: Conversation, message: str) -> tuple[str|None, dict]:
+def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, date_hint: int|None = None):
+    """Resolve natural-language booking dates against the tenant's local calendar."""
+    from datetime import date as _date, timedelta as _timedelta
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    now_local=__import__("datetime").datetime.now(_ZoneInfo(tenant.timezone)).date()
+    if relative_day=="today":
+        return now_local
+    if relative_day=="tomorrow":
+        return now_local + _timedelta(days=1)
+    if relative_day=="day_after_tomorrow":
+        return now_local + _timedelta(days=2)
+    if day in _WEEKDAYS:
+        target=_WEEKDAYS.index(day)
+        delta=(target-now_local.weekday()) % 7
+        if delta==0:
+            delta=7
+        return now_local + _timedelta(days=delta)
+    if date_hint:
+        for offset in range(0, 370):
+            candidate=now_local + _timedelta(days=offset)
+            if candidate.day==date_hint:
+                return candidate
+    return None
+
+def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_value: str|None):
+    """Check the owned calendar before presenting an appointment as confirmable."""
+    if not booking_date or not time_value:
+        return {"checked":False,"available":None,"date":booking_date.isoformat() if booking_date else None}
+    hours=db.scalar(select(BusinessHour).where(
+        BusinessHour.tenant_id==tenant.id,
+        BusinessHour.weekday==booking_date.weekday()
+    ))
+    if hours and hours.is_closed:
+        return {"checked":True,"available":False,"reason":"closed","date":booking_date.isoformat()}
+    tm=re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$",time_value, re.I)
+    if not tm:
+        return {"checked":False,"available":None,"date":booking_date.isoformat()}
+    hour=int(tm.group(1)); minute=int(tm.group(2) or 0); mer=tm.group(3).upper()
+    if mer=="PM" and hour!=12: hour+=12
+    if mer=="AM" and hour==12: hour=0
+    requested=__import__("datetime").datetime.combine(booking_date,__import__("datetime").time(hour,minute))
+    if hours and (requested.time()<hours.open_time or requested.time()>=hours.close_time):
+        return {"checked":True,"available":False,"reason":"outside_hours","date":booking_date.isoformat()}
+    service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name)).one_or_none() if False else db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
+    duration=(service.duration_minutes if service and service.duration_minutes else 30)
+    from .booking import local_to_utc_naive, slot_is_available
+    start_utc=local_to_utc_naive(requested,tenant.timezone)
+    end_utc=local_to_utc_naive(requested+__import__("datetime").timedelta(minutes=duration),tenant.timezone)
+    available=slot_is_available(db,tenant.id,start_utc,end_utc,None)
+    return {
+        "checked":True,"available":available,"date":booking_date.isoformat(),
+        "service_id":service.id if service else None,
+        "service_name":service.name if service else None,
+        "duration_minutes":duration
+    }
+
+
+def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
     """Merge current-turn entities with active booking context."""
     current = extract_booking_entities(message)
     logger.info(
@@ -236,11 +293,23 @@ def booking_reply_from_state(db: Session, c: Conversation, message: str) -> tupl
 
     day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
 
+    resolved_date=resolve_booking_date(tenant, day, relative_day, date_hint)
     if day_label and time_value:
+        calendar=booking_calendar_status(db,tenant,resolved_date,time_value)
+        if calendar.get("available") is False:
+            if calendar.get("reason")=="closed":
+                c.state="booking_time_clarification"
+                return (f"{day_label.capitalize()} is closed. Please choose another day.", {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+            if calendar.get("reason")=="outside_hours":
+                c.state="booking_time_clarification"
+                return (f"{time_value} is outside our hours on {day_label}. Please choose another time.", {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+            c.state="booking_time_clarification"
+            return (f"{time_value} is not available on {day_label}. Please choose another time.", {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
         c.state = "booking_confirmation"
+        date_phrase=resolved_date.strftime("%A, %B %-d, %Y") if resolved_date else day_label
         return (
-            f"Great. I have {day_label} at {time_value}. Shall I confirm that appointment?",
-            {"day": day_label, "time": time_value, "time_hint": time_hint, "date_hint": date_hint, "complete": True},
+            f"Great. I have {date_phrase} at {time_value}. Shall I confirm that appointment?",
+            {"day": day_label, "time": time_value, "date": resolved_date.isoformat() if resolved_date else None, "service_id":calendar.get("service_id"), "complete": True},
         )
 
     if day_label and time_hint:
@@ -336,7 +405,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         )
         contextual_booking = booking_invitation and has_booking_entities and intent in {"information","business_hours","closing"}
         if contextual_booking or intent=="booking" or (c.state.startswith("booking") and has_booking_entities):
-            booking, booking_data = booking_reply_from_state(db, c, message)
+            booking, booking_data = booking_reply_from_state(db, tenant, c, message)
         elif c.state.startswith("booking"):
             booking_data = {"day": None, "time": None, "complete": False}
         else:
