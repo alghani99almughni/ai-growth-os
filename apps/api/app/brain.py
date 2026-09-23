@@ -34,7 +34,26 @@ def local_intent(message:str)->str:
 def business_hours_reply(db: Session, tenant_id: str, message: str, language: str) -> str|None:
     if local_intent(message) != "business_hours":
         return None
+
+    # Business-hours questions are a zero-model-token path. Repair only missing
+    # weekday rows using the platform defaults; never overwrite configured hours.
     rows=db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id).order_by(BusinessHour.weekday)).all()
+    existing={row.weekday: row for row in rows}
+    if len(existing) < 7:
+        from datetime import time as _time
+        for weekday in range(7):
+            if weekday in existing:
+                continue
+            if weekday < 5:
+                opening, closing, closed = _time(9,0), _time(18,0), False
+            elif weekday == 5:
+                opening, closing, closed = _time(9,0), _time(14,0), False
+            else:
+                opening, closing, closed = _time(9,0), _time(18,0), True
+            db.add(BusinessHour(tenant_id=tenant_id, weekday=weekday, open_time=opening,
+                                close_time=closing, is_closed=closed, slot_interval_minutes=30))
+        db.flush()
+        rows=db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id).order_by(BusinessHour.weekday)).all()
     if not rows:
         return None
     names=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
