@@ -138,7 +138,10 @@ BOOKING_EXTRACTION_CASES = [
 @pytest.mark.parametrize("message,expected_day,expected_time", BOOKING_EXTRACTION_CASES)
 def test_booking_entity_extraction(message, expected_day, expected_time):
     result = extract_booking_entities(message)
-    assert result["day"] == expected_day
+    expected_relative = expected_day if expected_day in {"today","tomorrow","day_after_tomorrow"} else None
+    expected_weekday = None if expected_relative else (None if expected_day == "null" else expected_day)
+    assert result["day"] == expected_weekday
+    assert result["relative_day"] == expected_relative
     assert result["time"] == expected_time
 
 
