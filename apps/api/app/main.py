@@ -1712,24 +1712,69 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 db.rollback(); responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"verified":False,"error":str(exc)}}})
                         elif name=="create_booking":
                             try:
+                                import logging as _logging
+                                _log=_logging.getLogger("uvicorn.error")
                                 if not capability_enabled(tenant_policy(db,tenant.id),"bookings",True):
                                     raise ValueError("Appointments are disabled for this business.")
-                                if args.get("confirmed") is not True:
+                                # Realtime providers can serialize booleans as true/false strings.
+                                confirmed=args.get("confirmed")
+                                if isinstance(confirmed,str):
+                                    confirmed=confirmed.strip().lower() in ("true","1","yes","confirm","confirmed")
+                                if confirmed is not True:
                                     raise ValueError("Customer confirmation is required before booking.")
-                                service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
-                                if not service or not call.customer_id: raise ValueError("Service or verified customer unavailable")
-                                c=db.get(Customer,call.customer_id); starts_at=datetime.fromisoformat(str(args.get("starts_at","")))
+                                if not call.customer_id:
+                                    raise ValueError("Verified customer is unavailable")
+                                c=db.get(Customer,call.customer_id)
+                                if not c:
+                                    raise ValueError("Verified customer is unavailable")
+                                # The model may omit service_id when there is only one active
+                                # appointment service. Resolve it server-side instead of failing
+                                # a valid customer confirmation.
+                                service_id=str(args.get("service_id","")).strip()
+                                service=(db.scalar(select(Service).where(
+                                    Service.id==service_id,Service.tenant_id==tenant.id,Service.is_active==True
+                                )) if service_id else db.scalar(select(Service).where(
+                                    Service.tenant_id==tenant.id,Service.is_active==True
+                                ).order_by(Service.name).limit(1)))
+                                if not service:
+                                    raise ValueError("No active appointment service is configured.")
+                                raw_starts=str(args.get("starts_at","")).strip()
+                                if not raw_starts:
+                                    raise ValueError("Appointment date and time are required.")
+                                starts_at=datetime.fromisoformat(raw_starts.replace("Z","+00:00"))
+                                # Appointment times from the voice model are business-local.
+                                # Normalize aware values into the tenant-local wall clock before
+                                # create_appointment converts them to UTC.
+                                if starts_at.tzinfo is not None:
+                                    starts_at=starts_at.astimezone(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
                                 # Booking is an owned core workflow: validate the tenant's
                                 # hours and live availability before committing anything.
-                                weekday_rule=db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()))
+                                weekday_rule=db.scalar(select(BusinessHour).where(
+                                    BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()
+                                ))
                                 if weekday_rule and weekday_rule.is_closed:
                                     raise ValueError("The business is closed at that time.")
                                 if weekday_rule and (starts_at.time()<weekday_rule.open_time or starts_at.time()>=weekday_rule.close_time):
                                     raise ValueError("That time is outside business hours.")
-                                a,q=create_appointment(db,tenant,c,service,starts_at,"ai_voice",str(args.get("staff_id")) if args.get("staff_id") else None,str(args.get("notes")) if args.get("notes") else None,True,False); db.commit()
-                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),"queue_token":q.token if q else None}}})
+                                staff_id=str(args.get("staff_id")).strip() if args.get("staff_id") else None
+                                a,q=create_appointment(
+                                    db,tenant,c,service,starts_at,"ai_voice",staff_id,
+                                    str(args.get("notes")) if args.get("notes") else None,True,False
+                                )
+                                db.commit()
+                                _log.info("VOICE_BOOKING_CONFIRMED call_id=%s booking_id=%s service_id=%s starts_at=%s",
+                                          call.id,a.id,service.id,a.starts_at.isoformat())
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
+                                    "booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),
+                                    "queue_token":q.token if q else None,"service_id":service.id,"service_name":service.name
+                                }}})
                             except Exception as exc:
-                                db.rollback(); responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"confirmed":False,"error":str(exc)}}})
+                                db.rollback()
+                                import logging as _logging
+                                _logging.getLogger("uvicorn.error").exception("VOICE_BOOKING_FAILED call_id=%s args=%s",call.id,args)
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
+                                    "confirmed":False,"error":str(exc),"retryable":False
+                                }}})
                     if responses: await gateway.adapter_for(provider).send_tool_response(session,responses)
     except Exception as exc:
         # Preserve transcript/session state and transparently attempt provider/session recovery.
