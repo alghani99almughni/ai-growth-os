@@ -1877,6 +1877,71 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
     result=await generate_reply(db,t.id,payload.transcript,payload.conversation_id,payload.channel)
+
+    # Browser/PWA voice currently uses the deterministic /voice/turn path.
+    # Execute confirmed appointments here; the realtime WebSocket has a
+    # separate provider-tool path and is not involved in these calls.
+    booking=result.get("booking") or {}
+    if payload.call_id and booking.get("confirmation_requested"):
+        call_for_booking=db.scalar(select(CallRecord).where(
+            CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id
+        ))
+        try:
+            if not call_for_booking or not call_for_booking.customer_id:
+                raise ValueError("Customer identity is required before booking.")
+            customer=db.get(Customer,call_for_booking.customer_id)
+            if not customer:
+                raise ValueError("Customer record was not found.")
+            service_id=booking.get("service_id")
+            service=db.get(Service,service_id) if service_id else db.scalar(
+                select(Service).where(Service.tenant_id==t.id,Service.is_active==True)
+                .order_by(Service.name).limit(1)
+            )
+            if not service:
+                raise ValueError("No active appointment service is configured.")
+            date_text=str(booking.get("date") or "").strip()
+            time_text=str(booking.get("time") or "").strip().upper()
+            if not date_text or not time_text:
+                raise ValueError("The appointment date or time could not be verified.")
+            starts_at=datetime.strptime(
+                f"{date_text} {time_text}", "%Y-%m-%d %I:%M %p"
+            ) if ":" in time_text else datetime.strptime(
+                f"{date_text} {time_text}", "%Y-%m-%d %I %p"
+            )
+            hours=db.scalar(select(BusinessHour).where(
+                BusinessHour.tenant_id==t.id,
+                BusinessHour.weekday==starts_at.weekday()
+            ))
+            if hours and hours.is_closed:
+                raise ValueError("The business is closed at that time.")
+            if hours and (starts_at.time()<hours.open_time or starts_at.time()>=hours.close_time):
+                raise ValueError("That time is outside business hours.")
+            appointment,queue=create_appointment(
+                db,t,customer,service,starts_at,"ai_voice",None,None,True,False
+            )
+            db.commit()
+            conversation_row=db.get(Conversation, result.get("conversation_id"))
+            if conversation_row:
+                conversation_row.state="booking_confirmed"
+                conversation_row.last_assistant_message=(
+                    f"Perfect. Your appointment is confirmed for "
+                    f"{starts_at.strftime('%A, %B %-d')} at {starts_at.strftime('%-I:%M %p')}. "
+                    "We look forward to seeing you."
+                )
+                db.commit()
+            result["reply"]=(
+                f"Perfect. Your appointment is confirmed for "
+                f"{starts_at.strftime('%A, %B %-d')} at {starts_at.strftime('%-I:%M %p')}. "
+                "We look forward to seeing you."
+            )
+            result["booking"]={**booking,"confirmed":True,"booking_id":appointment.id,
+                               "queue_token":queue.token if queue else None}
+        except Exception as exc:
+            db.rollback()
+            result["reply"]="I couldn't complete that appointment right now. I'll arrange for our team to call you back."
+            result["booking"]={**booking,"confirmed":False,"error":str(exc)}
+            result["handoff_required"]=True
+
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
