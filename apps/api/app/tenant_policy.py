@@ -88,7 +88,7 @@ def policy_context(policy: dict) -> str:
     instructions = brain.get("instructions", "")
     if instructions:
         lines.append("TENANT ADMIN INSTRUCTIONS:\n" + instructions)
-    if website:
+    if website and brain.get("publish_website_to_agent", True):
         published = website.get("published", True)
         if published:
             lines.append("TENANT-APPROVED WEBSITE CONTENT:\n" + json.dumps(website, ensure_ascii=False))
