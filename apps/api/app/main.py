@@ -1561,11 +1561,13 @@ Do not invent business facts, prices, availability, policies, bookings or paymen
 For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed") and then ask whether the customer wants to book an appointment.
 For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day (today/tomorrow/another day), then ask for a preferred time, then service if needed, and only use create_booking after all required details are known and the customer explicitly confirms.
 If the caller pauses or gives an incomplete sentence, do not guess or end the call. Wait for the caller to continue. If the caller starts speaking while you are speaking, stop promptly, listen to the complete request, and answer the new request.
+For appointment booking, treat speech-recognition errors such as "bhukamp", "bukamp", "buking", or "boking" as possible booking words only when the surrounding request clearly contains appointment/day/time context; never hand off solely because recognition is imperfect.
+If booking details are missing, ask for exactly one missing detail at a time. If a requested time is unavailable or outside hours, offer another time instead of handing off.
 Use save_customer_identity only if the customer explicitly corrects or changes their name/number.
 Be concise, warm, natural, and conversational. Do not read database-style lists aloud."""
     tool_declarations=[
         {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
-        {"name":"create_booking","description":"Create a confirmed appointment after explicit confirmation.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}
+        {"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact day, time and service. Never call this merely because the customer supplied details.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}}
     ]
     providers=[]
     if settings.gemini_api_key:
@@ -1636,9 +1638,18 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 db.rollback(); responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"verified":False,"error":str(exc)}}})
                         elif name=="create_booking":
                             try:
+                                if args.get("confirmed") is not True:
+                                    raise ValueError("Customer confirmation is required before booking.")
                                 service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
                                 if not service or not call.customer_id: raise ValueError("Service or verified customer unavailable")
                                 c=db.get(Customer,call.customer_id); starts_at=datetime.fromisoformat(str(args.get("starts_at","")))
+                                # Booking is an owned core workflow: validate the tenant's
+                                # hours and live availability before committing anything.
+                                weekday_rule=db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()))
+                                if weekday_rule and weekday_rule.is_closed:
+                                    raise ValueError("The business is closed at that time.")
+                                if weekday_rule and (starts_at.time()<weekday_rule.open_time or starts_at.time()>=weekday_rule.close_time):
+                                    raise ValueError("That time is outside business hours.")
                                 a,q=create_appointment(db,tenant,c,service,starts_at,"ai_voice",str(args.get("staff_id")) if args.get("staff_id") else None,str(args.get("notes")) if args.get("notes") else None,True,False); db.commit()
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"booking_id":a.id,"confirmed":True,"starts_at":a.starts_at.isoformat(),"queue_token":q.token if q else None}}})
                             except Exception as exc:
