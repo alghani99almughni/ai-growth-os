@@ -107,35 +107,52 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     hours=business_hours_reply(db,tenant_id,message,language)
     booking=None
     policy=tenant_policy(db,tenant_id)
-    if intent=="booking" and not capability_enabled(policy,"bookings",True):
+    m=message.casefold()
+    # Keep short conversational turns deterministic: greetings should never
+    # fall through to the model/handoff path.
+    greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
+    if any(re.fullmatch(r"\\s*"+re.escape(g)+r"\\s*[.!?]*\\s*",m) for g in greeting_words):
+        booking="Hello! How can I help you today?"
+    elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
     elif intent=="booking":
-        m=message.casefold()
-        # Keep appointment conversations stateful without putting provider-specific
-        # memory in the model. Conversation.state is our durable workflow state.
-        if "today" in m or "today's" in m:
+        # If a booking turn already contains a weekday/time, preserve it instead
+        # of resetting the workflow to booking_day.
+        weekdays=("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
+        day_match=next((d for d in weekdays if d in m),None)
+        time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",m)
+        if day_match and time_match:
+            c.state="booking_confirmation"
+            tm=f"{time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}"
+            booking=f"Great. I have {day_match} at {tm}. Shall I confirm that appointment?"
+        elif "today" in m or "today's" in m:
             c.state="booking_time_today"
-            booking="Absolutely. I can help with an appointment for today. What time would you prefer?"
+            booking="Absolutely. What time would you prefer today?"
         elif "tomorrow" in m:
             c.state="booking_time_tomorrow"
-            booking="Absolutely. I can help with an appointment for tomorrow. What time would you prefer?"
+            booking="Absolutely. What time would you prefer tomorrow?"
         else:
             c.state="booking_day"
-            booking="Sure, I can help with an appointment. What day and time would you prefer?"
+            booking="Sure, which day would you like, and what time?"
     elif c.state in ("booking_day","booking_time_today","booking_time_tomorrow","booking_service","booking_confirmation"):
-        # Do not abandon an active booking workflow just because speech
-        # recognition produced a short or imperfect next turn.
-        text=m if 'm' in locals() else message.casefold()
-        time_match=re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b",text)
+        text=m
+        time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",text)
+        weekdays=("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
+        day_match=next((d for d in weekdays if d in text),None)
         if c.state in ("booking_time_today","booking_time_tomorrow") and time_match:
             requested_day="today" if c.state=="booking_time_today" else "tomorrow"
             c.state="booking_confirmation"
             booking=f"Great. I have {requested_day} at {time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}. Shall I confirm that appointment?"
-        elif c.state=="booking_day":
-            if "today" in text:
-                c.state="booking_time_today"; booking="Absolutely. What time would you prefer today?"
-            elif "tomorrow" in text:
-                c.state="booking_time_tomorrow"; booking="Absolutely. What time would you prefer tomorrow?"
+        elif c.state=="booking_day" and day_match:
+            c.state="booking_confirmation" if time_match else "booking_time_"+day_match
+            if time_match:
+                tm=f"{time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}"
+                booking=f"Great. I have {day_match} at {tm}. Shall I confirm that appointment?"
+            else:
+                booking=f"Sure. What time would you prefer on {day_match}?"
+        elif c.state=="booking_confirmation" and any(x in text for x in ("yes","confirm","confirmed","that's fine","that is fine","correct")):
+            booking="Thanks. I'll confirm that appointment now."
+
     direct=hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
