@@ -174,3 +174,11 @@ The SS Nutritions PWA no longer makes the customer retry when the realtime WebSo
 
 ### Important limitation
 The fallback is a browser voice conversation, not the full realtime audio WebSocket path. The realtime WebSocket remains a separate engineering issue and must be fixed before declaring realtime voice production-complete.
+
+
+## ERR-2026-09-23-005 — Browser voice echo caused self-transcription and false handoff
+- **Symptom:** AI greeting was transcribed as customer speech, then the voice turn handler treated it as a customer request and could route to human callback.
+- **Root cause:** Browser SpeechRecognition remained active while SpeechSynthesis was speaking. The fallback was effectively listening to its own AI voice.
+- **Secondary gap:** Opening-hours questions were not handled deterministically, and business hours were not included in the generation context, so a valid timing question could fall through to the conservative human-callback response.
+- **Fix:** Make browser fallback half-duplex: stop recognition before every AI utterance, resume only after speech ends, and ignore recognition events while AI speech is active. Add deterministic business-hours intent using configured BusinessHour records. Preserve conversation_id between voice turns and include recent conversation history in generation prompts.
+- **Regression:** 50-scenario live voice workflow added under .github/workflows/voice-regression-50.yml, including timing, greeting, contact, service, booking, multilingual, and context scenarios plus P50/P95 latency checks.
