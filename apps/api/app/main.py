@@ -1586,6 +1586,12 @@ TENANT POLICY:
 APPROVED BUSINESS CONTEXT:
 {context}
 
+BUSINESS PROFILE:
+Address: {tenant.address or "not configured"}
+Phone: {tenant.phone or "not configured"}
+Website: {tenant.website or "not configured"}
+Only state a location, address, phone number, or website when it is present in the business profile or approved business context. Never invent a location.
+
 CUSTOMER ALREADY VERIFIED:
 Name: {call.customer.name if call.customer else "Customer"}
 Mobile: {call.customer.phone if call.customer else "not provided"}
@@ -1598,8 +1604,9 @@ Then listen for the customer's request.
 Do not invent business facts, prices, availability, policies, bookings or payment success.
 Today in the business timezone is {datetime.now(ZoneInfo(tenant.timezone)).date().isoformat()}. Resolve phrases such as "coming Tuesday", "next Tuesday", "this Friday", "tomorrow", and "the 29th" to an actual calendar date before discussing an appointment. Never ask the customer which date a weekday means when the calendar can resolve it.
 For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed").
-For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day/date, then preferred time, then service if needed. Use check_availability before presenting a slot as available. Only use create_booking after all required details are known and the customer explicitly confirms.
-If the caller pauses or gives an incomplete sentence, do not guess or end the call. Wait for the caller to continue. If the caller starts speaking while you are speaking, stop promptly, listen to the complete request, and answer the new request.
+For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day/date, then preferred time, then service if needed. If the caller has already supplied one booking detail and then supplies another (for example, "5:30" followed by "today"), preserve the earlier detail and combine them. A phrase such as "is it possible today" is a day/date update, not a new time; do not invent or change the time. If a caller gives a bare numeric time such as "5:30" and the business is open during the PM hour but closed at that AM time, treat it as the business-hour PM time unless the caller explicitly says AM. Never turn "today" into "today at 5:30 AM" merely because the previous time was 5:30. Use check_availability before presenting a slot as available. Only use create_booking after all required details are known and the customer explicitly confirms.
+If the caller pauses, gives an incomplete sentence, or the transcript appears garbled or nonsensical, do not guess, end the call, or hand off. Ask them to repeat or clarify briefly. If the caller starts speaking while you are speaking, stop promptly, listen to the complete request, and answer the new request.
+If the caller says simple acknowledgement such as "okay", "alright", "fine", "thanks", or "thank you" after you have answered a question, do not hand off. Respond naturally and ask whether they need anything else; close the call politely if they are finished.
 For appointment booking, treat speech-recognition errors such as "bhukamp", "bukamp", "buking", or "boking" as possible booking words only when the surrounding request clearly contains appointment/day/time context; never hand off solely because recognition is imperfect.
 If booking details are missing, ask for exactly one missing detail at a time. If a requested time is unavailable or outside hours, offer another time instead of handing off.
 Use save_customer_identity only if the customer explicitly corrects or changes their name/number.
@@ -1693,9 +1700,30 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 requested_time=str(args.get("time","")).strip().upper().replace(".","")
                                 if requested_time:
                                     import re as _re
+                                    # Voice models occasionally attach AM to a bare time such as
+                                    # "5:30" after the caller never said AM. If that AM time is
+                                    # outside the tenant's business hours, prefer the corresponding
+                                    # PM time when the tenant is open then.
+                                    bare_time=None
+                                    tm_bare=_re.match(r"^(\d{1,2})(?::(\d{2}))?$",requested_time)
+                                    if tm_bare:
+                                        bare_time=True
+                                        hh=int(tm_bare.group(1)); mm=int(tm_bare.group(2) or 0)
+                                        if 1 <= hh <= 11:
+                                            requested_time=f"{hh}:{mm:02d} PM"
                                     tm=_re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$",requested_time)
                                     if tm:
                                         hh=int(tm.group(1)); mm=int(tm.group(2) or 0); mer=tm.group(3)
+                                        if mer=="AM" and hh < 12:
+                                            # Only reinterpret an AM value when the same PM value
+                                            # is within business hours AND the recent customer
+                                            # transcript did not explicitly say AM.
+                                            explicit_am=bool(_re.search(r"\b"+str(hh)+r"(?::"+f"{mm:02d}"+r")?\s*a\.?m\.?\b", (call.transcript or "").lower()))
+                                            if not explicit_am and hh < 12:
+                                                pm_hour=hh+12
+                                                rule=weekday_rule
+                                                if rule and rule.open_time <= time(pm_hour,mm) < rule.close_time:
+                                                    mer="PM"
                                         if mer=="PM" and hh!=12: hh+=12
                                         if mer=="AM" and hh==12: hh=0
                                         wanted=f"{hh:02d}:{mm:02d}"
