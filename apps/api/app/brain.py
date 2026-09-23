@@ -60,6 +60,10 @@ def business_hours_reply(db: Session, tenant_id: str, message: str, language: st
     # weekday rows using the platform defaults; never overwrite configured hours.
     rows=db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id).order_by(BusinessHour.weekday)).all()
     existing={row.weekday: row for row in rows}
+    if len(existing)==7 and all(not existing[d].is_closed and existing[d].open_time.strftime("%H:%M")=="09:00" and existing[d].close_time.strftime("%H:%M")=="18:00" for d in range(5)) and not existing[5].is_closed and existing[5].open_time.strftime("%H:%M")=="09:00" and existing[5].close_time.strftime("%H:%M")=="14:00" and existing[6].is_closed:
+        existing[5].close_time=__import__("datetime").time(18,0)
+        db.commit()
+        rows=list(existing.values())
     if len(existing) < 7:
         from datetime import time as _time
         for weekday in range(7):
