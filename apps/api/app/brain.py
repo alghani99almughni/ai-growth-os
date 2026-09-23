@@ -117,7 +117,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         # Do not abandon an active booking workflow just because speech
         # recognition produced a short or imperfect next turn.
         text=m if 'm' in locals() else message.casefold()
-        time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",text)
+        time_match=re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b",text)
         if c.state in ("booking_time_today","booking_time_tomorrow") and time_match:
             requested_day="today" if c.state=="booking_time_today" else "tomorrow"
             c.state="booking_confirmation"
