@@ -44,6 +44,9 @@ def local_intent(message:str)->str:
     ):
         return "booking"
     if any(x in compact for x in ["hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
+    if any(x in compact for x in ["speak hindi","speak in hindi","in hindi","hindi","हिंदी","हिन्दी"]): return "language_request"
+    if any(x in compact for x in ["bye","goodbye","that's all","thats all","thank you","thanks","you're welcome","you are welcome"]): return "closing"
+    if any(x in compact for x in ["available","availability","is there a slot","is there any slot","can i get a slot","check availability"]): return "availability"
     if any(x in m for x in ["price","cost","fee","rate","how much","कीमत","ధర","விலை"]): return "pricing"
     if any(x in m for x in ["buy","order","product","stock","available","उत्पाद","ఆర్డర్"]): return "product"
     if any(x in m for x in ["call me","human","person","staff","agent","इंसान","వ్యక్తి"]): return "human_handoff"
@@ -83,12 +86,12 @@ def business_hours_reply(db: Session, tenant_id: str, message: str, language: st
         if same_hours and {r.weekday for r in weekday_rows}==set(range(6)):
             opening=first.open_time.strftime('%I:%M %p').lstrip('0')
             closing=first.close_time.strftime('%I:%M %p').lstrip('0')
-            return f"We're open Monday to Saturday, {opening} to {closing}. Sunday we're closed. Would you like to book an appointment? If so, what day and time would you prefer?"
+            return f"We're open Monday to Saturday, {opening} to {closing}. Sunday we're closed."
     parts=[]
     for row in rows:
         label=names[row.weekday] if 0 <= row.weekday < len(names) else str(row.weekday)
         parts.append(f"{label}: closed" if row.is_closed else f"{label}: {row.open_time.strftime('%I:%M %p')}–{row.close_time.strftime('%I:%M %p')}")
-    return "We're open " + "; ".join(parts) + ". Would you like to book an appointment? If so, what day and time would you prefer?"
+    return "We're open " + "; ".join(parts) + "."
 
 def conversation(db: Session, tenant_id: str, message: str, language: str, channel: str, conversation_id: str|None):
     c=db.get(Conversation,conversation_id) if conversation_id else None
@@ -314,15 +317,30 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         c.state="availability_request"
     elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
-    elif intent=="booking" or (c.state.startswith("booking") and has_booking_entities):
-        booking, booking_data = booking_reply_from_state(db, c, message)
-    elif c.state.startswith("booking"):
-        # Do not swallow unrelated questions just because an earlier turn
-        # started a booking. Preserve the booking context for later.
-        booking_data = {"day": None, "time": None, "complete": False}
     else:
-        booking_data = {"day": None, "time": None, "complete": False}
-
+        # Contextual booking continuation: a short answer such as "Saturday" is
+        # a booking response when the immediately preceding AI turn explicitly
+        # asked for a booking day/time. This is contextual, not a global keyword rule.
+        previous_assistant = db.scalar(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id==c.id, ConversationMessage.role=="assistant")
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        )
+        previous_text=(previous_assistant.content.casefold() if previous_assistant else "")
+        booking_invitation = (
+            "book an appointment" in previous_text or
+            "what day and time" in previous_text or
+            "what day would you prefer" in previous_text or
+            "what time would you prefer" in previous_text
+        )
+        contextual_booking = booking_invitation and has_booking_entities and intent in {"information","business_hours","closing"}
+        if contextual_booking or intent=="booking" or (c.state.startswith("booking") and has_booking_entities):
+            booking, booking_data = booking_reply_from_state(db, c, message)
+        elif c.state.startswith("booking"):
+            booking_data = {"day": None, "time": None, "complete": False}
+        else:
+            booking_data = {"day": None, "time": None, "complete": False}
 
     direct=hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
