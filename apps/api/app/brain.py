@@ -54,7 +54,9 @@ def local_intent(message:str)->str:
     if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति")):
         return "human_handoff"
 
-    if (any(x in compact for x in ("which doctor","who is the doctor","may i know the doctor","doctor name","provider","physician")) or any(x in m for x in ("डॉक्टर का नाम","డాక్టర్ పేరు","மருத்துவர் பெயர்"))) and not any(x in compact for x in ("available","availability","slot","appointment")):\n        return "doctor_information"\n    if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
+    if (any(x in compact for x in ("which doctor","who is the doctor","may i know the doctor","doctor name","provider","physician")) or any(x in m for x in ("डॉक्टर का नाम","డాక్టర్ పేరు","மருத்துவர் பெயர்"))) and not any(x in compact for x in ("available","availability","slot","appointment")):
+        return "doctor_information"
+    if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
         return "availability"
     if any(x in m for x in ("price","cost","fee","rate","how much","charge","what do you charge","कीमत","ధర","விலை")):
         return "pricing"
