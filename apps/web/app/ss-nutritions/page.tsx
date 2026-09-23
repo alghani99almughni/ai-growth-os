@@ -241,7 +241,7 @@ export default function SSNutritions(){
 
   const startCall=async()=>{
     setCallError(""); setTranscript([]);
-    if(name.trim().length<1 || phone.replace(/\\D/g,"").length<5){
+    if(name.trim().length<1 || phone.replace(/\D/g,"").length<5){
       setCallError("Please enter your name and mobile number first."); return;
     }
     setCallState("starting");
