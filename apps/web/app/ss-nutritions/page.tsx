@@ -1,7 +1,7 @@
 "use client";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
 
-const api=()=>String(process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000").replace(/\\/+$/,"");
+const api=()=>String(process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000").replace(/\/+$/,"");
 
 const fallback={
   eyebrow:"MOINABAD · RANGAREDDY · TELANGANA",
