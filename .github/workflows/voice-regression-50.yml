@@ -16,6 +16,7 @@ jobs:
           API_URL: https://ai-growth-os-api.onrender.com
           BUSINESS_SLUG: ss-nutritions
         run: |
+          python -m pip install -q websocket-client
           python - <<'PY'
           import os, time, statistics, requests, sys
 
@@ -131,8 +132,6 @@ jobs:
 
           # Live WebSocket/provider smoke: validates the actual realtime transport,
           # provider connection and first AI response (not the browser fallback path).
-          import subprocess
-          subprocess.run([sys.executable,"-m","pip","install","-q","websocket-client"],check=True)
           import websocket, json as _json
           ws_url=base.replace("https://","wss://").replace("http://","ws://")+f"/ws/public/voice/{call_id}"
           ws=websocket.create_connection(ws_url,timeout=25,origin="https://ai-growth-os-web.onrender.com")
