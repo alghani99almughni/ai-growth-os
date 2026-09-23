@@ -127,5 +127,38 @@ jobs:
           if p95>20:
               print("P95 latency exceeded 20 seconds")
               sys.exit(1)
+          print("HTTP VOICE REGRESSION: PASS")
+
+          # Live WebSocket/provider smoke: validates the actual realtime transport,
+          # provider connection and first AI response (not the browser fallback path).
+          import subprocess
+          subprocess.run([sys.executable,"-m","pip","install","-q","websocket-client"],check=True)
+          import websocket, json as _json
+          ws_url=base.replace("https://","wss://").replace("http://","ws://")+f"/ws/public/voice/{call_id}"
+          ws=websocket.create_connection(ws_url,timeout=25,origin="https://ai-growth-os-web.onrender.com")
+          live_connected=False
+          live_transcript=False
+          deadline=time.time()+25
+          try:
+              while time.time()<deadline:
+                  raw=ws.recv()
+                  msg=_json.loads(raw)
+                  if msg.get("type")=="status" and msg.get("status")=="ai_connected":
+                      live_connected=True
+                  if msg.get("type")=="transcript" and msg.get("role")=="ai" and msg.get("text"):
+                      live_transcript=True
+                      break
+                  if msg.get("type")=="error":
+                      raise RuntimeError(msg.get("message") or msg.get("code") or "live voice error")
+          finally:
+              try: ws.send(_json.dumps({"type":"stop"}))
+              except Exception: pass
+              try: ws.close()
+              except Exception: pass
+          print(f"LIVE_WS_CONNECTED={live_connected} LIVE_AI_TRANSCRIPT={live_transcript}")
+          if not live_connected or not live_transcript:
+              print("LIVE WEBSOCKET REGRESSION: FAIL")
+              sys.exit(1)
+          print("LIVE WEBSOCKET REGRESSION: PASS")
           print("VOICE REGRESSION: PASS")
           PY
