@@ -123,7 +123,7 @@ BOOKING_EXTRACTION_CASES = [
     ("17:30", None, "5:30 PM"),
     ("9:45 AM", None, "9:45 AM"),
     ("12 PM", None, "12 PM"),
-    ("8:00 pm", None, "8 PM"),
+    ("8:00 pm", None, "8:00 PM"),
     ("Wednesday", "wednesday", None),
     ("next Tuesday", "tuesday", None),
     ("Friday night", "friday", None),
