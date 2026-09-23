@@ -23,6 +23,7 @@ from .ai_router import detect_language
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
 
 from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter, GeminiLiveAdapter
+from .agent_training import AGENT_TRAINING_CONTEXT
 
 voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRealtimeAdapter()})
 
@@ -1575,6 +1576,9 @@ async def public_voice(websocket,call_id:str):
     context=knowledge_context(db,tenant.id)
     policy=tenant_policy(db,tenant.id)
     system = f"""You are the AI customer engagement voice agent for {tenant.name}.
+
+UNIVERSAL AGENT TRAINING:
+{AGENT_TRAINING_CONTEXT}
 
 TENANT POLICY:
 {policy_context(policy)}
