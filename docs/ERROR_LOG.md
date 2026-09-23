@@ -112,3 +112,37 @@ The frontend now connects to `/ws/public/voice/{call_id}`.
 - [ ] Transcript is persisted
 - [ ] Call status/duration is persisted
 - [ ] Knowledge-first routing works
+
+
+## ERR-2026-09-23-003 — Session-bound WebSocket still surfaced as HTTP 403
+
+- **Date:** 2026-09-23
+- **Product area:** SS Nutritions PWA / Public Voice
+- **Environment:** Production (Render)
+- **Severity:** High
+- **Status:** Diagnostic fix deployed/pending browser verification
+
+### Customer-visible symptom
+The UI showed **Connecting** and then returned to the AI call connection error.
+
+### Production evidence
+After the session-bound WebSocket deployment was Live, production still recorded:
+- POST /api/v1/public/business/ss-nutritions/call → 201 Created
+- WebSocket /ws/public/voice/{call_id} → 403
+- connection rejected (403 Forbidden)
+
+### Important diagnosis
+The HTTP/WebSocket server reports a 403 whenever the application closes the WebSocket before accepting the handshake. Therefore the 403 does not by itself prove that Render or the browser is blocking the WebSocket. The application was able to reach the route but could be rejecting the call during pre-accept validation.
+
+### Corrective diagnostic change
+The voice WebSocket now accepts the handshake first and performs call-session validation immediately afterward. Invalid sessions receive an application-level WebSocket error/close code instead of an HTTP 403.
+
+This exposes the actual failure reason to the browser and production logs and avoids another blind authentication-layer patch.
+
+### Next regression checks
+- [ ] Deployment Live
+- [ ] WebSocket handshake no longer returns HTTP 403
+- [ ] If session validation fails, browser receives call_not_found or call_not_active
+- [ ] If validation passes, realtime provider connects
+- [ ] AI greeting is heard
+- [ ] Customer speech receives AI response
