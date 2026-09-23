@@ -1916,9 +1916,22 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 raise ValueError("The business is closed at that time.")
             if hours and (starts_at.time()<hours.open_time or starts_at.time()>=hours.close_time):
                 raise ValueError("That time is outside business hours.")
-            appointment,queue=create_appointment(
-                db,t,customer,service,starts_at,"ai_voice",None,None,True,False
-            )
+            # Idempotency guard: a repeated voice confirmation must not create a duplicate.
+            from .booking import local_to_utc_naive
+            starts_utc=local_to_utc_naive(starts_at,t.timezone)
+            existing_appointment=db.scalar(select(Appointment).where(
+                Appointment.tenant_id==t.id,
+                Appointment.customer_id==customer.id,
+                Appointment.service_id==service.id,
+                Appointment.starts_at==starts_utc,
+                Appointment.status.in_(["requested","confirmed","checked_in","serving"])
+            ))
+            if existing_appointment:
+                appointment,queue=existing_appointment,None
+            else:
+                appointment,queue=create_appointment(
+                    db,t,customer,service,starts_at,"ai_voice",None,None,False,False
+                )
             db.commit()
             conversation_row=db.get(Conversation, result.get("conversation_id"))
             if conversation_row:
@@ -1936,11 +1949,23 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             )
             result["booking"]={**booking,"confirmed":True,"booking_id":appointment.id,
                                "queue_token":queue.token if queue else None}
+        except ValueError as exc:
+            db.rollback()
+            logging.getLogger("uvicorn.error").warning(
+                "VOICE_PUBLIC_BOOKING_REJECTED call_id=%s booking=%s error=%s",
+                payload.call_id, booking, exc,
+            )
+            result["reply"]="That appointment could not be completed because the slot is no longer available. Please choose another time."
+            result["booking"]={**booking,"confirmed":False,"error":str(exc)}
+            result["handoff_required"]=False
         except Exception as exc:
             db.rollback()
-            result["reply"]="I couldn't complete that appointment right now. I'll arrange for our team to call you back."
+            logging.getLogger("uvicorn.error").exception(
+                "VOICE_PUBLIC_BOOKING_FAILED call_id=%s booking=%s", payload.call_id, booking
+            )
+            result["reply"]="I hit a technical problem while confirming that appointment. Please try the confirmation once more."
             result["booking"]={**booking,"confirmed":False,"error":str(exc)}
-            result["handoff_required"]=True
+            result["handoff_required"]=False
 
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
