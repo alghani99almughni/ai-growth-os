@@ -37,7 +37,7 @@ def structured_match(db:Session,tenant_id:str,message:str)->str|None:
 def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
     from .models_growth import KnowledgeItem
     rows=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True,KnowledgeItem.approval_status.in_(["approved","system"]))).all()
-    language,incoming=detect_language(message),normalize(message)
+    language,incoming=detect_language(message),normalize(message)\n    # Expand common domain wording so short questions such as “may I know the\n    # doctor” can match a tenant knowledge item titled “Doctor / Provider”.\n    if any(x in message.casefold() for x in ("doctor","dr ","provider","physician","डॉक्टर","డాక్టర్","மருத்துவர்")):\n        incoming |= {"doctor","provider","physician"}
     if not incoming:return None
     best,best_score=None,0.0
     for row in rows:
