@@ -1,4 +1,5 @@
 import httpx
+import re
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models import Tenant, Service, Product
@@ -23,9 +24,17 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
     return "\n".join(lines)
 
 def local_intent(message:str)->str:
-    m=message.lower()
-    if any(x in m for x in ["book","appointment","schedule","reserve","booking","अपॉइंटमेंट","బుకింగ్"]): return "booking"
-    if any(x in m for x in ["hour","hours","timing","timings","open","closed","opening","closing","when are you open","what time","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
+    m=message.casefold()
+    compact=re.sub(r"[^a-z0-9\s]"," ",m)
+    compact=re.sub(r"\s+"," ",compact).strip()
+    booking_terms=("book","booking","appointment","schedule","reserve","reservation","अपॉइंटमेंट","బుకింగ్")
+    if any(x in compact for x in booking_terms):
+        return "booking"
+    if any(x in compact for x in ("bhukamp","bukamp","buking","boking","bok an")) and any(
+        x in compact for x in ("today","tomorrow","time","slot","appointment","schedule","for")
+    ):
+        return "booking"
+    if any(x in compact for x in ["hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
     if any(x in m for x in ["price","cost","fee","rate","how much","कीमत","ధర","விலை"]): return "pricing"
     if any(x in m for x in ["buy","order","product","stock","available","उत्पाद","ఆర్డర్"]): return "product"
     if any(x in m for x in ["call me","human","person","staff","agent","इंसान","వ్యక్తి"]): return "human_handoff"
@@ -57,11 +66,20 @@ def business_hours_reply(db: Session, tenant_id: str, message: str, language: st
     if not rows:
         return None
     names=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+    open_days=[r for r in rows if not r.is_closed]
+    if len(open_days)==6:
+        weekday_rows=sorted(open_days,key=lambda r:r.weekday)
+        first=weekday_rows[0]
+        same_hours=all(r.open_time==first.open_time and r.close_time==first.close_time for r in weekday_rows)
+        if same_hours and {r.weekday for r in weekday_rows}==set(range(6)):
+            opening=first.open_time.strftime('%I:%M %p').lstrip('0')
+            closing=first.close_time.strftime('%I:%M %p').lstrip('0')
+            return f"We're open Monday to Saturday, {opening} to {closing}. Sunday we're closed. Would you like to book an appointment? If so, what day and time would you prefer?"
     parts=[]
     for row in rows:
         label=names[row.weekday] if 0 <= row.weekday < len(names) else str(row.weekday)
         parts.append(f"{label}: closed" if row.is_closed else f"{label}: {row.open_time.strftime('%I:%M %p')}–{row.close_time.strftime('%I:%M %p')}")
-    return "Our configured timings are: " + "; ".join(parts) + "."
+    return "We're open " + "; ".join(parts) + ". Would you like to book an appointment? If so, what day and time would you prefer?"
 
 def conversation(db: Session, tenant_id: str, message: str, language: str, channel: str, conversation_id: str|None):
     c=db.get(Conversation,conversation_id) if conversation_id else None
@@ -81,7 +99,16 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     
     # Library-first policy: these paths consume zero model tokens.
     hours=business_hours_reply(db,tenant_id,message,language)
-    direct=hours or structured_match(db,tenant_id,message)
+    booking=None
+    if intent=="booking":
+        m=message.casefold()
+        if "today" in m or "today's" in m:
+            booking="Absolutely. I can help with an appointment for today. What time would you prefer?"
+        elif "tomorrow" in m:
+            booking="Absolutely. I can help with an appointment for tomorrow. What time would you prefer?"
+        else:
+            booking="Sure, I can help with an appointment. What day and time would you prefer?"
+    direct=hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
