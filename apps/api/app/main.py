@@ -32,6 +32,7 @@ from .integration_routes import router as integration_router
 from .social_routes import router as social_router
 import asyncio,json,base64,uuid
 from datetime import datetime,date,time,timedelta
+from zoneinfo import ZoneInfo
 import time
 import websockets
 import jwt,secrets,hashlib,hmac
@@ -1591,8 +1592,9 @@ Start the call immediately with a warm spoken greeting such as:
 "Hello {call.customer.name if call.customer and call.customer.name else "there"}, welcome to {tenant.name}. How can I help you today?"
 Then listen for the customer's request.
 Do not invent business facts, prices, availability, policies, bookings or payment success.
-For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed") and then ask whether the customer wants to book an appointment.
-For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day (today/tomorrow/another day), then ask for a preferred time, then service if needed, and only use create_booking after all required details are known and the customer explicitly confirms.
+Today in the business timezone is {datetime.now(ZoneInfo(tenant.timezone)).date().isoformat()}. Resolve phrases such as "coming Tuesday", "next Tuesday", "this Friday", "tomorrow", and "the 29th" to an actual calendar date before discussing an appointment. Never ask the customer which date a weekday means when the calendar can resolve it.
+For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed").
+For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day/date, then preferred time, then service if needed. Use check_availability before presenting a slot as available. Only use create_booking after all required details are known and the customer explicitly confirms.
 If the caller pauses or gives an incomplete sentence, do not guess or end the call. Wait for the caller to continue. If the caller starts speaking while you are speaking, stop promptly, listen to the complete request, and answer the new request.
 For appointment booking, treat speech-recognition errors such as "bhukamp", "bukamp", "buking", or "boking" as possible booking words only when the surrounding request clearly contains appointment/day/time context; never hand off solely because recognition is imperfect.
 If booking details are missing, ask for exactly one missing detail at a time. If a requested time is unavailable or outside hours, offer another time instead of handing off.
@@ -1603,7 +1605,8 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
         {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}}
     ]
     if capability_enabled(policy,"bookings",True):
-        tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact day, time and service. Never call this merely because the customer supplied details.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
+        tool_declarations.append({"name":"check_availability","description":"Check the owned appointment calendar for a specific calendar date and optional time. ALWAYS use this before saying a requested appointment slot is available. The date must be YYYY-MM-DD in the tenant timezone. If service_id is omitted, use the first active service.","parameters":{"type":"OBJECT","properties":{"date":{"type":"STRING"},"time":{"type":"STRING"},"service_id":{"type":"STRING"},"staff_id":{"type":"STRING"}},"required":["date"]}})
+        tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact calendar date, time and service. Never call this merely because the customer supplied details. The server performs a final availability check.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
     providers=[]
     if settings.gemini_api_key:
         providers.append(VoiceProvider("gemini",settings.gemini_live_model,settings.gemini_api_key,priority=100))
@@ -1664,7 +1667,30 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                     responses=[]
                     for fc in event["toolCall"].get("functionCalls",[]):
                         args=fc.get("args",{}); name=fc.get("name")
-                        if name=="save_customer_identity":
+                        if name=="check_availability":
+                            try:
+                                if not capability_enabled(tenant_policy(db,tenant.id),"bookings",True):
+                                    raise ValueError("Appointments are disabled for this business.")
+                                requested_date=date.fromisoformat(str(args.get("date","")))
+                                service_id=str(args.get("service_id","")).strip()
+                                service=db.scalar(select(Service).where(Service.id==service_id,Service.tenant_id==tenant.id,Service.is_active==True)) if service_id else db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
+                                if not service:
+                                    raise ValueError("No active appointment service is configured.")
+                                slots=available_slots(db,tenant,service.id,requested_date,str(args.get("staff_id")) if args.get("staff_id") else None)
+                                requested_time=str(args.get("time","")).strip().upper().replace(".","")
+                                if requested_time:
+                                    import re as _re
+                                    tm=_re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$",requested_time)
+                                    if tm:
+                                        hh=int(tm.group(1)); mm=int(tm.group(2) or 0); mer=tm.group(3)
+                                        if mer=="PM" and hh!=12: hh+=12
+                                        if mer=="AM" and hh==12: hh=0
+                                        wanted=f"{hh:02d}:{mm:02d}"
+                                        slots=[s for s in slots if s["start"][11:16]==wanted]
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"date":requested_date.isoformat(),"timezone":tenant.timezone,"service_id":service.id,"service_name":service.name,"requested_time":requested_time or None,"available":bool(slots),"slots":slots[:20]}}})
+                            except Exception as exc:
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"available":False,"error":str(exc)}}})
+                        elif name=="save_customer_identity":
                             try:
                                 c=upsert_customer(db,tenant.id,str(args.get("phone","")).strip(),str(args.get("name","")).strip(),False,source="ai_voice")
                                 call.customer_id=c.id; call.status="connected"; call.answered_at=call.answered_at or datetime.utcnow(); db.commit()
