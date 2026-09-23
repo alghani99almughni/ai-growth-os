@@ -75,6 +75,22 @@ class GeminiLiveAdapter:
         msg=json.loads(raw)
         if (msg.get("serverContent") or {}).get("interrupted"):
             return {"_gateway":{"event":"interruption"}}
+        # Gemini Live emits function calls inside serverContent.modelTurn.parts.
+        # Normalize them into the same gateway toolCall contract used by OpenAI.
+        parts=((msg.get("serverContent") or {}).get("modelTurn") or {}).get("parts") or []
+        function_calls=[]
+        for part in parts:
+            fc=part.get("functionCall")
+            if fc:
+                function_calls.append({
+                    "id": fc.get("id") or fc.get("name"),
+                    "name": fc.get("name"),
+                    "args": fc.get("args") or {}
+                })
+        if function_calls:
+            normalized=dict(msg)
+            normalized["toolCall"]={"functionCalls":function_calls}
+            return normalized
         return msg
     async def send_text(self, session, text):
         await session.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":text}]}],"turnComplete":True}}))
