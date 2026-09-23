@@ -54,7 +54,8 @@ export default function SSNutritions(){
   const audioContextRef=useRef<AudioContext|null>(null);
   const processorRef=useRef<ScriptProcessorNode|null>(null);
   const sourceRef=useRef<MediaStreamAudioSourceNode|null>(null);
-  const nextAudioTimeRef=useRef(0);\n  const audioSourcesRef=useRef<Set<AudioBufferSourceNode>>(new Set());
+  const nextAudioTimeRef=useRef(0);
+  const audioSourcesRef=useRef<Set<AudioBufferSourceNode>>(new Set());
   const recognitionRef=useRef<any>(null);
   const callActiveRef=useRef(false);
   const speechActiveRef=useRef(false);
@@ -274,7 +275,13 @@ export default function SSNutritions(){
         try{
           const msg=JSON.parse(event.data);
           if(msg.type==="status" && msg.status==="ai_connected") return;
-          if(msg.type==="interruption") {\n            audioSourcesRef.current.forEach(source=>{try{source.stop()}catch{}});\n            audioSourcesRef.current.clear();\n            nextAudioTimeRef.current=audioContextRef.current?.currentTime||0;\n            return;\n          }\n          if(msg.type==="transcript"){
+          if(msg.type==="interruption") {
+            audioSourcesRef.current.forEach(source=>{try{source.stop()}catch{}});
+            audioSourcesRef.current.clear();
+            nextAudioTimeRef.current=audioContextRef.current?.currentTime||0;
+            return;
+          }
+          if(msg.type==="transcript"){
             setTranscript(prev=>[...prev,{role:msg.role,text:msg.text}]);
             return;
           }
