@@ -34,8 +34,8 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
 
 def local_intent(message:str)->str:
     m=message.casefold()
-    compact=re.sub(r"[^a-z0-9\\s]"," ",m)
-    compact=re.sub(r"\\s+"," ",compact).strip()
+    compact=re.sub(r"[^a-z0-9\s]"," ",m)
+    compact=re.sub(r"\s+"," ",compact).strip()
 
     # Explicit actions take precedence over broad words such as "time" or
     # "available", while multilingual/script checks use the original text.
@@ -62,7 +62,7 @@ def local_intent(message:str)->str:
         return "pricing"
     if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
         return "product"
-    # Common browser STT misrecognition: “may I know the timings” can arrive as\n    # “Manoj timings”. Treat the phrase as a timing question, but do not\n    # globally rewrite arbitrary names.\n    if re.search(r"\\bmanoj\\s+(timing|timings)\\b", compact):\n        return "business_hours"\n    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
+    # Common browser STT misrecognition: “may I know the timings” can arrive as\n    # “Manoj timings”. Treat the phrase as a timing question, but do not\n    # globally rewrite arbitrary names.\n    if re.search(r"\bmanoj\s+(timing|timings)\b", compact):\n        return "business_hours"\n    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
         return "business_hours"
     return "information"
 
@@ -400,7 +400,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
-    elif c.state=="booking_confirmation" and re.search(r"\\b(yes|yeah|yep|sure|confirm|confirmed|please confirm|go ahead|do it|okay confirm|ok confirm)\\b", m):
+    elif c.state=="booking_confirmation" and re.search(r"\b(yes|yeah|yep|sure|confirm|confirmed|please confirm|go ahead|do it|okay confirm|ok confirm)\b", m):
         # The browser voice path uses /voice/turn rather than the realtime
         # provider WebSocket. Preserve the booking state here so the public
         # endpoint can execute the owned booking transaction.
