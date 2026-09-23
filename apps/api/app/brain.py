@@ -95,6 +95,145 @@ def conversation(db: Session, tenant_id: str, message: str, language: str, chann
     c.language=language; c.last_user_message=message; c.turns=(c.turns or 0)+1
     return c
 
+
+_WEEKDAYS = ("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
+_WEEKDAY_ALIASES = {
+    "mon":"monday","tue":"tuesday","tues":"tuesday","wed":"wednesday",
+    "thu":"thursday","thur":"thursday","thurs":"thursday","fri":"friday",
+    "sat":"saturday","sun":"sunday",
+}
+
+
+def extract_booking_entities(text: str) -> dict:
+    """Extract every booking entity present in a turn.
+
+    This deliberately extracts day and time independently. A caller is never
+    forced into a one-slot-per-turn flow: "book Thursday at 12" yields both
+    entities in the same turn.
+    """
+    value = text.casefold().strip()
+    day = None
+    for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
+        if re.search(rf"\\b{re.escape(alias)}\\b", value):
+            day = canonical
+            break
+    if day is None:
+        for canonical in _WEEKDAYS:
+            if re.search(rf"\\b{canonical}\\b", value):
+                day = canonical
+                break
+
+    if "day after tomorrow" in value:
+        relative_day = "day_after_tomorrow"
+    elif "tomorrow" in value:
+        relative_day = "tomorrow"
+    elif "today" in value:
+        relative_day = "today"
+    else:
+        relative_day = None
+
+    # Accept spoken/typed AM/PM forms. Noon is unambiguous.
+    if re.search(r"\\bnoon\\b", value):
+        time_value = "12 PM"
+    else:
+        tm = re.search(
+            r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(a\\.?m\\.?|p\\.?m\\.?)\\b",
+            value,
+        )
+        if tm:
+            hour = int(tm.group(1))
+            minute = tm.group(2)
+            meridiem = "AM" if tm.group(3).replace(".", "").startswith("a") else "PM"
+            time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
+        else:
+            # 24-hour clock, e.g. "Thursday at 17:00".
+            tm24 = re.search(r"\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b", value)
+            if tm24:
+                hour24 = int(tm24.group(1))
+                minute24 = tm24.group(2)
+                meridiem = "AM" if hour24 < 12 else "PM"
+                hour12 = hour24 % 12 or 12
+                time_value = f"{hour12}:{minute24} {meridiem}"
+            else:
+                time_value = None
+
+    return {
+        "day": day,
+        "relative_day": relative_day,
+        "time": time_value,
+    }
+
+
+def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
+    """Recover booking entities from the active conversation without adding
+    another schema dependency.
+
+    We only inherit old values while the conversation is already in a booking
+    state. This prevents an unrelated earlier time (for example business
+    hours) from accidentally becoming an appointment time.
+    """
+    rows = db.scalars(
+        select(ConversationMessage)
+        .where(ConversationMessage.conversation_id == conversation_id)
+        .order_by(ConversationMessage.created_at.desc())
+        .limit(12)
+    ).all()
+    ctx = {"day": None, "relative_day": None, "time": None}
+    for row in reversed(rows):
+        if row.role != "user":
+            continue
+        extracted = extract_booking_entities(row.content)
+        for key in ("day", "relative_day", "time"):
+            if extracted.get(key):
+                ctx[key] = extracted[key]
+    return ctx
+
+
+def booking_reply_from_state(db: Session, c: Conversation, message: str) -> tuple[str|None, dict]:
+    """Resolve a booking turn by merging current entities with prior booking
+    context. Never discard a useful entity just because the current state asks
+    for a different one.
+    """
+    current = extract_booking_entities(message)
+    prior = previous_booking_context(db, c.id, message) if c.state.startswith("booking") else {
+        "day": None, "relative_day": None, "time": None
+    }
+
+    # Current turn always wins over previous values.
+    day = current["day"] or prior["day"]
+    relative_day = current["relative_day"] or prior["relative_day"]
+    time_value = current["time"] or prior["time"]
+
+    if relative_day and not current["day"]:
+        day_label = relative_day.replace("_", " ")
+    else:
+        day_label = day
+
+    if day_label and time_value:
+        c.state = "booking_confirmation"
+        return (
+            f"Great. I have {day_label} at {time_value}. Shall I confirm that appointment?",
+            {"day": day_label, "time": time_value, "complete": True},
+        )
+
+    if day_label:
+        c.state = "booking_day"
+        return f"Sure. What time would you prefer on {day_label}?", {
+            "day": day_label, "time": None, "complete": False
+        }
+
+    if time_value:
+        c.state = "booking_day"
+        return "Sure. What day would you prefer for the appointment?", {
+            "day": None, "time": time_value, "complete": False
+        }
+
+    c.state = "booking_day"
+    return "Sure. Which day and time would you prefer?", {
+        "day": None, "time": None, "complete": False
+    }
+
+
 async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:str|None=None,channel:str="pwa")->dict:
     tenant=db.get(Tenant,tenant_id)
     if not tenant: raise ValueError("Tenant not found")
@@ -116,42 +255,15 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
     elif intent=="booking":
-        # If a booking turn already contains a weekday/time, preserve it instead
-        # of resetting the workflow to booking_day.
-        weekdays=("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
-        day_match=next((d for d in weekdays if d in m),None)
-        time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",m)
-        if day_match and time_match:
-            c.state="booking_confirmation"
-            tm=f"{time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}"
-            booking=f"Great. I have {day_match} at {tm}. Shall I confirm that appointment?"
-        elif "today" in m or "today's" in m:
-            c.state="booking_time_today"
-            booking="Absolutely. What time would you prefer today?"
-        elif "tomorrow" in m:
-            c.state="booking_time_tomorrow"
-            booking="Absolutely. What time would you prefer tomorrow?"
-        else:
-            c.state="booking_day"
-            booking="Sure, which day would you like, and what time?"
-    elif c.state in ("booking_day","booking_time_today","booking_time_tomorrow","booking_service","booking_confirmation"):
-        text=m
-        time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",text)
-        weekdays=("monday","tuesday","wednesday","thursday","friday","saturday","sunday")
-        day_match=next((d for d in weekdays if d in text),None)
-        if c.state in ("booking_time_today","booking_time_tomorrow") and time_match:
-            requested_day="today" if c.state=="booking_time_today" else "tomorrow"
-            c.state="booking_confirmation"
-            booking=f"Great. I have {requested_day} at {time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}. Shall I confirm that appointment?"
-        elif c.state=="booking_day" and day_match:
-            c.state="booking_confirmation" if time_match else "booking_time_"+day_match
-            if time_match:
-                tm=f"{time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}"
-                booking=f"Great. I have {day_match} at {tm}. Shall I confirm that appointment?"
-            else:
-                booking=f"Sure. What time would you prefer on {day_match}?"
-        elif c.state=="booking_confirmation" and any(x in text for x in ("yes","confirm","confirmed","that's fine","that is fine","correct")):
-            booking="Thanks. I'll confirm that appointment now."
+        # Extract ALL booking entities from the current turn. If the caller
+        # says "book Thursday at 12", both values survive in the same turn.
+        booking, booking_data = booking_reply_from_state(db, c, message)
+    elif c.state.startswith("booking"):
+        # A follow-up may contain only the missing entity, or may contain both
+        # entities again. Always merge it with the active booking context.
+        booking, booking_data = booking_reply_from_state(db, c, message)
+    else:
+        booking_data = {"day": None, "time": None, "complete": False}
 
     direct=hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
@@ -228,4 +340,4 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
     db.commit()
-    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage}
+    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage,"booking":booking_data}
