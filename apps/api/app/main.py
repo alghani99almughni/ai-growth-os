@@ -1575,8 +1575,6 @@ async def public_voice(websocket,call_id:str):
 TENANT POLICY:
 {policy_context(policy)}
 
-{context}
-
 APPROVED BUSINESS CONTEXT:
 {context}
 
