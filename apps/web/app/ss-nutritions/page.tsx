@@ -248,7 +248,7 @@ export default function SSNutritions(){
     const ctx=new AudioCtx();
     audioContextRef.current=ctx;
     await ctx.resume();
-    const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:48000,sampleSize:16,echoCancellation:true,noiseSuppression:true,autoGainControl:true,latency:0.02}});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:48000,sampleSize:16,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
     streamRef.current=stream;
     const wsUrl=api().replace(/^http:/,"ws:").replace(/^https:/,"wss:")+"/ws/public/voice/"+payload.call_id;
     const ws=new WebSocket(wsUrl);
