@@ -15,3 +15,21 @@ Commit 1155482669ff9ecccb32c11a45461611cf430716 corrected the regex escaping in 
 
 ### Prevention
 The observed phrases are now explicit regression cases in apps/api/tests/test_voice_agent_regression.py so a future regex/routing change should fail CI before live browser testing.
+
+
+## 2026-09-23 — Follow-up live test: STT timing and booking confirmation
+
+### New symptoms
+- "Man of the timings" still reached the generic unverified-answer response. This is a voice STT variant of a normal business-hours question and must remain deterministic.
+- "Please confirm" reached the confirmation branch but the booking transaction returned the generic "couldn't complete" response.
+- The 4:30 PM correction flow correctly recovered from an initial 4:30 AM interpretation, so date/time state merging is working.
+
+### Engineering changes
+- Timing intent is now checked before broad product wording and explicitly covers common STT timing fragments.
+- Public voice booking confirmation now logs the exact transaction exception instead of hiding it.
+- Repeated confirmation is idempotent when the same customer/service/start time already has a confirmed appointment.
+- Appointment creation now rejects future/past times using the UTC-normalized value rather than comparing a tenant-local wall-clock value to UTC.
+- Technical booking failures no longer automatically trigger a human callback; the caller receives a retryable confirmation message while the exact exception is logged for diagnosis.
+
+### Required regression
+Before the next live call, CI must pass and the API deploy containing these changes must be live.
