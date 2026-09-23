@@ -56,3 +56,59 @@ Security properties:
 ### Related fixes
 - Realtime AI made the primary SS Nutritions call path.
 - Verified customer identity is passed into the voice agent so the AI does not ask for name/mobile again.
+
+
+## ERR-2026-09-23-002 — Public voice WebSocket continued returning 403 after token fix
+
+- **Date:** 2026-09-23
+- **Product area:** SS Nutritions PWA / Public Voice
+- **Environment:** Production (Render)
+- **Severity:** High
+- **Status:** New architecture fix deployed/pending final browser verification
+
+### Customer-visible symptom
+The call UI briefly showed **Connecting**, then returned to the error state:
+> The AI call connection failed. Please try again.
+
+The customer identity form itself was accepted.
+
+### Production evidence
+Render recorded successful call creation:
+- `POST /api/v1/public/business/ss-nutritions/call` → `201 Created`
+
+Immediately afterward the realtime connection was rejected:
+- `WebSocket /ws/public/voice/{call_id}` → `403`
+- `connection rejected (403 Forbidden)`
+
+This occurred repeatedly during the test session.
+
+### Diagnosis
+The previous short-lived HMAC room-token approach still depended on a query-string authentication exchange for the public AI WebSocket. Although the call token was being generated, the production connection was still being rejected before the voice handler could start. Therefore the failure remained in the public WebSocket admission layer, before realtime AI processing.
+
+### Corrective architecture
+The public AI leg is now bound directly to the server-created **CallRecord**:
+- browser connects using the opaque server-generated UUID call ID
+- server requires `source == pwa_voice`
+- server requires status `ringing` or `connected`
+- server requires the call to have started within 10 minutes
+- no browser-supplied JWT/HMAC query token is required for the AI WebSocket
+- the call record remains the authorization boundary
+
+The frontend now connects to `/ws/public/voice/{call_id}`.
+
+### Code changes
+- API: commit `0c06ec6a11948e21593cd779a59499cac060864b`
+- Web: commit `affbe6ac7c4417491e923882e717ef3a1ffcde1b`
+
+### Regression checklist
+- [ ] API deployment live
+- [ ] Web deployment live
+- [ ] Call POST returns 201
+- [ ] WebSocket reaches handler without 403
+- [ ] AI realtime provider connects
+- [ ] AI greets customer first
+- [ ] Customer can speak
+- [ ] AI response audio is heard
+- [ ] Transcript is persisted
+- [ ] Call status/duration is persisted
+- [ ] Knowledge-first routing works
