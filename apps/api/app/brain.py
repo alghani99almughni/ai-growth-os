@@ -366,6 +366,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     # Library-first policy: these paths consume zero model tokens.
     hours=business_hours_reply(db,tenant_id,message,language)
     booking=None
+    booking_data={"day": None, "time": None, "date": None, "complete": False}
     policy=tenant_policy(db,tenant_id)
     m=message.casefold()
     # Keep short conversational turns deterministic: greetings should never
