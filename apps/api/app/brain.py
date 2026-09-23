@@ -102,42 +102,37 @@ _WEEKDAY_ALIASES = {
     "thu":"thursday","thur":"thursday","thurs":"thursday","fri":"friday",
     "sat":"saturday","sun":"sunday",
 }
-
+_RELATIVE_DAYS = ("today", "tomorrow", "day after tomorrow")
 
 def extract_booking_entities(text: str) -> dict:
-    """Extract every booking entity present in a turn.
-
-    This deliberately extracts day and time independently. A caller is never
-    forced into a one-slot-per-turn flow: "book Thursday at 12" yields both
-    entities in the same turn.
-    """
+    """Extract every useful booking entity from one caller turn."""
     value = text.casefold().strip()
     day = None
     for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
-        if re.search(rf"\b{re.escape(alias)}\\b", value):
+        if re.search(rf"\b{re.escape(alias)}\b", value):
             day = canonical
             break
     if day is None:
         for canonical in _WEEKDAYS:
-            if re.search(rf"\b{canonical}\\b", value):
+            if re.search(rf"\b{canonical}\b", value):
                 day = canonical
                 break
 
+    relative_day = None
     if "day after tomorrow" in value:
         relative_day = "day_after_tomorrow"
-    elif "tomorrow" in value:
+    elif re.search(r"\btomorrow\b", value):
         relative_day = "tomorrow"
-    elif "today" in value:
+    elif re.search(r"\btoday\b", value):
         relative_day = "today"
-    else:
-        relative_day = None
 
-    # Accept spoken/typed AM/PM forms. Noon is unambiguous.
-    if re.search(r"\bnoon\\b", value):
+    # Spoken and typed time forms: 5 PM, 5:30 p.m., 12 noon, 17:30.
+    time_value = None
+    if re.search(r"\bnoon\b", value):
         time_value = "12 PM"
     else:
         tm = re.search(
-            r"\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(a\\.?m\\.?|p\\.?m\\.?)\\b",
+            r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b",
             value,
         )
         if tm:
@@ -146,8 +141,7 @@ def extract_booking_entities(text: str) -> dict:
             meridiem = "AM" if tm.group(3).replace(".", "").startswith("a") else "PM"
             time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
-            # 24-hour clock, e.g. "Thursday at 17:00".
-            tm24 = re.search(r"\b([01]?\\d|2[0-3]):([0-5]\\d)\\b", value)
+            tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
                 hour24 = int(tm24.group(1))
                 minute24 = tm24.group(2)
@@ -155,82 +149,118 @@ def extract_booking_entities(text: str) -> dict:
                 hour12 = hour24 % 12 or 12
                 time_value = f"{hour12}:{minute24} {meridiem}"
             else:
-                time_value = None
+                # Natural-language whole-hour forms such as "at 5", "by 5",
+                # "around five", and "five in the evening".
+                number_words = {
+                    "one":1,"two":2,"three":3,"four":4,"five":5,"six":6,
+                    "seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12,
+                }
+                word_hour = next((n for w,n in number_words.items() if re.search(rf"\b{w}\b", value)), None)
+                digit_hour = re.search(r"\b(?:at|by|around|about)\s+(1[0-2]|0?[1-9])\b", value)
+                hour = int(digit_hour.group(1)) if digit_hour else word_hour
+                if hour:
+                    if re.search(r"\b(morning|am|a\.m\.)\b", value):
+                        meridiem = "AM"
+                    elif re.search(r"\b(evening|night|pm|p\.m\.)\b", value):
+                        meridiem = "PM"
+                    else:
+                        meridiem = None
+                    time_value = f"{hour} {meridiem}" if meridiem else None
+
+    # "Friday evening" / "Saturday morning" is a time range, not an exact
+    # appointment time. Preserve it as a time hint so the agent can clarify.
+    time_hint = None
+    for label in ("morning", "afternoon", "evening", "night"):
+        if re.search(rf"\b{label}\b", value):
+            time_hint = label
+            break
+
+    # Numeric calendar day such as "30th". Keep it as a date hint; resolving
+    # the actual month/year belongs to the date-aware booking layer.
+    date_hint = None
+    dm = re.search(r"\b(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b", value)
+    if dm:
+        date_hint = int(dm.group(1))
 
     return {
         "day": day,
         "relative_day": relative_day,
         "time": time_value,
+        "time_hint": time_hint,
+        "date_hint": date_hint,
     }
 
 
 def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
-    """Recover booking entities from the active conversation without adding
-    another schema dependency.
-
-    We only inherit old values while the conversation is already in a booking
-    state. This prevents an unrelated earlier time (for example business
-    hours) from accidentally becoming an appointment time.
-    """
+    """Recover useful booking entities from the active booking conversation."""
     rows = db.scalars(
         select(ConversationMessage)
         .where(ConversationMessage.conversation_id == conversation_id)
         .order_by(ConversationMessage.created_at.desc())
-        .limit(12)
+        .limit(20)
     ).all()
-    ctx = {"day": None, "relative_day": None, "time": None}
+    ctx = {"day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None}
     for row in reversed(rows):
         if row.role != "user":
             continue
         extracted = extract_booking_entities(row.content)
-        for key in ("day", "relative_day", "time"):
-            if extracted.get(key):
+        for key in ctx:
+            if extracted.get(key) is not None:
                 ctx[key] = extracted[key]
     return ctx
 
 
 def booking_reply_from_state(db: Session, c: Conversation, message: str) -> tuple[str|None, dict]:
-    """Resolve a booking turn by merging current entities with prior booking
-    context. Never discard a useful entity just because the current state asks
-    for a different one.
-    """
+    """Merge current-turn entities with active booking context."""
     current = extract_booking_entities(message)
     prior = previous_booking_context(db, c.id, message) if c.state.startswith("booking") else {
-        "day": None, "relative_day": None, "time": None
+        "day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None
     }
 
-    # Current turn always wins over previous values.
+    # Current turn always wins. A correction therefore replaces the old value.
     day = current["day"] or prior["day"]
     relative_day = current["relative_day"] or prior["relative_day"]
     time_value = current["time"] or prior["time"]
+    time_hint = current["time_hint"] or prior["time_hint"]
+    date_hint = current["date_hint"] or prior["date_hint"]
 
-    if relative_day and not current["day"]:
-        day_label = relative_day.replace("_", " ")
-    else:
-        day_label = day
+    day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
 
     if day_label and time_value:
         c.state = "booking_confirmation"
         return (
             f"Great. I have {day_label} at {time_value}. Shall I confirm that appointment?",
-            {"day": day_label, "time": time_value, "complete": True},
+            {"day": day_label, "time": time_value, "time_hint": time_hint, "date_hint": date_hint, "complete": True},
+        )
+
+    if day_label and time_hint:
+        c.state = "booking_time_clarification"
+        return (
+            f"Sure. I have {day_label} in the {time_hint}. What exact time would you prefer?",
+            {"day": day_label, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False},
         )
 
     if day_label:
         c.state = "booking_day"
         return f"Sure. What time would you prefer on {day_label}?", {
-            "day": day_label, "time": None, "complete": False
+            "day": day_label, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False
         }
 
     if time_value:
         c.state = "booking_day"
         return "Sure. What day would you prefer for the appointment?", {
-            "day": None, "time": time_value, "complete": False
+            "day": None, "time": time_value, "time_hint": time_hint, "date_hint": date_hint, "complete": False
+        }
+
+    if date_hint:
+        c.state = "booking_date"
+        return f"Got it, the {date_hint}th. Which month and time would you prefer?", {
+            "day": None, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False
         }
 
     c.state = "booking_day"
     return "Sure. Which day and time would you prefer?", {
-        "day": None, "time": None, "complete": False
+        "day": None, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False
     }
 
 
