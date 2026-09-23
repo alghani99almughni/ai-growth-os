@@ -1514,17 +1514,25 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
     now=datetime.utcnow()
     call=CallRecord(tenant_id=t.id,customer_id=customer.id if customer else None,source="pwa_voice",status="ringing",started_at=now,call_number=previous_calls+1)
     db.add(call); db.commit(); db.refresh(call)
-    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"voice_token":issue_call_room_token(call.id,"call-ai")}
+    return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name}
 
 @app.websocket("/ws/public/voice/{call_id}")
-async def public_voice(websocket,call_id:str,voice_token:str|None=Query(default=None)):
-    if not voice_token or not verify_call_room_token(voice_token,call_id,"call-ai"):
-        await websocket.close(code=4403); return
-    await websocket.accept()
+async def public_voice(websocket,call_id:str):
+    # The call id is a cryptographically random UUID created server-side.
+    # For the public AI leg, bind the WebSocket directly to the short-lived
+    # call record instead of relying on query-string JWT/HMAC exchange.
+    # This avoids proxy/browser token issues while still requiring:
+    #   - a real PWA voice call record
+    #   - an active/ringing call
+    #   - a call created within the last 10 minutes
     db=SessionLocal()
     call=db.get(CallRecord,call_id)
     if not call:
         await websocket.close(code=4404); db.close(); return
+    now=datetime.utcnow()
+    if call.source!="pwa_voice" or call.status not in ("ringing","connected") or not call.started_at or (now-call.started_at).total_seconds()>600:
+        await websocket.close(code=4403); db.close(); return
+    await websocket.accept()
     tenant=db.get(Tenant,call.tenant_id)
     if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
