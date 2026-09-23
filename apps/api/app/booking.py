@@ -27,6 +27,14 @@ def get_hours(db: Session, tenant_id: str):
 def ensure_default_hours(db: Session, tenant_id: str):
     rows = db.scalars(select(BusinessHour).where(BusinessHour.tenant_id == tenant_id)).all()
     if rows:
+        # Repair the legacy platform default (Saturday 09:00-14:00) to the
+        # current canonical default (Monday-Saturday 09:00-18:00, Sunday closed)
+        # only when the complete seven-day pattern still matches the old default.
+        by_day={x.weekday:x for x in rows}
+        if len(by_day)==7 and all(not by_day[d].is_closed and by_day[d].open_time==time(9,0) and by_day[d].close_time==time(18,0) for d in range(5)) and not by_day[5].is_closed and by_day[5].open_time==time(9,0) and by_day[5].close_time==time(14,0) and by_day[6].is_closed:
+            by_day[5].close_time=time(18,0)
+            db.commit()
+            rows=list(by_day.values())
         return rows
     for weekday in range(7):
         # Monday-Saturday 09:00-18:00; Sunday closed.
