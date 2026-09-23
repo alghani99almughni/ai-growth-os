@@ -43,7 +43,7 @@ def local_intent(message:str)->str:
         x in compact for x in ("today","tomorrow","time","slot","appointment","schedule","for")
     ):
         return "booking"
-    if any(x in compact for x in ["hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
+    if any(x in compact for x in ["hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
     if any(x in compact for x in ["speak hindi","speak in hindi","in hindi","hindi","हिंदी","हिन्दी"]): return "language_request"
     if any(x in compact for x in ["bye","goodbye","that's all","thats all","thank you","thanks","you're welcome","you are welcome"]): return "closing"
     if any(x in compact for x in ["available","availability","is there a slot","is there any slot","can i get a slot","check availability"]): return "availability"
