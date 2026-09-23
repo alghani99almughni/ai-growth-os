@@ -57,6 +57,7 @@ export default function SSNutritions(){
   const nextAudioTimeRef=useRef(0);
   const recognitionRef=useRef<any>(null);
   const callActiveRef=useRef(false);
+  const speechActiveRef=useRef(false);
 
   useEffect(()=>{
     fetch(api()+"/api/v1/public/business/resolve?name="+encodeURIComponent("SS Nutritions"))
@@ -133,16 +134,42 @@ export default function SSNutritions(){
     recognition.lang=Object.values(speechLangs).includes(browserLang)?browserLang:(speechLangs[browserLang.slice(0,2)]||"en-IN");
     setCallState("connected");
     setCallError("");
+
+    const speakTurn=async(text:string,language:string)=>{
+      speechActiveRef.current=true;
+      try{recognition.stop()}catch{}
+      const map:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
+      if(typeof window==="undefined" || !("speechSynthesis" in window)){
+        speechActiveRef.current=false;
+        if(callActiveRef.current) try{recognition.start()}catch{}
+        return;
+      }
+      window.speechSynthesis.cancel();
+      await new Promise<void>(resolve=>{
+        const utter=new SpeechSynthesisUtterance(text);
+        utter.lang=map[language]||"en-IN";
+        const voices=window.speechSynthesis.getVoices();
+        utter.voice=voices.find(v=>v.lang.toLowerCase()===utter.lang.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(utter.lang.slice(0,2).toLowerCase()))||null;
+        utter.rate=0.98;
+        utter.onend=()=>resolve();
+        utter.onerror=()=>resolve();
+        window.speechSynthesis.speak(utter);
+      });
+      speechActiveRef.current=false;
+      if(callActiveRef.current) try{recognition.start()}catch{}
+    };
+
     const greeting="Hello "+(name.trim()||"there")+", welcome to SS Nutritions. How can I help you today?";
     setTranscript([{role:"ai",text:greeting}]);
-    speakKnowledgeAnswer(greeting,recognition.lang.slice(0,2));
 
     recognition.onresult=async(event:any)=>{
+      if(speechActiveRef.current || !callActiveRef.current) return;
       for(let i=event.resultIndex;i<event.results.length;i++){
         const result=event.results[i];
         if(!result.isFinal) continue;
         const text=String(result[0]?.transcript||"").trim();
-        if(!text || !callActiveRef.current) continue;
+        if(!text || !callActiveRef.current || speechActiveRef.current) continue;
+        try{recognition.stop()}catch{}
         setTranscript(prev=>[...prev,{role:"customer",text}]);
         try{
           const rr=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/voice/turn",{
@@ -153,19 +180,23 @@ export default function SSNutritions(){
           const answer=await rr.json();
           if(!rr.ok) throw new Error(answer.detail||"Voice answer failed.");
           setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
-          speakKnowledgeAnswer(answer.reply,answer.language||"en");
           if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
           if(answer.handoff_required){
             callActiveRef.current=false;
             try{recognition.stop()}catch{}
             setCallError("Our team will call you back shortly.");
             setCallState("ended");
+          }else{
+            await speakTurn(answer.reply,answer.language||"en");
           }
         }catch(error:any){
           setCallError(error?.message||"I could not answer that. Please try again.");
+          speechActiveRef.current=false;
+          if(callActiveRef.current) try{recognition.start()}catch{}
         }
       }
     };
+
     recognition.onerror=(event:any)=>{
       if(!callActiveRef.current) return;
       if(event?.error==="not-allowed"||event?.error==="service-not-allowed"){
@@ -175,11 +206,14 @@ export default function SSNutritions(){
       }
     };
     recognition.onend=()=>{
-      if(callActiveRef.current){
+      if(callActiveRef.current && !speechActiveRef.current){
         try{recognition.start()}catch{}
       }
     };
-    try{recognition.start()}catch(error){throw new Error("Microphone voice input could not start.");}
+    (async()=>{
+      await speakTurn(greeting,"en");
+    })().catch(()=>{});
+
   },[business.slug,name,speakKnowledgeAnswer]);
 
   const connectLiveAi=useCallback(async(payload:any)=>{
