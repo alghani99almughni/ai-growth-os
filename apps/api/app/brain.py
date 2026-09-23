@@ -1,5 +1,6 @@
 import httpx
 import re
+import logging
 import json
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -11,6 +12,8 @@ from .ai_router import detect_language, faq_match, structured_match, knowledge_m
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
+
+logger = logging.getLogger(__name__)
 
 def knowledge_context(db: Session, tenant_id: str) -> str:
     tenant=db.get(Tenant,tenant_id)
@@ -213,6 +216,10 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
 def booking_reply_from_state(db: Session, c: Conversation, message: str) -> tuple[str|None, dict]:
     """Merge current-turn entities with active booking context."""
     current = extract_booking_entities(message)
+    logger.info(
+        "VOICE_BOOKING_EXTRACTION conversation_id=%s state_before=%s message=%r entities=%s",
+        c.id, c.state, message, current,
+    )
     prior = previous_booking_context(db, c.id, message) if c.state.startswith("booking") else {
         "day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None
     }
@@ -270,6 +277,14 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     language=detect_language(message)
     intent=local_intent(message)
     c=conversation(db,tenant_id,message,language,channel,conversation_id)
+    logger.info(
+        "VOICE_REPLY_ENTRY conversation_id=%s tenant_id=%s channel=%s message=%r state=%s",
+        c.id, tenant_id, channel, message, c.state,
+    )
+    logger.info(
+        "VOICE_INTENT_RESULT conversation_id=%s message=%r intent=%s state=%s",
+        c.id, message, intent, c.state,
+    )
     db.add(ConversationMessage(conversation_id=c.id,role="user",content=message,language=language,intent=intent))
     
     # Library-first policy: these paths consume zero model tokens.
