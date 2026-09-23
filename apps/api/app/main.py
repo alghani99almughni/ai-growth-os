@@ -20,6 +20,7 @@ from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
+from .tenant_policy import tenant_policy, capability_enabled, policy_context
 
 from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter, GeminiLiveAdapter
 
@@ -750,6 +751,31 @@ def update_staff(tenant_id,staff_id,payload:StaffUpdate,user=Depends(get_current
         if value is not None: setattr(s,key,value)
     db.commit()
     return {"id":s.id,"role":u.role if u else None,"department_id":s.department_id,"is_active":s.is_active,"is_available":s.is_available}
+
+class BusinessBrainUpdate(BaseModel):
+    instructions: str = Field(default="", max_length=20000)
+    publish_website_to_agent: bool = True
+
+@app.get("/api/v1/tenants/{tenant_id}/business-brain")
+def get_business_brain(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    policy=tenant_policy(db,tenant_id)
+    brain=policy.get("business_brain") or {}
+    return {
+        "instructions": brain.get("instructions",""),
+        "publish_website_to_agent": brain.get("publish_website_to_agent",True),
+        "features": policy.get("features",{}),
+        "website": policy.get("website",{}),
+        "services": [{"id":x.id,"name":x.name,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"active":x.is_active} for x in policy.get("services",[])],
+        "products": [{"id":x.id,"name":x.name,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"active":x.is_active} for x in policy.get("products",[])],
+    }
+
+@app.put("/api/v1/tenants/{tenant_id}/business-brain")
+def update_business_brain(tenant_id,payload:BusinessBrainUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    value={"instructions":payload.instructions.strip(),"publish_website_to_agent":payload.publish_website_to_agent}
+    _set_setting(db,tenant_id,"business_brain",value)
+    return {"saved":True,**value}
 
 @app.get("/api/v1/tenants/{tenant_id}/features")
 def tenant_features(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -1543,7 +1569,13 @@ async def public_voice(websocket,call_id:str):
     if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
     context=knowledge_context(db,tenant.id)
+    policy=tenant_policy(db,tenant.id)
     system = f"""You are the AI customer engagement voice agent for {tenant.name}.
+
+TENANT POLICY:
+{policy_context(policy)}
+
+{context}
 
 APPROVED BUSINESS CONTEXT:
 {context}
@@ -1564,11 +1596,13 @@ If the caller pauses or gives an incomplete sentence, do not guess or end the ca
 For appointment booking, treat speech-recognition errors such as "bhukamp", "bukamp", "buking", or "boking" as possible booking words only when the surrounding request clearly contains appointment/day/time context; never hand off solely because recognition is imperfect.
 If booking details are missing, ask for exactly one missing detail at a time. If a requested time is unavailable or outside hours, offer another time instead of handing off.
 Use save_customer_identity only if the customer explicitly corrects or changes their name/number.
+If a capability is disabled in TENANT POLICY, do not offer it or call a tool for it.
 Be concise, warm, natural, and conversational. Do not read database-style lists aloud."""
     tool_declarations=[
-        {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
-        {"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact day, time and service. Never call this merely because the customer supplied details.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}}
+        {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}}
     ]
+    if capability_enabled(policy,"bookings",True):
+        tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact day, time and service. Never call this merely because the customer supplied details.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
     providers=[]
     if settings.gemini_api_key:
         providers.append(VoiceProvider("gemini",settings.gemini_live_model,settings.gemini_api_key,priority=100))
@@ -1638,6 +1672,8 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 db.rollback(); responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"verified":False,"error":str(exc)}}})
                         elif name=="create_booking":
                             try:
+                                if not capability_enabled(tenant_policy(db,tenant.id),"bookings",True):
+                                    raise ValueError("Appointments are disabled for this business.")
                                 if args.get("confirmed") is not True:
                                     raise ValueError("Customer confirmation is required before booking.")
                                 service=db.scalar(select(Service).where(Service.id==str(args.get("service_id","")),Service.tenant_id==tenant.id,Service.is_active==True))
