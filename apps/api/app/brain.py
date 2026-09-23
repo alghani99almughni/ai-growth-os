@@ -1,5 +1,6 @@
 import httpx
 import re
+import json
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models import Tenant, Service, Product
@@ -9,15 +10,20 @@ from .config import settings
 from .ai_router import detect_language, faq_match, structured_match, knowledge_match
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
+from .tenant_policy import tenant_policy, capability_enabled, policy_context
 
 def knowledge_context(db: Session, tenant_id: str) -> str:
     tenant=db.get(Tenant,tenant_id)
     services=db.scalars(select(Service).where(Service.tenant_id==tenant_id,Service.is_active==True)).all()
     products=db.scalars(select(Product).where(Product.tenant_id==tenant_id,Product.is_active==True)).all()
     knowledge=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True,KnowledgeItem.approval_status.in_(["approved","system"]))).all()
-    feature_row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
-    feature_text=feature_row.value_json if feature_row else "{}"
+    policy=tenant_policy(db,tenant_id)
+    feature_text=json.dumps(policy.get("features",{}),ensure_ascii=False)
+    business_brain=policy.get("business_brain",{})
+    website=policy.get("website",{})
     lines=[f"Business: {tenant.name}",f"Industry: {tenant.industry}",f"Description: {tenant.description or ''}",f"Phone: {tenant.phone or ''}",f"WhatsApp: {tenant.whatsapp_number or ''}",f"Address: {tenant.address or ''}",f"Enabled customer features: {feature_text}"]
+    if business_brain.get("instructions"): lines.append(f"Tenant admin instructions: {business_brain['instructions']}")
+    if website.get("published",True): lines.append("Tenant-approved website content: " + json.dumps(website,ensure_ascii=False))
     for x in knowledge: lines.append(f"Knowledge ({x.kind}): {x.title}: {x.content}")
     for x in services: lines.append(f"Service ID: {x.id}; name={x.name}; description={x.description or ''}; price={x.price} {x.currency}; duration={x.duration_minutes or ''} minutes")
     for x in products: lines.append(f"Product: {x.name}; description={x.description or ''}; price={x.price} {x.currency}; stock={x.stock_quantity if x.stock_quantity is not None else 'unknown'}")
@@ -100,7 +106,10 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     # Library-first policy: these paths consume zero model tokens.
     hours=business_hours_reply(db,tenant_id,message,language)
     booking=None
-    if intent=="booking":
+    policy=tenant_policy(db,tenant_id)
+    if intent=="booking" and not capability_enabled(policy,"bookings",True):
+        booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
+    elif intent=="booking":
         m=message.casefold()
         # Keep appointment conversations stateful without putting provider-specific
         # memory in the model. Conversation.state is our durable workflow state.
