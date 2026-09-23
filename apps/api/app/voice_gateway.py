@@ -52,6 +52,7 @@ class GeminiLiveAdapter:
             "generationConfig":{"responseModalities":["AUDIO"]},
             "systemInstruction":{"parts":[{"text":system_instruction}]},
             "inputAudioTranscription":{},"outputAudioTranscription":{},
+            "realtimeInputConfig":{"automaticActivityDetection":{"disabled":false,"startOfSpeechSensitivity":"START_SENSITIVITY_HIGH","endOfSpeechSensitivity":"END_SENSITIVITY_LOW","prefixPaddingMs":240,"silenceDurationMs":420}},
             "sessionResumption":{},"tools":[{"functionDeclarations":tools}]}}
         await ws.send(json.dumps(setup))
         if state.customer_transcript or state.assistant_transcript:
@@ -63,12 +64,18 @@ class GeminiLiveAdapter:
     async def send_audio(self, session, pcm16_b64):
         await session.send(json.dumps({"realtimeInput":{"audio":{"data":pcm16_b64,"mimeType":"audio/pcm;rate=16000"}}}))
     async def interrupt(self, session):
+        # Gemini Live handles barge-in through automatic activity detection.
+        # If the gateway receives an explicit interruption, stop the active response
+        # without injecting an empty user turn into the conversation history.
         try: await session.send(json.dumps({"clientContent":{"turns":[],"turnComplete":True}}))
         except Exception: pass
     async def recv(self, session):
         raw=await session.recv()
         if isinstance(raw,bytes): raw=raw.decode()
-        return json.loads(raw)
+        msg=json.loads(raw)
+        if (msg.get("serverContent") or {}).get("interrupted"):
+            return {"_gateway":{"event":"interruption"}}
+        return msg
     async def send_text(self, session, text):
         await session.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":text}]}],"turnComplete":True}}))
     async def send_tool_response(self, session, responses):
