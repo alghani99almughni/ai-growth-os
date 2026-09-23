@@ -102,12 +102,33 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     booking=None
     if intent=="booking":
         m=message.casefold()
+        # Keep appointment conversations stateful without putting provider-specific
+        # memory in the model. Conversation.state is our durable workflow state.
         if "today" in m or "today's" in m:
+            c.state="booking_time_today"
             booking="Absolutely. I can help with an appointment for today. What time would you prefer?"
         elif "tomorrow" in m:
+            c.state="booking_time_tomorrow"
             booking="Absolutely. I can help with an appointment for tomorrow. What time would you prefer?"
         else:
+            c.state="booking_day"
             booking="Sure, I can help with an appointment. What day and time would you prefer?"
+    elif c.state in ("booking_day","booking_time_today","booking_time_tomorrow","booking_service","booking_confirmation"):
+        # Do not abandon an active booking workflow just because speech
+        # recognition produced a short or imperfect next turn.
+        text=m if 'm' in locals() else message.casefold()
+        time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",text)
+        if c.state in ("booking_time_today","booking_time_tomorrow") and time_match:
+            c.state="booking_confirmation"
+            day_label="today" if c.state=="booking_time_today" else "tomorrow"
+            # Preserve the requested day before moving to confirmation.
+            day_label="today" if "booking_time_today" in str(c.state) else "tomorrow"
+            booking=f"Great. I have {day_label} at {time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}. Shall I confirm that appointment?"
+        elif c.state=="booking_day":
+            if "today" in text:
+                c.state="booking_time_today"; booking="Absolutely. What time would you prefer today?"
+            elif "tomorrow" in text:
+                c.state="booking_time_tomorrow"; booking="Absolutely. What time would you prefer tomorrow?"
     direct=hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
