@@ -68,7 +68,7 @@ def business_hours_reply(db: Session, tenant_id: str, message: str, language: st
             if weekday < 5:
                 opening, closing, closed = _time(9,0), _time(18,0), False
             elif weekday == 5:
-                opening, closing, closed = _time(9,0), _time(14,0), False
+                opening, closing, closed = _time(9,0), _time(18,0), False
             else:
                 opening, closing, closed = _time(9,0), _time(18,0), True
             db.add(BusinessHour(tenant_id=tenant_id, weekday=weekday, open_time=opening,
