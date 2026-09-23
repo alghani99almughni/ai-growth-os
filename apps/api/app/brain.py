@@ -114,12 +114,12 @@ def extract_booking_entities(text: str) -> dict:
     value = text.casefold().strip()
     day = None
     for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
-        if re.search(rf"\\b{re.escape(alias)}\\b", value):
+        if re.search(rf"\b{re.escape(alias)}\\b", value):
             day = canonical
             break
     if day is None:
         for canonical in _WEEKDAYS:
-            if re.search(rf"\\b{canonical}\\b", value):
+            if re.search(rf"\b{canonical}\\b", value):
                 day = canonical
                 break
 
@@ -133,11 +133,11 @@ def extract_booking_entities(text: str) -> dict:
         relative_day = None
 
     # Accept spoken/typed AM/PM forms. Noon is unambiguous.
-    if re.search(r"\\bnoon\\b", value):
+    if re.search(r"\bnoon\\b", value):
         time_value = "12 PM"
     else:
         tm = re.search(
-            r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(a\\.?m\\.?|p\\.?m\\.?)\\b",
+            r"\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(a\\.?m\\.?|p\\.?m\\.?)\\b",
             value,
         )
         if tm:
@@ -147,7 +147,7 @@ def extract_booking_entities(text: str) -> dict:
             time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
             # 24-hour clock, e.g. "Thursday at 17:00".
-            tm24 = re.search(r"\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b", value)
+            tm24 = re.search(r"\b([01]?\\d|2[0-3]):([0-5]\\d)\\b", value)
             if tm24:
                 hour24 = int(tm24.group(1))
                 minute24 = tm24.group(2)
@@ -250,7 +250,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     # Keep short conversational turns deterministic: greetings should never
     # fall through to the model/handoff path.
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
-    if any(re.fullmatch(r"\\s*"+re.escape(g)+r"\\s*[.!?]*\\s*",m) for g in greeting_words):
+    if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
     elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
