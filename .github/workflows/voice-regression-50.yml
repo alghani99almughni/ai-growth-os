@@ -1,0 +1,131 @@
+name: Voice Agent 50-Scenario Regression
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  voice-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run 50 live voice-agent scenarios
+        env:
+          API_URL: https://ai-growth-os-api.onrender.com
+          BUSINESS_SLUG: ss-nutritions
+        run: |
+          python - <<'PY'
+          import os, time, statistics, requests, sys
+
+          base=os.environ["API_URL"].rstrip("/")
+          slug=os.environ["BUSINESS_SLUG"]
+          scenarios=[
+            ("hours","What are your timings?"),
+            ("hours","What time do you open?"),
+            ("hours","What time do you close?"),
+            ("hours","Are you open on Monday?"),
+            ("hours","Are you open on Sunday?"),
+            ("hours","Tell me your business hours."),
+            ("hours","What are your opening hours?"),
+            ("hours","When are you open?"),
+            ("hours","What time are you available?"),
+            ("hours","Can you tell me the timings please?"),
+            ("hours","What are your working hours?"),
+            ("hours","Are you closed today?"),
+            ("hours","When do you start in the morning?"),
+            ("hours","When do you finish for the day?"),
+            ("hours","What is your schedule?"),
+            ("general","Hello"),
+            ("general","Hi there"),
+            ("general","Good morning"),
+            ("general","Good evening"),
+            ("general","Thank you"),
+            ("general","Thanks, that helps"),
+            ("general","Can you help me?"),
+            ("general","I have a question"),
+            ("general","I want some information"),
+            ("general","Tell me about SS Nutritions"),
+            ("contact","Where are you located?"),
+            ("contact","What is your address?"),
+            ("contact","How can I contact you?"),
+            ("contact","Can I speak with someone?"),
+            ("contact","I want to visit you"),
+            ("service","What services do you provide?"),
+            ("service","What wellness support do you offer?"),
+            ("service","Do you provide nutrition guidance?"),
+            ("service","Tell me about your wellness programs"),
+            ("service","How much does it cost?"),
+            ("service","What are your prices?"),
+            ("booking","I want to book an appointment"),
+            ("booking","Can I schedule a consultation?"),
+            ("booking","I need an appointment tomorrow"),
+            ("booking","Can you reserve a slot for me?"),
+            ("booking","I want to speak to a nutrition expert"),
+            ("multilingual","మీ సమయాలు ఏమిటి?"),
+            ("multilingual","మీరు ఎప్పుడు తెరిచి ఉంటారు?"),
+            ("multilingual","आपके समय क्या हैं?"),
+            ("multilingual","आप कब खुले रहते हैं?"),
+            ("multilingual","நேரம் என்ன?"),
+            ("context","Actually I meant the timings"),
+            ("context","Can you repeat the timings?"),
+            ("context","Which days are you open?"),
+            ("context","Thanks. What time do you open?")
+          ]
+
+          s=requests.Session()
+          s.headers.update({"Content-Type":"application/json"})
+          r=s.get(base+"/health",timeout=20)
+          r.raise_for_status()
+
+          start=time.perf_counter()
+          r=s.post(f"{base}/api/v1/public/business/{slug}/call",
+                   json={"name":"Voice Regression","phone":"+919999999999"},timeout=20)
+          r.raise_for_status()
+          call=r.json()
+          call_id=call["call_id"]
+          conversation_id=None
+          latencies=[]
+          failures=[]
+          hours_failures=[]
+
+          for i,(kind,text) in enumerate(scenarios,1):
+              t=time.perf_counter()
+              try:
+                  payload={"transcript":text,"call_id":call_id,"conversation_id":conversation_id,"channel":"voice"}
+                  rr=s.post(f"{base}/api/v1/public/business/{slug}/voice/turn",json=payload,timeout=30)
+                  elapsed=time.perf_counter()-t
+                  latencies.append(elapsed)
+                  if rr.status_code>=500:
+                      failures.append((i,text,rr.status_code,rr.text[:300]))
+                      continue
+                  data=rr.json()
+                  if not data.get("reply"):
+                      failures.append((i,text,"EMPTY",""))
+                  conversation_id=data.get("conversation_id") or conversation_id
+                  if kind=="hours" and (not data.get("knowledge_hit") or data.get("handoff_required")):
+                      hours_failures.append((i,text,data))
+              except Exception as exc:
+                  failures.append((i,text,"EXCEPTION",str(exc)))
+
+          p50=statistics.median(latencies) if latencies else 999
+          p95=sorted(latencies)[max(0,int(len(latencies)*0.95)-1)] if latencies else 999
+          total=time.perf_counter()-start
+
+          print(f"SCENARIOS={len(scenarios)} COMPLETED={len(latencies)} FAILURES={len(failures)}")
+          print(f"TOTAL_SECONDS={total:.2f} P50_SECONDS={p50:.2f} P95_SECONDS={p95:.2f}")
+          if hours_failures:
+              print("HOURS_FAILURES:")
+              for x in hours_failures: print(x)
+          if failures:
+              print("FAILURES:")
+              for x in failures: print(x)
+
+          if failures or hours_failures:
+              sys.exit(1)
+          if p95>20:
+              print("P95 latency exceeded 20 seconds")
+              sys.exit(1)
+          print("VOICE REGRESSION: PASS")
+          PY
