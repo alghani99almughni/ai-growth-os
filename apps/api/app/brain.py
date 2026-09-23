@@ -83,12 +83,21 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         knowledge_hit=True; retrieval_stage="global_faq"
     else:
         context=knowledge_context(db,tenant_id)
+        history_rows=db.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id==c.id)
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(8)
+        ).all()
+        history="\n".join(f"{row.role.upper()}: {row.content}" for row in reversed(history_rows))
         prompt=(
             "You are the AI customer engagement agent. Reply in the customer's language when possible. "
             "Use ONLY the approved business context below. Never invent prices, availability, policies, discounts, bookings or payment success. "
-            "If an action is needed, say it will be confirmed by the system. Keep concise. "
+            "If an action is needed, say it will be confirmed by the system. Keep concise and conversational. "
+            "Do not ask for information already provided in this conversation. "
             "If the approved context does not contain enough information, say you need a human team member to follow up instead of guessing.\n\n"
             "APPROVED CONTEXT:\n" + context +
+            "\n\nRECENT CONVERSATION:\n" + history +
             "\n\nCUSTOMER LANGUAGE: " + language +
             "\nCUSTOMER:\n" + message
         )
