@@ -1525,14 +1525,20 @@ async def public_voice(websocket,call_id:str):
     #   - a real PWA voice call record
     #   - an active/ringing call
     #   - a call created within the last 10 minutes
+    # Accept the WebSocket handshake first. Rejecting before accept is surfaced by
+    # Uvicorn/Render as HTTP 403, which hides the real application reason from the
+    # browser and makes production debugging difficult.
+    await websocket.accept()
     db=SessionLocal()
     call=db.get(CallRecord,call_id)
     if not call:
+        await websocket.send_json({"type":"error","code":"call_not_found","message":"Call session not found."})
         await websocket.close(code=4404); db.close(); return
     now=datetime.utcnow()
-    if call.source!="pwa_voice" or call.status not in ("ringing","connected") or not call.started_at or (now-call.started_at).total_seconds()>600:
+    age=(now-call.started_at).total_seconds() if call.started_at else None
+    if call.source!="pwa_voice" or call.status not in ("ringing","connected") or age is None or age>600:
+        await websocket.send_json({"type":"error","code":"call_not_active","message":"Call session is no longer active."})
         await websocket.close(code=4403); db.close(); return
-    await websocket.accept()
     tenant=db.get(Tenant,call.tenant_id)
     if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
