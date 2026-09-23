@@ -1558,9 +1558,11 @@ Start the call immediately with a warm spoken greeting such as:
 "Hello {call.customer.name if call.customer and call.customer.name else "there"}, welcome to {tenant.name}. How can I help you today?"
 Then listen for the customer's request.
 Do not invent business facts, prices, availability, policies, bookings or payment success.
+For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed") and then ask whether the customer wants to book an appointment.
+For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day (today/tomorrow/another day), then ask for a preferred time, then service if needed, and only use create_booking after all required details are known and the customer explicitly confirms.
+If the caller pauses or gives an incomplete sentence, do not guess or end the call. Wait for the caller to continue. If the caller starts speaking while you are speaking, stop promptly, listen to the complete request, and answer the new request.
 Use save_customer_identity only if the customer explicitly corrects or changes their name/number.
-For bookings use approved service IDs, exact local date/time, and create_booking only after explicit confirmation.
-Be concise, natural, helpful and multilingual."""
+Be concise, warm, natural, and conversational. Do not read database-style lists aloud."""
     tool_declarations=[
         {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}},
         {"name":"create_booking","description":"Create a confirmed appointment after explicit confirmation.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"}},"required":["service_id","starts_at","name","phone"]}}
