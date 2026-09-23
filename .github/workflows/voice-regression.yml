@@ -1,0 +1,32 @@
+name: Voice Regression
+
+on:
+  push:
+    paths:
+      - "apps/api/app/**"
+      - "apps/api/tests/**"
+      - ".github/workflows/voice-regression.yml"
+  pull_request:
+    paths:
+      - "apps/api/app/**"
+      - "apps/api/tests/**"
+      - ".github/workflows/voice-regression.yml"
+  workflow_dispatch:
+
+jobs:
+  deterministic-voice-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run deterministic voice regression
+        run: pytest -q tests/test_voice_agent_regression.py
