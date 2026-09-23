@@ -11,14 +11,18 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Install voice regression dependencies
+        run: |
+          python -m pip install -q websocket-client playwright
+          python -m playwright install chromium
       - name: Run 50 live voice-agent scenarios
         env:
           API_URL: https://ai-growth-os-api.onrender.com
           BUSINESS_SLUG: ss-nutritions
         run: |
-          python -m pip install -q websocket-client
           python - <<'PY'
           import os, time, statistics, requests, sys
+          from playwright.sync_api import sync_playwright
 
           base=os.environ["API_URL"].rstrip("/")
           slug=os.environ["BUSINESS_SLUG"]
@@ -132,9 +136,6 @@ jobs:
 
           # Real browser smoke: validates the customer-facing PWA, browser WebSocket
           # upgrade, microphone path and first realtime AI response.
-          python -m pip install -q playwright
-          python -m playwright install chromium
-          python - <<'PY'
           import time, sys
           from playwright.sync_api import sync_playwright
 
@@ -162,4 +163,3 @@ jobs:
               browser.close()
           print("BROWSER REALTIME REGRESSION: PASS")
           print("VOICE REGRESSION: PASS")
-          PY
