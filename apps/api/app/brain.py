@@ -119,11 +119,9 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         text=m if 'm' in locals() else message.casefold()
         time_match=re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(am|pm)\\b",text)
         if c.state in ("booking_time_today","booking_time_tomorrow") and time_match:
+            requested_day="today" if c.state=="booking_time_today" else "tomorrow"
             c.state="booking_confirmation"
-            day_label="today" if c.state=="booking_time_today" else "tomorrow"
-            # Preserve the requested day before moving to confirmation.
-            day_label="today" if "booking_time_today" in str(c.state) else "tomorrow"
-            booking=f"Great. I have {day_label} at {time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}. Shall I confirm that appointment?"
+            booking=f"Great. I have {requested_day} at {time_match.group(1)}{(':'+time_match.group(2)) if time_match.group(2) else ''} {time_match.group(3).upper()}. Shall I confirm that appointment?"
         elif c.state=="booking_day":
             if "today" in text:
                 c.state="booking_time_today"; booking="Absolutely. What time would you prefer today?"
