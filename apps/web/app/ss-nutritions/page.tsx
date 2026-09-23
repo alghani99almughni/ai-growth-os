@@ -59,6 +59,27 @@ export default function SSNutritions(){
   const callActiveRef=useRef(false);
   const speechActiveRef=useRef(false);
   const conversationIdRef=useRef<string|null>(null);
+  const wakeLockRef=useRef<any>(null);
+
+  const requestWakeLock=useCallback(async()=>{
+    try{
+      if(typeof navigator==="undefined" || !(navigator as any).wakeLock?.request) return;
+      if(!callActiveRef.current || document.visibilityState!=="visible") return;
+      wakeLockRef.current=await (navigator as any).wakeLock.request("screen");
+      wakeLockRef.current?.addEventListener?.("release",()=>{wakeLockRef.current=null;});
+    }catch{}
+  },[]);
+
+  useEffect(()=>{
+    const onVisibility=()=>{
+      if(document.visibilityState==="visible" && callActiveRef.current){
+        requestWakeLock();
+        try{audioContextRef.current?.resume()}catch{}
+      }
+    };
+    document.addEventListener("visibilitychange",onVisibility);
+    return()=>document.removeEventListener("visibilitychange",onVisibility);
+  },[requestWakeLock]);
 
   useEffect(()=>{
     fetch(api()+"/api/v1/public/business/resolve?name="+encodeURIComponent("SS Nutritions"))
@@ -84,6 +105,8 @@ export default function SSNutritions(){
     try{sourceRef.current?.disconnect()}catch{}
     try{streamRef.current?.getTracks().forEach(t=>t.stop())}catch{}
     try{socketRef.current?.close()}catch{}
+    try{wakeLockRef.current?.release?.()}catch{}
+    wakeLockRef.current=null;
     processorRef.current=null;
     sourceRef.current=null;
     streamRef.current=null;
@@ -273,7 +296,7 @@ export default function SSNutritions(){
         else if(callActiveRef.current){callActiveRef.current=false;setCallState("ended");cleanupCall();}
       };
     });
-  },[cleanupCall,playPcm]);
+  },[cleanupCall,playPcm,requestWakeLock]);
 
   const startCall=async()=>{
     setCallError(""); setTranscript([]); conversationIdRef.current=null;
@@ -282,6 +305,7 @@ export default function SSNutritions(){
     }
     setCallState("starting");
     callActiveRef.current=true;
+    await requestWakeLock();
     try{
       const start=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/call",{
         method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:name.trim(),phone:phone.trim()})
@@ -319,6 +343,7 @@ export default function SSNutritions(){
     recognitionRef.current=null;
     try{window.speechSynthesis?.cancel()}catch{}
     try{socketRef.current?.send(JSON.stringify({type:"stop"}))}catch{}
+    try{wakeLockRef.current?.release?.()}catch{}
     cleanupCall();
     setCallState("ended");
   };
