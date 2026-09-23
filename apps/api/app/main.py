@@ -1775,11 +1775,23 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 # create_appointment converts them to UTC.
                                 if starts_at.tzinfo is not None:
                                     starts_at=starts_at.astimezone(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
-                                # Booking is an owned core workflow: validate the tenant's
-                                # hours and live availability before committing anything.
+                                # If the model turned a bare business-hour time such as 5:30
+                                # into 05:30 AM, correct it to 17:30 only when the caller did
+                                # not explicitly say AM and the PM time is within hours.
                                 weekday_rule=db.scalar(select(BusinessHour).where(
                                     BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()
                                 ))
+                                if weekday_rule and starts_at.hour < 12:
+                                    import re as _re
+                                    explicit_am=bool(_re.search(
+                                        r"\b"+str(starts_at.hour)+r"(?::"+f"{starts_at.minute:02d}"+r")?\s*a\.?m\.?\b",
+                                        (call.transcript or "").lower()
+                                    ))
+                                    pm_time=time(starts_at.hour+12,starts_at.minute)
+                                    if not explicit_am and weekday_rule.open_time <= pm_time < weekday_rule.close_time:
+                                        starts_at=starts_at.replace(hour=starts_at.hour+12)
+                                # Booking is an owned core workflow: validate the tenant's
+                                # hours and live availability before committing anything.
                                 if weekday_rule and weekday_rule.is_closed:
                                     raise ValueError("The business is closed at that time.")
                                 if weekday_rule and (starts_at.time()<weekday_rule.open_time or starts_at.time()>=weekday_rule.close_time):
