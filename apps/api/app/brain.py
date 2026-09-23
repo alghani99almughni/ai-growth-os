@@ -398,6 +398,29 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
+    elif c.state=="booking_confirmation" and re.search(r"\\b(yes|yeah|yep|sure|confirm|confirmed|please confirm|go ahead|do it|okay confirm|ok confirm)\\b", m):
+        # The browser voice path uses /voice/turn rather than the realtime
+        # provider WebSocket. Preserve the booking state here so the public
+        # endpoint can execute the owned booking transaction.
+        prior=previous_booking_context(db,c.id,message)
+        booking_date=resolve_booking_date(
+            tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
+        )
+        calendar=booking_calendar_status(db,tenant,booking_date,prior.get("time"))
+        if booking_date and prior.get("time") and calendar.get("available") is True:
+            booking="Perfect. I'll confirm that appointment now."
+            booking_data={
+                "day":prior.get("day") or prior.get("relative_day"),
+                "time":prior.get("time"),
+                "date":booking_date.isoformat(),
+                "service_id":calendar.get("service_id"),
+                "complete":True,
+                "confirmation_requested":True,
+            }
+            c.state="booking_confirmation_requested"
+        else:
+            booking="I couldn't verify that slot right now. I'll arrange for our team to call you back."
+            booking_data={"complete":False,"confirmation_requested":False}
     elif intent=="availability":
         booking="I can help check availability. What day and time are you looking for?"
         c.state="availability_request"
