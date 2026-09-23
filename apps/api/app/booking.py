@@ -29,7 +29,7 @@ def ensure_default_hours(db: Session, tenant_id: str):
     if rows:
         return rows
     for weekday in range(7):
-        # Monday-Friday 09:00-18:00; Saturday 09:00-14:00; Sunday closed.
+        # Monday-Saturday 09:00-18:00; Sunday closed.
         if weekday < 5:
             opening, closing, closed = time(9,0), time(18,0), False
         elif weekday == 5:
