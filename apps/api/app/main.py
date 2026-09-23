@@ -33,7 +33,7 @@ import asyncio,json,base64,uuid
 from datetime import datetime,date,time,timedelta
 import time
 import websockets
-import jwt,secrets,hashlib
+import jwt,secrets,hashlib,hmac
 
 import asyncio
 app=FastAPI(title="AI Growth OS API",version="1.0.0")
@@ -120,17 +120,29 @@ async def public_business_events(websocket,slug:str,context_token:str|None=Query
         except Exception: pass
 
 def issue_call_room_token(call_id:str,audience:str):
-    return jwt.encode(
-        {"sub":call_id,"call_id":call_id,"aud":audience,"exp":datetime.utcnow().timestamp()+600},
-        settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
-    )
+    # Browser WebSocket query strings are not a reliable place for a JWT audience
+    # exchange across proxies. Use a compact, URL-safe, HMAC-signed room token
+    # dedicated to this short-lived public call session.
+    exp=int(datetime.utcnow().timestamp())+600
+    body=f"v2.{call_id}.{audience}.{exp}"
+    signature=hmac.new(settings.jwt_secret.encode("utf-8"),body.encode("utf-8"),hashlib.sha256).hexdigest()
+    return f"{body}.{signature}"
 
 def verify_call_room_token(token:str,call_id:str,audience:str):
     try:
-        p=jwt.decode(token,settings.jwt_secret,algorithms=[settings.jwt_algorithm],options={"require":["exp","sub","aud"]},audience=audience)
-        return p.get("call_id")==call_id
-    except jwt.InvalidTokenError:
+        parts=token.split(".")
+        if len(parts)!=5 or parts[0]!="v2":
+            return False
+        _,token_call_id,token_audience,exp_text,signature=parts
+        if token_call_id!=call_id or token_audience!=audience:
+            return False
+        exp=int(exp_text)
+        if exp < int(datetime.utcnow().timestamp()):
+            return False
+        body=".".join(parts[:4])
+        expected=hmac.new(settings.jwt_secret.encode("utf-8"),body.encode("utf-8"),hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature,expected)
+    except (ValueError,TypeError):
         return False
 
 @app.websocket("/ws/calls/{call_id}")
