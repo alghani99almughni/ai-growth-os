@@ -280,20 +280,34 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     # Keep short conversational turns deterministic: greetings should never
     # fall through to the model/handoff path.
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
-    if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\\s*",m) for g in greeting_words):
+    current_entities=extract_booking_entities(message)
+    has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint"))
+    if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
+    elif intent=="language_request":
+        booking="Yes. I can continue in Hindi. आप हिंदी में बात कर सकते हैं।"
+        c.language="hi"
+    elif intent=="closing":
+        booking="You're welcome. If you need anything else, I'm here to help."
+        if any(x in m for x in ("bye","goodbye","leave it","cancel","that's all","thats all")):
+            c.state="closed"
+    elif intent=="human_handoff":
+        booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
+        c.state="handoff_requested"
+    elif intent=="availability":
+        booking="I can help check availability. What day and time are you looking for?"
+        c.state="availability_request"
     elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
-    elif intent=="booking":
-        # Extract ALL booking entities from the current turn. If the caller
-        # says "book Thursday at 12", both values survive in the same turn.
+    elif intent=="booking" or (c.state.startswith("booking") and has_booking_entities):
         booking, booking_data = booking_reply_from_state(db, c, message)
     elif c.state.startswith("booking"):
-        # A follow-up may contain only the missing entity, or may contain both
-        # entities again. Always merge it with the active booking context.
-        booking, booking_data = booking_reply_from_state(db, c, message)
+        # Do not swallow unrelated questions just because an earlier turn
+        # started a booking. Preserve the booking context for later.
+        booking_data = {"day": None, "time": None, "complete": False}
     else:
         booking_data = {"day": None, "time": None, "complete": False}
+
 
     direct=hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
