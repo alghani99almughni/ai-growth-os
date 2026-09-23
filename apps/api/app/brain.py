@@ -34,22 +34,34 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
 
 def local_intent(message:str)->str:
     m=message.casefold()
-    compact=re.sub(r"[^a-z0-9\s]"," ",m)
-    compact=re.sub(r"\s+"," ",compact).strip()
-    booking_terms=("book","booking","appointment","schedule","reserve","reservation","अपॉइंटमेंट","బుకింగ్")
+    compact=re.sub(r"[^a-z0-9\\s]"," ",m)
+    compact=re.sub(r"\\s+"," ",compact).strip()
+
+    # Explicit actions take precedence over broad words such as "time" or
+    # "available", while multilingual/script checks use the original text.
+    booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
         return "booking"
     if any(x in compact for x in ("bhukamp","bukamp","buking","boking","bok an")) and any(
         x in compact for x in ("today","tomorrow","time","slot","appointment","schedule","for")
     ):
         return "booking"
-    if any(x in compact for x in ["hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day","कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது"]): return "business_hours"
-    if any(x in compact for x in ["speak hindi","speak in hindi","in hindi","hindi","हिंदी","हिन्दी"]): return "language_request"
-    if any(x in compact for x in ["bye","goodbye","that's all","thats all","thank you","thanks","you're welcome","you are welcome"]): return "closing"
-    if any(x in compact for x in ["available","availability","is there a slot","is there any slot","can i get a slot","check availability"]): return "availability"
-    if any(x in m for x in ["price","cost","fee","rate","how much","कीमत","ధర","விலை"]): return "pricing"
-    if any(x in m for x in ["buy","order","product","stock","available","उत्पाद","ఆర్డర్"]): return "product"
-    if any(x in m for x in ["call me","human","person","staff","agent","इंसान","వ్యక్తి"]): return "human_handoff"
+
+    if any(x in m for x in ("speak hindi","speak in hindi","in hindi","hindi","हिंदी","हिन्दी","हिंदी में","हिंदी बोल","क्या आप हिंदी")):
+        return "language_request"
+    if any(x in compact for x in ("bye","goodbye","thank you","thanks","you re welcome","you are welcome","that s all","thats all","leave it","cancel")) or "that's all" in m:
+        return "closing"
+    if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति")):
+        return "human_handoff"
+
+    if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
+        return "availability"
+    if any(x in m for x in ("price","cost","fee","rate","how much","charge","what do you charge","कीमत","ధర","விலை")):
+        return "pricing"
+    if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
+        return "product"
+    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
+        return "business_hours"
     return "information"
 
 def business_hours_reply(db: Session, tenant_id: str, message: str, language: str) -> str|None:
