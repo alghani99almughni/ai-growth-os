@@ -58,6 +58,7 @@ export default function SSNutritions(){
   const recognitionRef=useRef<any>(null);
   const callActiveRef=useRef(false);
   const speechActiveRef=useRef(false);
+  const conversationIdRef=useRef<string|null>(null);
 
   useEffect(()=>{
     fetch(api()+"/api/v1/public/business/resolve?name="+encodeURIComponent("SS Nutritions"))
@@ -175,10 +176,11 @@ export default function SSNutritions(){
           const rr=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/voice/turn",{
             method:"POST",
             headers:{"Content-Type":"application/json"},
-            body:JSON.stringify({transcript:text,call_id:payload.call_id,channel:"voice"})
+            body:JSON.stringify({transcript:text,call_id:payload.call_id,conversation_id:conversationIdRef.current,channel:"voice"})
           });
           const answer=await rr.json();
           if(!rr.ok) throw new Error(answer.detail||"Voice answer failed.");
+          conversationIdRef.current=answer.conversation_id||conversationIdRef.current;
           setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
           if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
           if(answer.handoff_required){
@@ -274,7 +276,7 @@ export default function SSNutritions(){
   },[cleanupCall,playPcm]);
 
   const startCall=async()=>{
-    setCallError(""); setTranscript([]);
+    setCallError(""); setTranscript([]); conversationIdRef.current=null;
     if(name.trim().length<1 || phone.replace(/\D/g,"").length<5){
       setCallError("Please enter your name and mobile number first."); return;
     }
@@ -312,6 +314,7 @@ export default function SSNutritions(){
 
   const endCall=()=>{
     callActiveRef.current=false;
+    conversationIdRef.current=null;
     try{recognitionRef.current?.stop()}catch{}
     recognitionRef.current=null;
     try{window.speechSynthesis?.cancel()}catch{}
