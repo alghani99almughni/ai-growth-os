@@ -68,3 +68,7 @@ Optimize for:
 - appropriate escalation
 - clean close
 """
+
+
+from .multilingual_voice_training import MULTILINGUAL_VOICE_CONTEXT
+AGENT_TRAINING_CONTEXT = AGENT_TRAINING_CONTEXT + "\n\n" + MULTILINGUAL_VOICE_CONTEXT
