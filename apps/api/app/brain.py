@@ -65,7 +65,7 @@ def local_intent(message:str)->str:
     if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","समा","సమయాలు","ఎప్పుడు","நேரం","எப்போது")):
         return "business_hours"
 
-    if any(x in m for x in ("what day is tomorrow","which day is tomorrow","what day tomorrow","tomorrow which day","what day is day after tomorrow","tomorrow kaun sa din","kal kaun sa din","kal konsa din","kal kaunsa din","कल कौन सा दिन","कल कौन सा दिन है")):
+    if any(x in m for x in ("what day is tomorrow","which day is tomorrow","what day tomorrow","tomorrow which day","what day is day after tomorrow","tomorrow kaun sa din","kal kaun sa din","cal kaun sa din","kal konsa din","kal kaunsa din","cal konsa din","cal kaunsa din","कल कौन सा दिन","कल कौन सा दिन है")):
         return "date_information"
 
     if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
