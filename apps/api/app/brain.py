@@ -54,7 +54,7 @@ def local_intent(message:str)->str:
     if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति")):
         return "human_handoff"
 
-    if (any(x in compact for x in ("which doctor","who is the doctor","may i know the doctor","doctor name","provider","physician")) or any(x in m for x in ("डॉक्टर का नाम","డాక్టర్ పేరు","மருத்துவர் பெயர்"))) and not any(x in compact for x in ("available","availability","slot","appointment")):
+    if (any(x in compact for x in ("which doctor","who is the doctor","may i know the doctor","doctor name","provider","physician")) or any(x in m for x in ("डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருத்துவர் பெயர்"))) and not any(x in compact for x in ("available","availability","slot","appointment")):
         return "doctor_information"
     if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
         return "availability"
@@ -62,8 +62,11 @@ def local_intent(message:str)->str:
         return "pricing"
     # Timing questions are deterministic and should win over broad product wording.
     # Browser STT can produce fragments such as "man of the timings" or "manoj timings".
-    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
+    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","समा","సమయాలు","ఎప్పుడు","நேரం","எப்போது")):
         return "business_hours"
+
+    if any(x in m for x in ("what day is tomorrow","which day is tomorrow","what day tomorrow","tomorrow which day","what day is day after tomorrow","tomorrow kaun sa din","kal kaun sa din","kal konsa din","kal kaunsa din","कल कौन सा दिन","कल कौन सा दिन है")):
+        return "date_information"
 
     if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
         return "product"
@@ -428,10 +431,29 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         else:
             booking="I couldn't verify that slot right now. I'll arrange for our team to call you back."
             booking_data={"complete":False,"confirmation_requested":False}
+    elif intent=="doctor_information":
+        doctor_answer=knowledge_match(db,tenant_id,message)
+        if doctor_answer:
+            booking=doctor_answer
+            c.state="information"
+        else:
+            booking="I don't have verified doctor details configured yet. I can arrange for the team to share the doctor's name and details with you."
+            c.state="information"
+
     elif intent=="availability":
         booking="I can help check availability. What day and time are you looking for?"
         c.state="availability_request"
-    elif intent=="booking" and not capability_enabled(policy,"bookings",True):
+    elif intent=="date_information":
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+        now_local=datetime.now(ZoneInfo(tenant.timezone))
+        if "day after tomorrow" in m or "परसों" in m:
+            target=now_local.date()+timedelta(days=2)
+        else:
+            target=now_local.date()+timedelta(days=1)
+        booking=f"{target.strftime('%A, %B %-d, %Y')}."
+        c.state="information"
+        elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
     else:
         # Contextual booking continuation: a short answer such as "Saturday" is
