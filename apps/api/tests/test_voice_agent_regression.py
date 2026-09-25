@@ -9,7 +9,8 @@ The live browser/realtime suite is a separate layer.
 
 import pytest
 
-from app.brain import local_intent, extract_booking_entities\nfrom app.ai_router import detect_language
+from app.brain import local_intent, extract_booking_entities
+from app.ai_router import detect_language
 
 
 INTENT_CASES = [
