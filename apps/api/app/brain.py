@@ -392,8 +392,9 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
     elif intent=="language_request":
-        booking="Yes. I can continue in Hindi. आप हिंदी में बात कर सकते हैं।"
-        c.language="hi"
+        requested_language=language_request(message) or "en"
+        booking=LANGUAGE_SWITCH_CONFIRMATIONS.get(requested_language, LANGUAGE_SWITCH_CONFIRMATIONS["en"])
+        c.language=requested_language
     elif intent=="closing":
         booking="You're welcome. If you need anything else, I'm here to help."
         if any(x in m for x in ("bye","goodbye","leave it","cancel","that's all","thats all")):
