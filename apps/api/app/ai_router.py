@@ -49,4 +49,23 @@ def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
         score=_score(message,(row.title or "")+" "+(row.content or ""))
         if row.language==language:score+=0.08
         if score>best_score:best_score,best=score,row
-    return best.content if best and best_score>=0.38 else None
+    return best.content if best and best_score>=0.38 else None    # Romanized Indian-language speech is common in browser STT. Use multiple
+    # corroborating markers so a single shared word such as "kal" does not misclassify.
+    romanized = text.casefold()
+    roman_scores = {
+        "hi": ("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye"),
+        "te": ("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara","unnara"),
+        "ta": ("enakku","ungal","naalai","venum","pannanum","eppo","pesanum"),
+        "kn": ("nanage","nimma","naale","beku","madbeku","maatadbeku","yavaga"),
+        "ml": ("enikku","ningalude","naale","venam","enthaa","eppozha","parayamo"),
+        "mr": ("mala","tumche","udya","aahe","kay","havi","sanga"),
+        "bn": ("amar","apnader","korte","chai","koto","kokhon","bolben"),
+        "gu": ("mane","tamara","kaale","joiye","shu","chhe","kyare"),
+        "pa": ("mainu","tuhade","chahidi","kadon","kinna","gal","karni"),
+        "ur": ("mujhe","aapke","kaun","bataiye","karna"),
+    }
+    roman_scores = {lang: sum(1 for marker in markers if marker in romanized) for lang, markers in roman_scores.items()}
+    roman_lang, roman_score = max(roman_scores.items(), key=lambda item: item[1])
+    if roman_score >= 2:
+        return roman_lang
+
