@@ -9,7 +9,7 @@ The live browser/realtime suite is a separate layer.
 
 import pytest
 
-from app.brain import local_intent, extract_booking_entities
+from app.brain import local_intent, extract_booking_entities\nfrom app.ai_router import detect_language
 
 
 INTENT_CASES = [
@@ -22,7 +22,7 @@ INTENT_CASES = [
     ("booking", "I want to schedule today"),
     ("booking", "Can I book Thursday"),
     ("booking", "I need to reserve a time"),
-    ("booking", "appointment please"),
+    ("booking", "appointment please"),\n    ("booking", "Naaku appointment book cheyyali"),\n    ("booking", "Enakku appointment book pannanum"),\n    ("booking", "Nanage appointment book madbeku"),\n    ("booking", "Enikku appointment book cheyyanam"),\n    ("booking", "Mala appointment book karaychi aahe"),\n    ("booking", "Ami appointment book korte chai"),\n    ("booking", "Mare appointment book karvi chhe"),
     ("business_hours", "What are your hours"),
     ("business_hours", "What time do you open"),
     ("business_hours", "What time do you close"),
@@ -32,13 +32,13 @@ INTENT_CASES = [
     ("business_hours", "han may I know the timings"),
     ("business_hours", "Man of the timings"),
     ("business_hours", "Manoj timings"),
-    ("business_hours", "may know the timings"),
+    ("business_hours", "may know the timings"),\n    ("business_hours", "Mee timings enti"),\n    ("business_hours", "Unga timings enna"),\n    ("business_hours", "Nimma timings enu"),\n    ("business_hours", "Ningalude timings entha"),\n    ("business_hours", "Tumche timings kay aahet"),\n    ("business_hours", "Apnader timings ki"),\n    ("business_hours", "Tamara timings shu chhe"),\n    ("business_hours", "Tuhade timings ki ne"),
     ("business_hours", "Tell me your timing"),
     ("business_hours", "When are you open"),
     ("business_hours", "When do you finish for the day"),
     ("business_hours", "Do you open in the morning"),
     ("business_hours", "What time do you start"),
-    ("availability", "Is there a slot available"),
+    ("doctor_information", "may i know the doctor name"),\n    ("availability", "Is there a slot available"),
     ("availability", "Are you available tomorrow"),
     ("availability", "Can I get a slot"),
     ("availability", "Check availability"),
@@ -119,7 +119,7 @@ def test_voice_intent_matrix(expected, message):
 
 
 BOOKING_EXTRACTION_CASES = [
-    ("tomorrow at 5:30 p.m.", "tomorrow", "5:30 PM"),
+    ("tomorrow at 5:30 p.m.", "tomorrow", "5:30 PM"),\n    ("kal 4 baje", None, "4 PM"),\n    ("cal 4 baje", None, "4 PM"),\n    ("repu 4 gantlaki", None, "4 PM"),\n    ("naalai 4 manikku", None, "4 PM"),\n    ("naale 4 gantige", None, "4 PM"),\n    ("udya 4 vajta", None, "4 PM"),\n    ("kaale 4 vagye", None, "4 PM"),
     ("today at 3 PM", "today", "3 PM"),
     ("Thursday at 4:15 PM", "thursday", "4:15 PM"),
     ("Friday 10 AM", "friday", "10 AM"),
@@ -154,3 +154,18 @@ def test_booking_entity_extraction(message, expected_day, expected_time):
 
 def test_regression_suite_has_more_than_100_scenarios():
     assert len(INTENT_CASES) + len(BOOKING_EXTRACTION_CASES) >= 100
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("Can you speak Hindi", "hi"),
+    ("Telugulo matladagalara", "te"),
+    ("Enakku information venum", "ta"),
+    ("Nanage swalpa information beku", "kn"),
+    ("Enikku kurachu information venam", "ml"),
+    ("Mala thodi mahiti havi aahe", "mr"),
+    ("Amar ektu information dorkar", "bn"),
+    ("Mane thodi mahiti joiye", "gu"),
+    ("Mainu thodi information chahidi hai", "pa"),
+])
+def test_romanized_language_detection(message, expected):
+    assert detect_language(message) == expected
