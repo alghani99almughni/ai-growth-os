@@ -11,7 +11,8 @@ from .config import settings
 from .ai_router import detect_language, faq_match, structured_match, knowledge_match
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
-from .tenant_policy import tenant_policy, capability_enabled, policy_context\nfrom .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION
+from .tenant_policy import tenant_policy, capability_enabled, policy_context
+from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION
 
 logger = logging.getLogger(__name__)
 
