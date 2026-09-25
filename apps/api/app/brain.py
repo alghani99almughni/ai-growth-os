@@ -11,7 +11,7 @@ from .config import settings
 from .ai_router import detect_language, faq_match, structured_match, knowledge_match
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
-from .tenant_policy import tenant_policy, capability_enabled, policy_context
+from .tenant_policy import tenant_policy, capability_enabled, policy_context\nfrom .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION
 
 logger = logging.getLogger(__name__)
 
@@ -34,44 +34,69 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
 
 def local_intent(message:str)->str:
     m=message.casefold()
-    compact=re.sub(r"[^a-z0-9\s]"," ",m)
-    compact=re.sub(r"\s+"," ",compact).strip()
+    compact=re.sub(r"[^a-z0-9\\s]"," ",m)
+    compact=re.sub(r"\\s+"," ",compact).strip()
 
-    # Explicit actions take precedence over broad words such as "time" or
-    # "available", while multilingual/script checks use the original text.
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
         return "booking"
     if any(x in compact for x in ("bhukamp","bukamp","buking","boking","bok an")) and any(
-        x in compact for x in ("today","tomorrow","time","slot","appointment","schedule","for")
+        x in compact for x in ("today","tomorrow","kal","repu","naale","time","slot","appointment","schedule","for")
     ):
         return "booking"
 
-    if any(x in m for x in ("speak hindi","speak in hindi","in hindi","hindi","हिंदी","हिन्दी","हिंदी में","हिंदी बोल","क्या आप हिंदी")):
+    if language_request(message):
         return "language_request"
     if any(x in compact for x in ("bye","goodbye","thank you","thanks","you re welcome","you are welcome","that s all","thats all","leave it","cancel")) or "that's all" in m:
         return "closing"
-    if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति")):
+    if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
         return "human_handoff"
 
-    if (any(x in compact for x in ("which doctor","who is the doctor","may i know the doctor","doctor name","provider","physician")) or any(x in m for x in ("डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருத்துவர் பெயர்"))) and not any(x in compact for x in ("available","availability","slot","appointment")):
+    if (any(x in compact for x in (
+        "which doctor","who is the doctor","may i know the doctor","doctor name","doctor's name",
+        "provider","physician","doctor peru","doctor hesaru","doctorinte peru","doctoranche naav"
+    )) or any(x in m for x in (
+        "डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருத்துவர் பெயர்","ಡಾಕ್ಟರ್ ಹೆಸರು","ഡോക്ടറിന്റെ പേര്",
+        "डॉक्टरांचं नाव","ডাক্তারের নাম","ડોક્ટરનું નામ","ਡਾਕਟਰ ਦਾ ਨਾਮ","ڈاکٹر کا نام"
+    ))) and not any(x in compact for x in ("available","availability","slot","appointment")):
         return "doctor_information"
-    if any(x in compact for x in ("available","availability","is there a slot","is there any slot","can i get a slot","check availability","free time","free slot","any appointment available","are there slots")):
+
+    if any(x in compact for x in (
+        "available","availability","is there a slot","is there any slot","can i get a slot",
+        "check availability","free time","free slot","any appointment available","are there slots",
+        "doctor available","doctor is available","doctor free"
+    )):
         return "availability"
-    if any(x in m for x in ("price","cost","fee","rate","how much","charge","what do you charge","कीमत","ధర","விலை")):
+
+    if any(x in m for x in ("price","cost","fee","rate","how much","what do you charge","कीमत","ధర","விலை","ಬೆಲೆ","വില","किती","দাম","કેટલો","ਕਿੰਨਾ")):
         return "pricing"
-    # Timing questions are deterministic and should win over broad product wording.
-    # Browser STT can produce fragments such as "man of the timings" or "manoj timings".
-    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","समा","సమయాలు","ఎప్పుడు","நேரం","எப்போது")):
+
+    if any(x in compact for x in (
+        "hour","hours","hourly","timing","timings","time","open","closed","opening","closing",
+        "when are you open","what time","when do you start","when do you finish",
+        "start in the morning","finish for the day","timings enta","timings enna",
+        "timings enu","timings entha","timings kay","timings ki","timings shu","timings ne"
+    )) or any(x in m for x in (
+        "कितने बजे","समय","समय क्या","సమయాలు","ఎప్పుడు","நேரம்","எப்போது","ಸಮಯ","ಯಾವಾಗ",
+        "സമയം","എപ്പോൾ","वेळ","কখন","સમય","ਕਦੋਂ","اوقات"
+    )) or re.search(r"\\b(man of|man off|manoj)\\s+(the\\s+)?timings?\\b", compact):
         return "business_hours"
 
-    if any(x in m for x in ("what day is tomorrow","which day is tomorrow","what day tomorrow","tomorrow which day","what day is day after tomorrow","tomorrow kaun sa din","kal kaun sa din","cal kaun sa din","kal konsa din","kal kaunsa din","cal konsa din","cal kaunsa din","कल कौन सा दिन","कल कौन सा दिन है")):
+    if any(x in m for x in (
+        "what day is tomorrow","which day is tomorrow","what day tomorrow","tomorrow which day",
+        "what day is day after tomorrow","tomorrow kaun sa din","kal kaun sa din",
+        "cal kaun sa din","kal konsa din","kal kaunsa din","cal konsa din","कल कौन सा दिन",
+        "कल कौन सा दिन है","repu ye roju","naalai enna kizhamai","naale yaava dina",
+        "naale ethu divasam","udya konta vaar","kal kon din","kaale kayo vaar","kal kehra din"
+    )) or ("kaun sa din" in m or "kaunsa din" in m or "konsa din" in m):
         return "date_information"
 
-    if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్")):
+    if any(x in m for x in ("buy","purchase","order","product","stock","available","उत्पाद","ఆర్డర్","பொருள்","ಉತ್ಪನ್ನ","ഉൽപ്പന്നം","उत्पादन","পণ্য","ઉત્પાદન","ਉਤਪਾਦ")):
         return "product"
-    # Common browser STT misrecognition: “may I know the timings” can arrive as\n    # “Manoj timings”. Treat the phrase as a timing question, but do not\n    # globally rewrite arbitrary names.\n    if re.search(r"\bmanoj\s+(timing|timings)\b", compact):\n        return "business_hours"\n    if any(x in compact for x in ("hour","hours","hourly","timing","timings","time","open","closed","opening","closing","when are you open","what time","when do you start","when do you finish","start in the morning","finish for the day")) or any(x in m for x in ("कितने बजे","समय","సమయాలు","ఎప్పుడు","நேரம்","எப்போது")):
-        return "business_hours"
+
+    if needs_voice_clarification(message):
+        return "clarification"
+
     return "information"
 
 def business_hours_reply(db: Session, tenant_id: str, message: str, language: str) -> str|None:
@@ -137,91 +162,58 @@ _WEEKDAY_ALIASES = {
 _RELATIVE_DAYS = ("today", "tomorrow", "day after tomorrow")
 
 def extract_booking_entities(text: str) -> dict:
-    """Extract every useful booking entity from one caller turn."""
+    """Extract booking entities while tolerating natural Indian-language speech and STT variants."""
     value = text.casefold().strip()
     day = None
     for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
-        if re.search(rf"\b{re.escape(alias)}\b", value):
+        if re.search(rf"\\b{re.escape(alias)}\\b", value):
             day = canonical
             break
     if day is None:
         for canonical in _WEEKDAYS:
-            if re.search(rf"\b{canonical}\b", value):
+            if re.search(rf"\\b{canonical}\\b", value):
                 day = canonical
                 break
 
-    relative_day = None
-    if "day after tomorrow" in value:
-        relative_day = "day_after_tomorrow"
-    elif re.search(r"\btomorrow\b", value):
-        relative_day = "tomorrow"
-    elif re.search(r"\btoday\b", value):
-        relative_day = "today"
+    relative_day = relative_day_from_text(value)
 
-    # Spoken and typed time forms: 5 PM, 5:30 p.m., 12 noon, 17:30.
     time_value = None
-    if re.search(r"\bnoon\b", value):
+    if re.search(r"\\bnoon\\b|\\b12\\s*(noon|baje|vajje|vagye|mani)\\b", value):
         time_value = "12 PM"
     else:
-        tm = re.search(
-            r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b",
-            value,
-        )
+        tm = re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(a\\.?m\\.?|p\\.?m\\?)\\b", value)
         if tm:
-            hour = int(tm.group(1))
-            minute = tm.group(2)
-            meridiem = "AM" if tm.group(3).replace(".", "").startswith("a") else "PM"
+            hour = int(tm.group(1)); minute = tm.group(2)
+            meridiem = "AM" if tm.group(3).replace(".","").startswith("a") else "PM"
             time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
-            tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
+            tm24 = re.search(r"\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b", value)
             if tm24:
-                hour24 = int(tm24.group(1))
-                minute24 = tm24.group(2)
-                meridiem = "AM" if hour24 < 12 else "PM"
-                hour12 = hour24 % 12 or 12
-                time_value = f"{hour12}:{minute24} {meridiem}"
+                hour24=int(tm24.group(1)); minute24=tm24.group(2)
+                meridiem="AM" if hour24<12 else "PM"
+                hour12=hour24%12 or 12
+                time_value=f"{hour12}:{minute24} {meridiem}"
             else:
-                # Natural-language whole-hour forms such as "at 5", "by 5",
-                # "around five", and "five in the evening".
-                number_words = {
-                    "one":1,"two":2,"three":3,"four":4,"five":5,"six":6,
-                    "seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12,
-                }
-                word_hour = next((n for w,n in number_words.items() if re.search(rf"\b{w}\b", value)), None)
-                digit_hour = re.search(r"\b(?:at|by|around|about)\s+(1[0-2]|0?[1-9])\b", value)
-                hour = int(digit_hour.group(1)) if digit_hour else word_hour
+                number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
+                word_hour=next((n for w,n in number_words.items() if re.search(rf"\\b{w}\\b",value)),None)
+                digit_hour=re.search(r"\\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\\s+(1[0-2]|0?[1-9])\\b",value)
+                hour=int(digit_hour.group(1)) if digit_hour else word_hour
                 if hour:
-                    if re.search(r"\b(morning|am|a\.m\.)\b", value):
-                        meridiem = "AM"
-                    elif re.search(r"\b(evening|night|pm|p\.m\.)\b", value):
-                        meridiem = "PM"
+                    if re.search(r"\\b(morning|subah|savere|am|a\\.m\\.|uday|sakal)\\b",value):
+                        meridiem="AM"
+                    elif re.search(r"\\b(evening|night|shaam|pm|p\\.m\\.|sanje|saayantram|maalai)\\b",value):
+                        meridiem="PM"
                     else:
-                        meridiem = None
-                    time_value = f"{hour} {meridiem}" if meridiem else None
+                        meridiem=None
+                    time_value=f"{hour} {meridiem}" if meridiem else None
 
-    # "Friday evening" / "Saturday morning" is a time range, not an exact
-    # appointment time. Preserve it as a time hint so the agent can clarify.
-    time_hint = None
-    for label in ("morning", "afternoon", "evening", "night"):
-        if re.search(rf"\b{label}\b", value):
-            time_hint = label
-            break
-
-    # Numeric calendar day such as "30th". Keep it as a date hint; resolving
-    # the actual month/year belongs to the date-aware booking layer.
+    time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\\b{label}\\b",value)),None)
     date_hint = None
-    dm = re.search(r"\b(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b", value)
+    dm=re.search(r"\\b(3[01]|[12]\\d|[1-9])(?:st|nd|rd|th)?\\b",value)
     if dm:
-        date_hint = int(dm.group(1))
+        date_hint=int(dm.group(1))
 
-    return {
-        "day": day,
-        "relative_day": relative_day,
-        "time": time_value,
-        "time_hint": time_hint,
-        "date_hint": date_hint,
-    }
-
+    return {"day":day,"relative_day":relative_day,"time":time_value,"time_hint":time_hint,"date_hint":date_hint}
 
 def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
     """Recover useful booking entities from the active booking conversation."""
@@ -447,14 +439,15 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         from datetime import timedelta
         from zoneinfo import ZoneInfo
         now_local=datetime.now(ZoneInfo(tenant.timezone))
-        if "day after tomorrow" in m or "परसों" in m:
-            target=now_local.date()+timedelta(days=2)
-        else:
-            target=now_local.date()+timedelta(days=1)
+        target=now_local.date()+timedelta(days=2 if "day after tomorrow" in m or "परसों" in m else 1)
         booking=f"{target.strftime('%A, %B %-d, %Y')}."
         c.state="information"
-        elif intent=="booking" and not capability_enabled(policy,"bookings",True):
+    elif intent=="clarification":
+        booking=SPOKEN_CLARIFICATION.get(language, SPOKEN_CLARIFICATION["en"])
+        c.state="information"
+    elif intent=="booking" and not capability_enabled(policy,"bookings",True):
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
+
     else:
         # Contextual booking continuation: a short answer such as "Saturday" is
         # a booking response when the immediately preceding AI turn explicitly
