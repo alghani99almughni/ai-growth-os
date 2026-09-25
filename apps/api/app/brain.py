@@ -12,7 +12,7 @@ from .ai_router import detect_language, faq_match, structured_match, knowledge_m
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
-from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION
+from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ def business_hours_reply(db: Session, tenant_id: str, message: str, language: st
         if same_hours and {r.weekday for r in weekday_rows}==set(range(6)):
             opening=first.open_time.strftime('%I:%M %p').lstrip('0')
             closing=first.close_time.strftime('%I:%M %p').lstrip('0')
-            return f"We're open Monday to Saturday, {opening} to {closing}. Sunday we're closed."
+            return BUSINESS_HOURS_SIMPLE.get(language, BUSINESS_HOURS_SIMPLE["en"]).format(opening=opening, closing=closing)
     parts=[]
     for row in rows:
         label=names[row.weekday] if 0 <= row.weekday < len(names) else str(row.weekday)
@@ -430,11 +430,11 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             booking=doctor_answer
             c.state="information"
         else:
-            booking="I don't have verified doctor details configured yet. I can arrange for the team to share the doctor's name and details with you."
+            booking=DOCTOR_DETAILS_MISSING.get(language, DOCTOR_DETAILS_MISSING["en"])
             c.state="information"
 
     elif intent=="availability":
-        booking="I can help check availability. What day and time are you looking for?"
+        booking=AVAILABILITY_PROMPTS.get(language, AVAILABILITY_PROMPTS["en"])
         c.state="availability_request"
     elif intent=="date_information":
         from datetime import timedelta
