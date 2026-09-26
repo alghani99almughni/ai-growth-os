@@ -195,7 +195,6 @@ def voice_feedback_reply(language: str, gender: str = "female") -> str:
       "gu":{"female":"Samajyu. Hu Gujarati ma j continue karish.","male":"Samajyu. Hu Gujarati ma j continue karish."}
     }
     return table.get(language,table["en"]).get(gender,table["en"]["female"])
-}
 
 SPOKEN_CLARIFICATION = {
     "en": "Sorry, I didn't catch that. Could you please repeat it?",
