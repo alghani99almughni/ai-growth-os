@@ -17,12 +17,6 @@ def detect_language(text:str)->str:
     for lang,markers in explicit_languages.items():
         if any(marker in value for marker in markers):
             return lang
-    scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
-    if max(scores.values(),default=0)>0:
-        winner=max(scores,key=scores.get)
-        if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
-        if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
-        return winner
     roman_scores={
         "hi":("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye"),
         "te":("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara"),
@@ -36,8 +30,16 @@ def detect_language(text:str)->str:
         "ur":("mujhe","aapke","kaun","bataiye","karna"),
     }
     ranked={lang:sum(1 for marker in markers if marker in value) for lang,markers in roman_scores.items()}
-    winner,score=max(ranked.items(),key=lambda item:item[1])
-    return winner if score>=2 else "en"
+    roman_lang,roman_score=max(ranked.items(),key=lambda item:item[1])
+    if roman_score>=2:
+        return roman_lang
+    scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
+    if max(scores.values(),default=0)>0:
+        winner=max(scores,key=scores.get)
+        if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
+        if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
+        return winner
+    return "en"
 def normalize(text:str)->set[str]:
     return {x.casefold() for x in re.findall(r"[\w\u00c0-\uffff]{2,}",text,flags=re.UNICODE)}
 def _score(message:str,candidate:str)->float:
