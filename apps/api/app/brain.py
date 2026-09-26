@@ -12,7 +12,7 @@ from .ai_router import detect_language, faq_match, structured_match, knowledge_m
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
-from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING
+from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -462,7 +462,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
-    elif c.state=="booking_confirmation" and re.search(r"\b(yes|yeah|yep|sure|confirm|confirmed|please confirm|go ahead|do it|okay confirm|ok confirm)\b", m):
+    elif c.state=="booking_confirmation" and is_explicit_confirmation(message):
         # The browser voice path uses /voice/turn rather than the realtime
         # provider WebSocket. Preserve the booking state here so the public
         # endpoint can execute the owned booking transaction.
