@@ -6,17 +6,47 @@ from .models_ai import GlobalFaq
 from .models import Service, Product
 LANGUAGE_PATTERNS={"en":r"[a-z]","hi":r"[\u0900-\u097f]","te":r"[\u0c00-\u0c7f]","ta":r"[\u0b80-\u0bff]","kn":r"[\u0c80-\u0cff]","ml":r"[\u0d00-\u0d7f]","mr":r"[\u0900-\u097f]","bn":r"[\u0980-\u09ff]","gu":r"[\u0a80-\u0aff]","pa":r"[\u0a00-\u0a7f]","or":r"[\u0b00-\u0b7f]","as":r"[\u0980-\u09ff]","ur":r"[\u0600-\u06ff]"}
 def detect_language(text:str)->str:
-    value=text.casefold()
+    """Detect the caller language without limiting the engine to a hard-coded phrase catalog.
+
+    Priority:
+    1. Explicit language names / script.
+    2. Strong romanized lexical evidence.
+    3. Unicode script evidence.
+    4. English fallback.
+
+    Script-only detection intentionally returns a broad script language where a script is
+    uniquely identifying. Ambiguous scripts (notably Devanagari) use lexical clues.
+    Provider language metadata, when available, remains authoritative upstream.
+    """
+    value=text.casefold().strip()
     explicit_languages={
-        "hi":("hindi","हिंदी","हिन्दी"), "te":("telugu","telugulo","తెలుగు"),
-        "ta":("tamil","tamil la","தமிழ்"), "kn":("kannada","kannadadalli","ಕನ್ನಡ"),
-        "ml":("malayalam","malayalathil","മലയാളം"), "mr":("marathi","marathit","मराठी"),
-        "bn":("bengali","banglay","বাংলা"), "gu":("gujarati","gujarati ma","ગુજરાતી"),
-        "pa":("punjabi","punjabi vich","ਪੰਜਾਬੀ"), "ur":("urdu","urdu mein","اردو"),
+        "en":("english","inglish"),
+        "hi":("hindi","हिंदी","हिन्दी"),
+        "te":("telugu","telugulo","తెలుగు"),
+        "ta":("tamil","tamil la","தமிழ்"),
+        "kn":("kannada","kannadadalli","ಕನ್ನಡ"),
+        "ml":("malayalam","malayalathil","മലയാളം"),
+        "mr":("marathi","marathit","मराठी"),
+        "bn":("bengali","bangla","banglay","বাংলা"),
+        "gu":("gujarati","gujarati ma","ગુજરાતી"),
+        "pa":("punjabi","punjabi vich","ਪੰਜਾਬੀ"),
+        "ur":("urdu","urdu mein","اردو"),
+        "or":("odia","oriya","ଓଡ଼ିଆ","ଓଡିଆ"),
+        "as":("assamese","অসমীয়া","অসমিয়া"),
+        "kok":("konkani","कोंकणी","कोंकणी"),
+        "sa":("sanskrit","संस्कृत"),
+        "sd":("sindhi","سنڌي","सिन्धी"),
+        "ks":("kashmiri","کٲشُر","कश्मीरी"),
+        "mni":("manipuri","meitei","মৈতৈ","ꯃꯤꯇꯩ"),
+        "ne":("nepali","नेपाली"),
+        "doi":("dogri","डोगरी"),
+        "mai":("maithili","मैथिली"),
+        "sat":("santali","ᱥᱟᱱᱛᱟᱲᱤ"),
     }
     for lang,markers in explicit_languages.items():
-        if any(marker in value for marker in markers):
+        if any(marker.casefold() in value for marker in markers):
             return lang
+
     roman_scores={
         "hi":("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye"),
         "te":("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara"),
@@ -28,17 +58,42 @@ def detect_language(text:str)->str:
         "gu":("mane","tamara","kaale","joiye","shu","chhe","kyare"),
         "pa":("mainu","tuhade","chahidi","kadon","kinna","gal","karni"),
         "ur":("mujhe","aapke","kaun","bataiye","karna"),
+        "or":("mu","mora","apananka","kemiti","kebe","darkar","odia"),
+        "as":("moi","mur","apunar","kenekoi","kene","lage","assamese"),
+        "ne":("malai","tapai","tapain","kati","kahile","cha","chahinchha"),
+        "mai":("hamar","ahaan","kaise","kekra","chhai","maithili"),
+        "doi":("mainu","tus","kithhe","dogri"),
+        "kok":("maka","tuka","kitle","konkani"),
+        "sd":("mun","tawhan","kithay","sindhi"),
+        "ks":("me","tohi","kya","kashmiri"),
+        "mni":("eigi","nang","karigumba","manipuri"),
+        "sat":("ing","ama","kana","santali"),
     }
-    ranked={lang:sum(1 for marker in markers if marker in value) for lang,markers in roman_scores.items()}
-    roman_lang,roman_score=max(ranked.items(),key=lambda item:item[1])
+    words=set(re.findall(r"[\w\u00c0-\uffff]+",value,flags=re.UNICODE))
+    ranked={lang:sum(1 for marker in markers if marker.casefold() in words or marker.casefold() in value) for lang,markers in roman_scores.items()}
+    roman_lang,roman_score=max(ranked.items(),key=lambda item:item[1]) if ranked else ("en",0)
     if roman_score>=2:
         return roman_lang
-    scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
-    if max(scores.values(),default=0)>0:
-        winner=max(scores,key=scores.get)
-        if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
-        if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
+
+    script_patterns={
+        "te":r"[\u0c00-\u0c7f]","ta":r"[\u0b80-\u0bff]","kn":r"[\u0c80-\u0cff]",
+        "ml":r"[\u0d00-\u0d7f]","bn":r"[\u0980-\u09ff]","gu":r"[\u0a80-\u0aff]",
+        "pa":r"[\u0a00-\u0a7f]","or":r"[\u0b00-\u0b7f]","ur":r"[\u0600-\u06ff]",
+        "mni":r"[\uabc0-\uabff]","sat":r"[\u1c50-\u1c7f]",
+    }
+    script_scores={k:len(re.findall(p,text)) for k,p in script_patterns.items()}
+    winner=max(script_scores,key=script_scores.get) if script_scores else "en"
+    if script_scores.get(winner,0)>0:
         return winner
+
+    devanagari=len(re.findall(r"[\u0900-\u097f]",text))
+    if devanagari:
+        if re.search(r"\b(आहे|मला|काय|कुठे|उद्या|माहिती)\b",text): return "mr"
+        if re.search(r"\b(मैं|मुझे|आप|क्या|है|कल|चाहिए)\b",text): return "hi"
+        if re.search(r"\b(नेपाल|मलाई|तपाईं|कति)\b",text): return "ne"
+        if re.search(r"\b(मैथिली|हमर|अहाँ)\b",text): return "mai"
+        if re.search(r"\b(डोगरी|असां|तुसी)\b",text): return "doi"
+        return "hi"
     return "en"
 def normalize(text:str)->set[str]:
     return {x.casefold() for x in re.findall(r"[\w\u00c0-\uffff]{2,}",text,flags=re.UNICODE)}
