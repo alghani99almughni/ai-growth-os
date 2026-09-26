@@ -220,10 +220,11 @@ def extract_booking_entities(text: str) -> dict:
     if re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani|am|pm|a\.m\.|p\.m\.)\b", value):
         time_value = "12 PM"
     else:
-        tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b", value)
+        tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?|o['’]?clock|oclock)\b", value)
         if tm:
             hour = int(tm.group(1)); minute = tm.group(2)
-            meridiem = "AM" if tm.group(3).replace(".","").startswith("a") else "PM"
+            suffix=tm.group(3).replace(".","").casefold()
+            meridiem = "AM" if suffix.startswith("a") else "PM"
             time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
