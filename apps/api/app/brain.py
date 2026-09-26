@@ -372,7 +372,7 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     # Current turn always wins. A correction therefore replaces the old value.
     day = current["day"] or prior["day"]
-    relative_day = current["relative_day"] or prior["relative_day"]
+    relative_day = current["relative_day"] or (None if current["day"] else prior["relative_day"])
     time_value = current["time"] or prior["time"]
     time_hint = current["time_hint"] or prior["time_hint"]
     date_hint = current["date_hint"] or prior["date_hint"]
