@@ -205,7 +205,7 @@ def extract_booking_entities(text: str) -> dict:
                     elif re.search(r"\b(evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b",value):
                         meridiem="PM"
                     else:
-                        meridiem="PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku)\b",value) else None
+                        meridiem="PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value) else None
                     time_value=f"{hour} {meridiem}" if meridiem else None
 
     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
