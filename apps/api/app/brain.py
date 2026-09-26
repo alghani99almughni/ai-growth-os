@@ -169,7 +169,9 @@ def conversation(db: Session, tenant_id: str, message: str, language: str, chann
     if not c or c.tenant_id != tenant_id:
         c=Conversation(tenant_id=tenant_id,channel=channel,language=language)
         db.add(c); db.flush()
-    c.language=language; c.last_user_message=message; c.turns=(c.turns or 0)+1
+    if not c.language:
+        c.language=language
+    c.last_user_message=message; c.turns=(c.turns or 0)+1
     return c
 
 
@@ -471,17 +473,21 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
     current_entities=extract_booking_entities(message)
     has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint"))
+    active_booking=c.state.startswith("booking")
     if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
     elif intent=="language_request":
         requested_language=language_request(message) or "en"
+        previous_booking_state=c.state if active_booking else None
         booking=language_switch_confirmation(requested_language,agent_gender(db,tenant_id))
         c.language=requested_language
-    elif intent=="closing":
+        if previous_booking_state:
+            c.state=previous_booking_state
+    elif intent=="closing" and not active_booking:
         booking="You're welcome. If you need anything else, I'm here to help."
         if any(x in m for x in ("bye","goodbye","leave it","cancel","that's all","thats all")):
             c.state="closed"
-    elif intent=="voice_feedback":
+    elif intent=="voice_feedback" and not active_booking:
         feedback_replies={
             "en":"I understand. I'll continue with the same language and keep the conversation natural.",
             "hi":"Samajh gayi. Main Hindi mein hi continue karungi aur conversation naturally rakhoongi.",
@@ -500,6 +506,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
+    elif active_booking:
+        booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif c.state=="booking_confirmation" and is_explicit_confirmation(message):
         # The browser voice path uses /voice/turn rather than the realtime
         # provider WebSocket. Preserve the booking state here so the public
