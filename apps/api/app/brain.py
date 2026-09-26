@@ -471,7 +471,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="voice_feedback":
         feedback_replies={
             "en":"I understand. I'll continue with the same language and keep the conversation natural.",
-            "hi":"Samajh gaya. Main Hindi mein hi continue karunga aur conversation naturally rakhoonga.",
+            "hi":"Samajh gayi. Main Hindi mein hi continue karungi aur conversation naturally rakhoongi.",
             "te":"Ardham ayyindi. Nenu Telugu lo continue chestanu.",
             "ta":"Purinjukitten. Naan Tamil-la continue panren.",
             "kn":"Artha aayitu. Naanu Kannada dalli continue maaduttene.",
@@ -479,8 +479,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "mr":"Samajla. Mi Marathi madhyech continue karen.",
             "bn":"Bujhte perechi. Ami Banglayi continue korbo.",
             "gu":"Samajyu. Hu Gujarati ma j continue karish.",
-            "pa":"Samajh gaya. Main Punjabi vich hi gal jari rakhanga.",
-            "ur":"Samajh gaya. Main Urdu mein hi baat jari rakhunga.",
+            "pa":"Samajh gayi. Main Punjabi vich hi gal jari rakhangi.",
+            "ur":"Samajh gayi. Main Urdu mein hi baat jari rakhungi.",
         }
         booking=feedback_replies.get(language,feedback_replies["en"])
         c.state="information"
