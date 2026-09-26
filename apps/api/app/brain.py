@@ -35,8 +35,8 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
 
 def local_intent(message:str)->str:
     m=message.casefold()
-    compact=re.sub(r"[^a-z0-9\\s]"," ",m)
-    compact=re.sub(r"\\s+"," ",compact).strip()
+    compact=re.sub(r"[^a-z0-9\s]"," ",m)
+    compact=re.sub(r"\s+"," ",compact).strip()
 
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
@@ -80,7 +80,7 @@ def local_intent(message:str)->str:
     )) or any(x in m for x in (
         "कितने बजे","समय","समय क्या","సమయాలు","ఎప్పుడు","நேரம்","எப்போது","ಸಮಯ","ಯಾವಾಗ",
         "സമയം","എപ്പോൾ","वेळ","কখন","સમય","ਕਦੋਂ","اوقات"
-    )) or re.search(r"\\b(man of|man off|manoj)\\s+(the\\s+)?timings?\\b", compact):
+    )) or re.search(r"\b(man of|man off|manoj)\s+(the\s+)?timings?\b", compact):
         return "business_hours"
 
     if any(x in m for x in (
@@ -167,28 +167,28 @@ def extract_booking_entities(text: str) -> dict:
     value = text.casefold().strip()
     day = None
     for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
-        if re.search(rf"\\b{re.escape(alias)}\\b", value):
+        if re.search(rf"\b{re.escape(alias)}\b", value):
             day = canonical
             break
     if day is None:
         for canonical in _WEEKDAYS:
-            if re.search(rf"\\b{canonical}\\b", value):
+            if re.search(rf"\b{canonical}\b", value):
                 day = canonical
                 break
 
     relative_day = relative_day_from_text(value)
 
     time_value = None
-    if re.search(r"\\bnoon\\b|\\b12\\s*(noon|baje|vajje|vagye|mani)\\b", value):
+    if re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani)\b", value):
         time_value = "12 PM"
     else:
-        tm = re.search(r"\\b(1[0-2]|0?[1-9])(?::([0-5]\\d))?\\s*(a\\.?m\\.?|p\\.?m\\?)\\b", value)
+        tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\?)\b", value)
         if tm:
             hour = int(tm.group(1)); minute = tm.group(2)
             meridiem = "AM" if tm.group(3).replace(".","").startswith("a") else "PM"
             time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
-            tm24 = re.search(r"\\b([01]?\\d|2[0-3]):([0-5]\\d)\\b", value)
+            tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
                 hour24=int(tm24.group(1)); minute24=tm24.group(2)
                 meridiem="AM" if hour24<12 else "PM"
@@ -196,21 +196,21 @@ def extract_booking_entities(text: str) -> dict:
                 time_value=f"{hour12}:{minute24} {meridiem}"
             else:
                 number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
-                word_hour=next((n for w,n in number_words.items() if re.search(rf"\\b{w}\\b",value)),None)
-                digit_hour=re.search(r"\\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\\s+(1[0-2]|0?[1-9])\\b",value)
+                word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
+                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value)
                 hour=int(digit_hour.group(1)) if digit_hour else word_hour
                 if hour:
-                    if re.search(r"\\b(morning|subah|savere|am|a\\.m\\.|uday|sakal)\\b",value):
+                    if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b",value):
                         meridiem="AM"
-                    elif re.search(r"\\b(evening|night|shaam|pm|p\\.m\\.|sanje|saayantram|maalai)\\b",value):
+                    elif re.search(r"\b(evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b",value):
                         meridiem="PM"
                     else:
                         meridiem=None
                     time_value=f"{hour} {meridiem}" if meridiem else None
 
-    time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\\b{label}\\b",value)),None)
+    time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
     date_hint = None
-    dm=re.search(r"\\b(3[01]|[12]\\d|[1-9])(?:st|nd|rd|th)?\\b",value)
+    dm=re.search(r"\b(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
     if dm:
         date_hint=int(dm.group(1))
 
