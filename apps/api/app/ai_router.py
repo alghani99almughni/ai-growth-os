@@ -24,7 +24,7 @@ def detect_language(text:str)->str:
         "kn":("nanage","nimma","naale","beku","madbeku","maatadbeku","yavaga"),
         "ml":("enikku","ningalude","naale","venam","enthaa","eppozha","parayamo"),
         "mr":("mala","tumche","udya","aahe","kay","havi","sanga"),
-        "bn":("amar","apnader","korte","chai","koto","kokhon","bolben"),
+        "bn":("amar","apnader","korte","chai","koto","kokhon","bolben","ektu","dorkar"),
         "gu":("mane","tamara","kaale","joiye","shu","chhe","kyare"),
         "pa":("mainu","tuhade","chahidi","kadon","kinna","gal","karni"),
         "ur":("mujhe","aapke","kaun","bataiye","karna"),
