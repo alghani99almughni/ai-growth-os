@@ -216,6 +216,10 @@ def extract_booking_entities(text: str) -> dict:
                 break
 
     relative_day = relative_day_from_text(value)
+    # “now”/“right now” means the next bookable slot in the tenant's local timezone.
+    now_requested = bool(re.search(r"\b(?:now|right now|immediately|abhi|abhi ke abhi|अभी|अभी के अभी)\b", value))
+    if now_requested and relative_day is None:
+        relative_day = "today"
 
     time_value = None
     if re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani|am|pm|a\.m\.|p\.m\.)\b", value):
@@ -261,7 +265,7 @@ def extract_booking_entities(text: str) -> dict:
     if dm:
         date_hint=int(dm.group(1))
 
-    return {"day":day,"relative_day":relative_day,"time":time_value,"time_hint":time_hint,"date_hint":date_hint}
+    return {"day":day,"relative_day":relative_day,"time":time_value,"time_hint":time_hint,"date_hint":date_hint,"now_requested":now_requested}
 
 def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
     """Recover useful booking entities from the active booking conversation."""
@@ -271,7 +275,7 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
         .order_by(ConversationMessage.created_at.desc())
         .limit(20)
     ).all()
-    ctx = {"day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None}
+    ctx = {"day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None, "now_requested": False}
     for row in reversed(rows):
         if row.role != "user":
             continue
@@ -377,6 +381,7 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
     time_value = current["time"] or prior["time"]
     time_hint = current["time_hint"] or prior["time_hint"]
     date_hint = current["date_hint"] or prior["date_hint"]
+    now_requested = bool(current.get("now_requested") or prior.get("now_requested"))
 
     day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
 
@@ -412,6 +417,31 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
                         )
 
     resolved_date=resolve_booking_date(tenant, day, relative_day, date_hint)
+
+    # “Now” is an actionable booking request: resolve it to the first future
+    # slot today instead of asking the customer for the time again.
+    if now_requested and resolved_date:
+        service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
+        if service:
+            slots=available_slots(db,tenant,service.id,resolved_date)
+            now_local=datetime.now(ZoneInfo(tenant.timezone))
+            future_slots=[]
+            for slot in slots:
+                try:
+                    slot_dt=datetime.fromisoformat(slot["start"])
+                    if slot_dt.tzinfo is None:
+                        slot_dt=slot_dt.replace(tzinfo=ZoneInfo(tenant.timezone))
+                    if slot_dt > now_local:
+                        future_slots.append(slot)
+                except Exception:
+                    continue
+            if future_slots:
+                time_value=datetime.fromisoformat(future_slots[0]["start"]).strftime("%-I:%M %p")
+            else:
+                c.state="booking_day"
+                return (booking_text(c.language,"unavailable",time="now",day=booking_day_label(c.language,"today")),
+                        {"day":"today","time":None,"date":resolved_date.isoformat(),"now_requested":True,"complete":False})
+
     if day_label and time_value:
         calendar=booking_calendar_status(db,tenant,resolved_date,time_value)
         if calendar.get("available") is False:
@@ -508,7 +538,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     # fall through to the model/handoff path.
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
     current_entities=extract_booking_entities(message)
-    has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint"))
+    has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested"))
     active_booking=c.state.startswith("booking")
     if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
