@@ -420,7 +420,15 @@ def public_website(slug:str,db:Session=Depends(get_db)):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==t.id,TenantSetting.key=="website_content"))
     try: content={**DEFAULT_WEBSITE_CONTENT,**(json.loads(row.value_json) if row else {})}
     except Exception: content=dict(DEFAULT_WEBSITE_CONTENT)
-    return {"business":{"id":t.id,"name":t.name,"slug":t.slug,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"description":t.description},"content":content}
+    voice_row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==t.id,TenantSetting.key=="agent_voice"))
+    agent_voice={"gender":"female"}
+    if voice_row:
+        try:
+            parsed=json.loads(voice_row.value_json)
+            agent_voice=parsed if isinstance(parsed,dict) else {"gender":str(parsed).lower()}
+        except Exception: pass
+    if agent_voice.get("gender") not in ("female","male"): agent_voice["gender"]="female"
+    return {"business":{"id":t.id,"name":t.name,"slug":t.slug,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"description":t.description,"agent_gender":agent_voice["gender"]},"content":content}
 
 @app.get("/api/v1/tenants/{tenant_id}/website")
 def tenant_website(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
