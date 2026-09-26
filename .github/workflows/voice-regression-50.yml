@@ -163,6 +163,16 @@ jobs:
           if not x.get("reply"): raise RuntimeError(f"Booking date continuation failed: {x}")
           x=booking_turn("10 AM")
           if not any(k in x.get("reply","").lower() for k in ("confirm","appointment","10")): raise RuntimeError(f"Booking time state failed: {x}")
+          x=booking_turn("Yes, confirm it")
+          if not x.get("booking",{}).get("confirmed") or not x.get("booking",{}).get("booking_id"):
+              raise RuntimeError(f"Real booking creation failed: {x}")
+          created_booking_id=x["booking"]["booking_id"]
+          x=booking_turn("Cancel my appointment")
+          if not x.get("booking",{}).get("cancellation_confirmed"):
+              raise RuntimeError(f"Real booking cancellation failed: {x}")
+          if x.get("booking",{}).get("booking_id") != created_booking_id:
+              raise RuntimeError(f"Cancelled booking id mismatch: {x}")
+          print("REAL BOOKING CREATE/CANCEL REGRESSION: PASS")
           bc=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Hindi Booking Regression","phone":"+919999999997"},timeout=20)
           bc.raise_for_status()
           bcid=bc.json()["call_id"]
