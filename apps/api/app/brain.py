@@ -506,8 +506,6 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
-    elif active_booking:
-        booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif c.state=="booking_confirmation" and is_explicit_confirmation(message):
         # The browser voice path uses /voice/turn rather than the realtime
         # provider WebSocket. Preserve the booking state here so the public
@@ -546,6 +544,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
                 "confirmation_requested":False,
             }
             c.state="booking_time_clarification"
+    elif active_booking:
+        booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif intent=="doctor_information":
         doctor_answer=knowledge_match(db,tenant_id,message)
         if doctor_answer:
