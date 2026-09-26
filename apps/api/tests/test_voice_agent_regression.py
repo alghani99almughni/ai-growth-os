@@ -11,6 +11,7 @@ import pytest
 
 from app.brain import local_intent, extract_booking_entities
 from app.ai_router import detect_language
+from app.voice_language_patterns import language_request
 
 
 INTENT_CASES = [
@@ -50,6 +51,9 @@ INTENT_CASES = [
     ("business_hours", "Tamara timings shu chhe"),
     ("business_hours", "Tuhade timings ki ne"),
     ("business_hours", "Tell me your timing"),
+    ("language_request", "Telugu cheppandi"),
+    ("language_request", "Telugu lo cheppandi"),
+    ("voice_feedback", "gender change ho gaya"),
     ("business_hours", "When are you open"),
     ("business_hours", "When do you finish for the day"),
     ("business_hours", "Do you open in the morning"),
@@ -150,6 +154,7 @@ BOOKING_EXTRACTION_CASES = [
     ("day after tomorrow at 6 PM", "day_after_tomorrow", "6 PM"),
     ("tomorrow at noon", "tomorrow", "12 PM"),
     ("17:30", None, "5:30 PM"),
+    ("2:30", None, "2:30"),
     ("9:45 AM", None, "9:45 AM"),
     ("12 PM", None, "12 PM"),
     ("8:00 pm", None, "8:00 PM"),
@@ -220,3 +225,11 @@ def test_reception_routing_rule_selects_configured_department_and_priority():
     assert result["urgency"] == "high"
     assert result["rule_id"] == "r1"
     db.close()
+
+
+def test_natural_language_switch_phrases():
+    assert language_request("Telugu cheppandi") == "te"
+    assert language_request("Telugu lo cheppandi") == "te"
+
+def test_voice_feedback_does_not_fall_through_to_handoff():
+    assert local_intent("gender change ho gaya") == "voice_feedback"
