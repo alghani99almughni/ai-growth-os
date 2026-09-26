@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI,Depends,HTTPException,Query,Request
+from fastapi import FastAPI,Depends,HTTPException,Query,Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 from fastapi.responses import JSONResponse
@@ -96,7 +96,7 @@ async def rate_limit(request:Request, call_next):
     return await call_next(request)
 
 @app.websocket("/ws/tenants/{tenant_id}/events")
-async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(default=None)):
+async def tenant_events(websocket:WebSocket,tenant_id:str,access_token:str|None=Query(default=None)):
     origin=websocket.headers.get("origin")
     allowed={x.strip().rstrip("/") for x in settings.allowed_origins.split(",") if x.strip()}
     if origin and origin.rstrip("/") not in allowed:
@@ -122,7 +122,7 @@ async def tenant_events(websocket,tenant_id:str,access_token:str|None=Query(defa
         except Exception: pass
 
 @app.websocket("/ws/public/business/{slug}/events")
-async def public_business_events(websocket,slug:str,context_token:str|None=Query(default=None)):
+async def public_business_events(websocket:WebSocket,slug:str,context_token:str|None=Query(default=None)):
     origin=websocket.headers.get("origin")
     allowed={x.strip().rstrip("/") for x in settings.allowed_origins.split(",") if x.strip()}
     if origin and origin.rstrip("/") not in allowed:
@@ -172,7 +172,7 @@ def verify_call_room_token(token:str,call_id:str,audience:str):
         return False
 
 @app.websocket("/ws/calls/{call_id}")
-async def call_signal(websocket,call_id:str,access_token:str|None=Query(default=None),room_token:str|None=Query(default=None)):
+async def call_signal(websocket:WebSocket,call_id:str,access_token:str|None=Query(default=None),room_token:str|None=Query(default=None)):
     db=SessionLocal()
     call=db.get(CallRecord,call_id)
     if not call:
@@ -1638,7 +1638,7 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
     return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name}
 
 @app.websocket("/ws/public/voice/{call_id}")
-async def public_voice(websocket,call_id:str):
+async def public_voice(websocket:WebSocket,call_id:str):
     import logging
     logging.getLogger("uvicorn.error").info("PUBLIC_VOICE_WS_HANDSHAKE call_id=%s origin=%s", call_id, websocket.headers.get("origin"))
     # The call id is a cryptographically random UUID created server-side.
