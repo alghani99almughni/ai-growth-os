@@ -16,7 +16,8 @@ from .brain import generate_reply,knowledge_context
 from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
-from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter,tenant_payment_adapter
+from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter,tenant_payment_adapter,decrypt_channel_config
+from .models_integrations import TenantIntegration,PlatformAIProvider
 from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
@@ -1722,10 +1723,37 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
         tool_declarations.append({"name":"check_availability","description":"Check the owned appointment calendar for a specific calendar date and optional time. ALWAYS use this before saying a requested appointment slot is available. The date must be YYYY-MM-DD in the tenant timezone. If service_id is omitted, use the first active service.","parameters":{"type":"OBJECT","properties":{"date":{"type":"STRING"},"time":{"type":"STRING"},"service_id":{"type":"STRING"},"staff_id":{"type":"STRING"}},"required":["date"]}})
         tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact calendar date, time and service. Never call this merely because the customer supplied details. The server performs a final availability check.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
     providers=[]
+    # Prefer the tenant's connected realtime-capable AI credential so public voice
+    # works with the same per-tenant integration model used by the admin dashboard.
+    integration_key=(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)
+    if integration_key:
+        rows=db.scalars(select(TenantIntegration).where(
+            TenantIntegration.tenant_id==tenant.id,
+            TenantIntegration.integration_key.in_(["gemini","openai"]),
+            TenantIntegration.status=="connected"
+        )).all()
+        for row in rows:
+            try:
+                cfg=decrypt_channel_config(row.config_encrypted,integration_key)
+                api_key=cfg.get("api_key") or cfg.get("access_token") or ""
+                if not api_key: continue
+                if row.integration_key=="gemini":
+                    model=cfg.get("realtime_model") or cfg.get("live_model") or settings.gemini_live_model
+                    providers.append(VoiceProvider("gemini",model,api_key,priority=10))
+                elif row.integration_key=="openai":
+                    model=cfg.get("realtime_model") or settings.openai_realtime_model
+                    providers.append(VoiceProvider("openai",model,api_key,priority=20))
+            except Exception:
+                logging.getLogger("uvicorn.error").exception(
+                    "PUBLIC_VOICE_WS_TENANT_PROVIDER_CONFIG_FAILED call_id=%s provider=%s",
+                    call.id,row.integration_key
+                )
+    # Platform/environment credentials remain fallback providers.
     if settings.gemini_api_key:
         providers.append(VoiceProvider("gemini",settings.gemini_live_model,settings.gemini_api_key,priority=100))
     if settings.openai_api_key:
         providers.append(VoiceProvider("openai",getattr(settings,"openai_realtime_model","gpt-realtime-2.1"),settings.openai_api_key,priority=200))
+    providers.sort(key=lambda p:p.priority)
     state=VoiceSessionState(call_id=call.id,provider_name="")
     gateway=VoiceGateway({"gemini":GeminiLiveAdapter(),"openai":OpenAIRealtimeAdapter()})
     provider=None
