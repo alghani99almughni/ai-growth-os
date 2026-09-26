@@ -12,9 +12,22 @@ from .ai_router import detect_language, faq_match, structured_match, knowledge_m
 from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
-from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation
+from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
 
 logger = logging.getLogger(__name__)
+
+def agent_gender(db: Session, tenant_id: str) -> str:
+    row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="agent_voice"))
+    if row:
+        try:
+            value=json.loads(row.value_json)
+            value=value.get("gender") if isinstance(value,dict) else value
+            if str(value).lower() in ("male","female"):
+                return str(value).lower()
+        except Exception:
+            pass
+    return "female"
+
 
 def knowledge_context(db: Session, tenant_id: str) -> str:
     tenant=db.get(Tenant,tenant_id)
@@ -462,7 +475,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         booking="Hello! How can I help you today?"
     elif intent=="language_request":
         requested_language=language_request(message) or "en"
-        booking=LANGUAGE_SWITCH_CONFIRMATIONS.get(requested_language, LANGUAGE_SWITCH_CONFIRMATIONS["en"])
+        booking=language_switch_confirmation(requested_language,agent_gender(db,tenant_id))
         c.language=requested_language
     elif intent=="closing":
         booking="You're welcome. If you need anything else, I'm here to help."
@@ -482,7 +495,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "pa":"Samajh gayi. Main Punjabi vich hi gal jari rakhangi.",
             "ur":"Samajh gayi. Main Urdu mein hi baat jari rakhungi.",
         }
-        booking=feedback_replies.get(language,feedback_replies["en"])
+        booking=voice_feedback_reply(language,agent_gender(db,tenant_id))
         c.state="information"
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
@@ -568,7 +581,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "what time would you prefer" in previous_text
         )
         contextual_booking = booking_invitation and has_booking_entities and intent in {"information","business_hours","closing"}
-        if contextual_booking or intent=="booking" or (c.state.startswith("booking") and has_booking_entities):
+        if contextual_booking or intent=="booking" or c.state.startswith("booking"):
             booking, booking_data = booking_reply_from_state(db, tenant, c, message)
         elif c.state.startswith("booking"):
             booking_data = {"day": None, "time": None, "complete": False}
@@ -607,7 +620,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "You are the AI customer engagement agent. Reply in the customer's language when possible. "
             "Use ONLY the approved business context below. Never invent prices, availability, policies, discounts, bookings or payment success. "
             "If an action is needed, say it will be confirmed by the system. Keep concise and conversational. "
-            "Do not ask for information already provided in this conversation. "
+            "Do not ask for information already provided in this conversation. " + f"The current agent persona is {agent_gender(db,tenant_id)}. In gendered languages, use first-person grammar that matches that gender consistently; never switch gender mid-conversation. "
             "If the approved context does not contain enough information, say you need a human team member to follow up instead of guessing.\n\n"
             "APPROVED CONTEXT:\n" + context +
             "\n\nRECENT CONVERSATION:\n" + history +
