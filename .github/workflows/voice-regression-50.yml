@@ -188,6 +188,21 @@ jobs:
               raise RuntimeError(f"Female Hindi grammar regression: {x}")
           print("FEMALE VOICE GRAMMAR REGRESSION: PASS")
 
+          # A clearly past appointment must be identified as past, not unavailable.
+          past_call=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Past Time Regression","phone":"+919999999995"},timeout=20)
+          past_call.raise_for_status()
+          bcid=past_call.json()["call_id"]
+          bconv=None
+          booking_turn("I want to book an appointment")
+          booking_turn("yesterday")
+          x=booking_turn("5:30 PM")
+          past_reply=x.get("reply","").lower()
+          if not any(k in past_reply for k in ("passed","already","past","निकल चुका","बीत चुका")):
+              raise RuntimeError(f"Past-time booking regression: {x}")
+          if "not available" in past_reply:
+              raise RuntimeError(f"Past time incorrectly reported as unavailable: {x}")
+          print("PAST TIME REGRESSION: PASS")
+
           # Real browser smoke: validates the customer-facing PWA, browser WebSocket
           # upgrade, microphone path and first realtime AI response.
           import time, sys
