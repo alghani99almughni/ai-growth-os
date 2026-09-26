@@ -2192,7 +2192,6 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 from .booking import local_to_utc_naive
                 starts_utc=local_to_utc_naive(starts_at,t.timezone)
                 appointment=db.scalar(select(Appointment).where(
-                    Appointment.id==Appointment.id,
                     Appointment.tenant_id==t.id,
                     Appointment.customer_id==customer.id,
                     Appointment.starts_at==starts_utc,
