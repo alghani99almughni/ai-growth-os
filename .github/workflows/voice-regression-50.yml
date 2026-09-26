@@ -1,4 +1,5 @@
 name: Voice Agent 50-Scenario Regression
+# Live booking create/cancel verification enabled
 
 on:
   push:
