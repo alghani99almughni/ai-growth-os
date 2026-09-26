@@ -233,3 +233,30 @@ def test_natural_language_switch_phrases():
 
 def test_voice_feedback_does_not_fall_through_to_handoff():
     assert local_intent("gender change ho gaya") == "voice_feedback"
+
+
+@pytest.mark.parametrize("message,expected", [
+    ("speak Odia", "or"),
+    ("can you talk in Assamese", "as"),
+    ("Konkani please", "kok"),
+    ("Speak Sanskrit", "sa"),
+    ("talk in Sindhi", "sd"),
+    ("speak Kashmiri", "ks"),
+    ("Manipuri mein", "mni"),
+    ("Nepali please", "ne"),
+    ("Speak Dogri", "doi"),
+    ("Maithili mein", "mai"),
+    ("Speak Santali", "sat"),
+])
+def test_full_indian_language_switch_catalog(message, expected):
+    assert language_request(message) == expected
+
+
+@pytest.mark.parametrize("message", [
+    "yes", "yes please", "sure", "please confirm", "go ahead",
+    "haan", "haan confirm", "avunu", "sare", "howdu", "athe", "ho", "hyan",
+    "confirm kijiye", "confirm cheyyandi",
+])
+def test_multilingual_confirmation(message):
+    from app.voice_language_patterns import is_explicit_confirmation
+    assert is_explicit_confirmation(message)
