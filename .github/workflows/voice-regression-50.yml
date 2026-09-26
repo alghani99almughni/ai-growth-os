@@ -134,6 +134,39 @@ jobs:
               sys.exit(1)
           print("HTTP VOICE REGRESSION: PASS")
 
+          # Multi-turn booking state acceptance against the deployed backend.
+          print("BOOKING STATE REGRESSION: START")
+          bc=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Booking Regression","phone":"+919999999998"},timeout=20)
+          bc.raise_for_status()
+          bcid=bc.json()["call_id"]
+          bconv=None
+          def booking_turn(text):
+              global bconv
+              rr=s.post(f"{base}/api/v1/public/business/{slug}/voice/turn",json={"transcript":text,"call_id":bcid,"conversation_id":bconv,"channel":"voice"},timeout=30)
+              rr.raise_for_status()
+              data=rr.json()
+              bconv=data.get("conversation_id") or bconv
+              return data
+          x=booking_turn("I want to book an appointment")
+          if not x.get("reply") or not bconv: raise RuntimeError(f"Booking start failed: {x}")
+          x=booking_turn("tomorrow")
+          if not x.get("reply"): raise RuntimeError(f"Booking date continuation failed: {x}")
+          x=booking_turn("10 AM")
+          if not any(k in x.get("reply","").lower() for k in ("confirm","appointment","10")): raise RuntimeError(f"Booking time state failed: {x}")
+          bc=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Hindi Booking Regression","phone":"+919999999997"},timeout=20)
+          bc.raise_for_status()
+          bcid=bc.json()["call_id"]
+          bconv=None
+          x=booking_turn("Hindi mein bol sakte hain")
+          if "hindi" not in x.get("reply","").lower() and "हिंदी" not in x.get("reply",""): raise RuntimeError(f"Hindi switch failed: {x}")
+          x=booking_turn("मुझे अपॉइंटमेंट बुक करना है")
+          if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking start failed: {x}")
+          x=booking_turn("कल")
+          if not x.get("reply"): raise RuntimeError(f"Hindi date continuation failed: {x}")
+          x=booking_turn("10 बजे")
+          if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking time failed: {x}")
+          print("BOOKING STATE REGRESSION: PASS")
+
           # Real browser smoke: validates the customer-facing PWA, browser WebSocket
           # upgrade, microphone path and first realtime AI response.
           import time, sys
