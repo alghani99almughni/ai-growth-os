@@ -270,7 +270,6 @@ export default function SSNutritions(){
           setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
           if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
           if(answer.handoff_required){
-            setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
             await handoffToHuman(payload);
           }else{
             await speakTurn(answer.reply,answer.language||"en");
