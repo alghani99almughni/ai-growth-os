@@ -196,7 +196,7 @@ _WEEKDAYS = ("monday","tuesday","wednesday","thursday","friday","saturday","sund
 _WEEKDAY_ALIASES = {
     "mon":"monday","tue":"tuesday","tues":"tuesday","wed":"wednesday",
     "thu":"thursday","thur":"thursday","thurs":"thursday","fri":"friday",
-    "sat":"saturday","sun":"sunday",
+    "sat":"saturday","sun":"sunday",\n    "सोमवार":"monday","सोम":"monday","मंगलवार":"tuesday","मंगल":"tuesday","बुधवार":"wednesday","बुध":"wednesday","गुरुवार":"thursday","गुरु":"thursday","शुक्रवार":"friday","शुक्र":"friday","शनिवार":"saturday","शनि":"saturday","रविवार":"sunday","रवि":"sunday",
 }
 _RELATIVE_DAYS = ("today", "tomorrow", "day after tomorrow")
 
