@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
+import {connectCustomerToStaff} from "./webrtc";
 
 const api=()=>String(process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000").replace(/\/+$/,"");
 
@@ -61,6 +62,7 @@ export default function SSNutritions(){
   const speechActiveRef=useRef(false);
   const conversationIdRef=useRef<string|null>(null);
   const wakeLockRef=useRef<any>(null);
+  const humanConnectionRef=useRef<Awaited<ReturnType<typeof connectCustomerToStaff>>|null>(null);
 
   const requestWakeLock=useCallback(async()=>{
     try{
@@ -106,6 +108,8 @@ export default function SSNutritions(){
     try{sourceRef.current?.disconnect()}catch{}
     try{streamRef.current?.getTracks().forEach(t=>t.stop())}catch{}
     try{socketRef.current?.close()}catch{}
+    try{humanConnectionRef.current?.close()}catch{}
+    humanConnectionRef.current=null;
     try{wakeLockRef.current?.release?.()}catch{}
     wakeLockRef.current=null;
     processorRef.current=null;
@@ -116,6 +120,64 @@ export default function SSNutritions(){
   },[]);
 
   useEffect(()=>()=>cleanupCall(),[cleanupCall]);
+
+  const handoffToHuman=useCallback(async(payload:any)=>{
+    try{
+      setCallState("connecting");
+      setCallError("Connecting you to our team…");
+      try{recognitionRef.current?.stop()}catch{}
+      recognitionRef.current=null;
+      speechActiveRef.current=false;
+      try{processorRef.current?.disconnect()}catch{}
+      try{sourceRef.current?.disconnect()}catch{}
+      processorRef.current=null;
+      sourceRef.current=null;
+      try{socketRef.current?.close()}catch{}
+      socketRef.current=null;
+      audioSourcesRef.current.forEach(s=>{try{s.stop()}catch{}});
+      audioSourcesRef.current.clear();
+
+      const activate=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/call/"+encodeURIComponent(payload.call_id)+"/handoff",{method:"POST"});
+      const activation=await activate.json();
+      if(!activate.ok) throw new Error(activation.detail||"Human handoff is unavailable.");
+      if(activation.status==="handoff_unavailable") throw new Error("No team member is available right now.");
+
+      let roomToken=activation.room_token||"";
+      for(let attempt=0;attempt<90;attempt++){
+        if(!callActiveRef.current) return;
+        if(!roomToken){
+          const statusResponse=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/call/"+encodeURIComponent(payload.call_id)+"/handoff",{cache:"no-store"});
+          if(statusResponse.ok){
+            const status=await statusResponse.json();
+            roomToken=status.room_token||"";
+            if(status.status==="handoff_unavailable") throw new Error("No team member is available right now.");
+          }
+        }
+        if(roomToken){
+          const stream=streamRef.current||await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+          streamRef.current=stream;
+          humanConnectionRef.current=await connectCustomerToStaff(api(),payload.call_id,roomToken,stream);
+          setCallState("connected");
+          setCallError("Connected to our team.");
+          return;
+        }
+        await new Promise(resolve=>window.setTimeout(resolve,1000));
+        const statusResponse=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(String(business.slug||"ss-nutritions"))+"/call/"+encodeURIComponent(payload.call_id)+"/handoff",{cache:"no-store"});
+        if(statusResponse.ok){
+          const status=await statusResponse.json();
+          roomToken=status.room_token||"";
+          if(status.status==="handoff_unavailable") throw new Error("No team member is available right now.");
+        }
+      }
+      throw new Error("The team did not answer within the available handoff window.");
+    }catch(error:any){
+      setCallError(error?.message||"Human handoff failed.");
+      callActiveRef.current=false;
+      setCallState("ended");
+      cleanupCall();
+    }
+  },[business.slug,cleanupCall]);
+
 
   const playPcm=useCallback((base64:string)=>{
     const ctx=audioContextRef.current;
@@ -208,10 +270,8 @@ export default function SSNutritions(){
           setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
           if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
           if(answer.handoff_required){
-            callActiveRef.current=false;
-            try{recognition.stop()}catch{}
-            setCallError("Our team will call you back shortly.");
-            setCallState("ended");
+            setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
+            await handoffToHuman(payload);
           }else{
             await speakTurn(answer.reply,answer.language||"en");
           }
@@ -350,6 +410,8 @@ export default function SSNutritions(){
     recognitionRef.current=null;
     try{window.speechSynthesis?.cancel()}catch{}
     try{socketRef.current?.send(JSON.stringify({type:"stop"}))}catch{}
+    try{humanConnectionRef.current?.close()}catch{}
+    humanConnectionRef.current=null;
     try{wakeLockRef.current?.release?.()}catch{}
     cleanupCall();
     setCallState("ended");
