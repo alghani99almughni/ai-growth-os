@@ -102,6 +102,7 @@ export default function SSNutritions(){
   const whatsappMessage=encodeURIComponent("Hi SS Nutritions, I would like to know more about your wellness programs.");
   const whatsappLink=number?"https://wa.me/"+number+"?text="+whatsappMessage:"https://wa.me/?text="+whatsappMessage;
   const address=business.address||"Moinabad, Rangareddy District\nTelangana · 501504";
+  const agentGender=(business.agent_gender==="male"?"male":"female");
 
   const cleanupCall=useCallback(()=>{
     try{processorRef.current?.disconnect()}catch{}
@@ -197,7 +198,7 @@ export default function SSNutritions(){
     nextAudioTimeRef.current+=buffer.duration;
   },[]);
 
-  const preferredVoiceGender="female";
+  const preferredVoiceGender=agentGender;
   const voiceCacheRef=useRef<Record<string,SpeechSynthesisVoice|null>>({});
 
   const pickVoice=useCallback((language:string)=>{
@@ -212,10 +213,11 @@ export default function SSNutritions(){
     const maleMarkers=["male","man","boy","ravi","david","mark","george","guy","ryan","daniel","alex"];
     const female=pool.find(v=>femaleMarkers.some(m=>v.name.toLowerCase().includes(m)));
     const nonMale=pool.find(v=>!maleMarkers.some(m=>v.name.toLowerCase().includes(m)));
-    const selected=female||nonMale||pool[0]||null;
+    const male=pool.find(v=>maleMarkers.some(m=>v.name.toLowerCase().includes(m)));
+    const selected=preferredVoiceGender==="male"?(male||nonMale||pool[0]||null):(female||nonMale||pool[0]||null);
     voiceCacheRef.current[lang]=selected;
     return selected;
-  },[]);
+  },[preferredVoiceGender]);
 
   const speakKnowledgeAnswer=useCallback((text:string,language:string)=>{
     if(typeof window==="undefined" || !("speechSynthesis" in window)) return;
