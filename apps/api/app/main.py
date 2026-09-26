@@ -22,6 +22,28 @@ from .faq_seed import FAQS
 from .ai_router import detect_language
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
 
+class RoutingRulePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    intent: str | None = None
+    trigger_keywords: str = ""
+    department_id: str | None = None
+    staff_id: str | None = None
+    priority: int = Field(default=100, ge=1, le=10000)
+    urgency: str = Field(default="normal", pattern="^(low|normal|high|urgent|emergency)$")
+    action: str = Field(default="route", pattern="^(route|alert|route_and_alert)$")
+    is_active: bool = True
+
+class ReceptionAlertPayload(BaseModel):
+    category: str = Field(default="general", max_length=50)
+    priority: str = Field(default="normal", pattern="^(low|normal|high|urgent|emergency)$")
+    title: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=5000)
+    department_id: str | None = None
+    staff_id: str | None = None
+    customer_id: str | None = None
+    call_id: str | None = None
+
+
 from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter, GeminiLiveAdapter
 from .agent_training import AGENT_TRAINING_CONTEXT
 
@@ -690,6 +712,71 @@ def update_platform_feature_defaults(payload:FeatureUpdate,user=Depends(get_curr
     db.commit()
     return {"features":cfg}
 
+
+@app.get("/api/v1/tenants/{tenant_id}/routing-rules")
+def list_routing_rules(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    rows=db.scalars(select(RoutingRule).where(RoutingRule.tenant_id==tenant_id).order_by(RoutingRule.priority,RoutingRule.name)).all()
+    return {"items":[{"id":x.id,"name":x.name,"intent":x.intent,"trigger_keywords":x.trigger_keywords,"department_id":x.department_id,"staff_id":x.staff_id,"priority":x.priority,"urgency":x.urgency,"action":x.action,"is_active":x.is_active} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/routing-rules",status_code=201)
+def create_routing_rule(tenant_id,payload:RoutingRulePayload,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    if payload.department_id and not db.scalar(select(Department).where(Department.id==payload.department_id,Department.tenant_id==tenant_id)): raise HTTPException(400,"Invalid department")
+    if payload.staff_id and not db.scalar(select(StaffMember).where(StaffMember.id==payload.staff_id,StaffMember.tenant_id==tenant_id)): raise HTTPException(400,"Invalid staff member")
+    x=RoutingRule(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x)
+    return {"id":x.id,"name":x.name,"intent":x.intent,"trigger_keywords":x.trigger_keywords,"department_id":x.department_id,"staff_id":x.staff_id,"priority":x.priority,"urgency":x.urgency,"action":x.action,"is_active":x.is_active}
+
+@app.put("/api/v1/tenants/{tenant_id}/routing-rules/{rule_id}")
+def update_routing_rule(tenant_id,rule_id,payload:RoutingRulePayload,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=db.scalar(select(RoutingRule).where(RoutingRule.id==rule_id,RoutingRule.tenant_id==tenant_id))
+    if not x: raise HTTPException(404,"Routing rule not found")
+    for key,value in payload.model_dump().items(): setattr(x,key,value)
+    db.commit()
+    return {"id":x.id,"name":x.name,"intent":x.intent,"trigger_keywords":x.trigger_keywords,"department_id":x.department_id,"staff_id":x.staff_id,"priority":x.priority,"urgency":x.urgency,"action":x.action,"is_active":x.is_active}
+
+@app.delete("/api/v1/tenants/{tenant_id}/routing-rules/{rule_id}")
+def delete_routing_rule(tenant_id,rule_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=db.scalar(select(RoutingRule).where(RoutingRule.id==rule_id,RoutingRule.tenant_id==tenant_id))
+    if not x: raise HTTPException(404,"Routing rule not found")
+    db.delete(x); db.commit()
+    return {"deleted":True}
+
+@app.get("/api/v1/tenants/{tenant_id}/reception/alerts")
+def list_reception_alerts(tenant_id,status:str|None=None,limit:int=50,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    q=select(ReceptionAlert).where(ReceptionAlert.tenant_id==tenant_id).order_by(ReceptionAlert.created_at.desc()).limit(min(max(limit,1),200))
+    if status: q=q.where(ReceptionAlert.status==status)
+    rows=db.scalars(q).all()
+    return {"items":[{"id":x.id,"customer_id":x.customer_id,"call_id":x.call_id,"department_id":x.department_id,"staff_id":x.staff_id,"category":x.category,"priority":x.priority,"title":x.title,"message":x.message,"status":x.status,"acknowledged_at":x.acknowledged_at,"created_at":x.created_at} for x in rows]}
+
+@app.post("/api/v1/tenants/{tenant_id}/reception/alerts",status_code=201)
+def create_reception_alert(tenant_id,payload:ReceptionAlertPayload,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=ReceptionAlert(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.flush()
+    db.add(InteractionEvent(tenant_id=tenant_id,customer_id=x.customer_id,call_id=x.call_id,channel="reception",event_type="reception_alert_created",payload_json=json.dumps({"alert_id":x.id,"priority":x.priority,"category":x.category},ensure_ascii=False)))
+    db.commit(); db.refresh(x)
+    return {"id":x.id,"status":x.status,"priority":x.priority}
+
+@app.post("/api/v1/tenants/{tenant_id}/reception/alerts/{alert_id}/ack")
+def acknowledge_reception_alert(tenant_id,alert_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    x=db.scalar(select(ReceptionAlert).where(ReceptionAlert.id==alert_id,ReceptionAlert.tenant_id==tenant_id))
+    if not x: raise HTTPException(404,"Alert not found")
+    x.status="acknowledged"; x.acknowledged_at=datetime.utcnow()
+    db.add(InteractionEvent(tenant_id=tenant_id,customer_id=x.customer_id,call_id=x.call_id,channel="reception",event_type="reception_alert_acknowledged",payload_json=json.dumps({"alert_id":x.id},ensure_ascii=False)))
+    db.commit()
+    return {"id":x.id,"status":x.status,"acknowledged_at":x.acknowledged_at}
+
+@app.get("/api/v1/tenants/{tenant_id}/customers/{customer_id}/interaction-timeline")
+def interaction_timeline(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
+    require_tenant(user,tenant_id)
+    if not db.scalar(select(Customer.id).where(Customer.id==customer_id,Customer.tenant_id==tenant_id)): raise HTTPException(404,"Customer not found")
+    rows=db.scalars(select(InteractionEvent).where(InteractionEvent.tenant_id==tenant_id,InteractionEvent.customer_id==customer_id).order_by(InteractionEvent.created_at.desc()).limit(200)).all()
+    return {"items":[{"id":x.id,"call_id":x.call_id,"channel":x.channel,"event_type":x.event_type,"payload":json.loads(x.payload_json or "{}"),"created_at":x.created_at} for x in rows]}
+
 @app.get("/api/v1/tenants/{tenant_id}/departments")
 def list_departments(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
@@ -1259,7 +1346,12 @@ def route_existing_call(tenant_id, call_id, intent: str | None = None, user=Depe
     require_tenant(user, tenant_id)
     call=db.scalar(select(CallRecord).where(CallRecord.id==call_id, CallRecord.tenant_id==tenant_id))
     if not call: raise HTTPException(404, "Call not found")
-    return route_call(db, tenant_id, call, intent)
+    routed=route_call(db, tenant_id, call, intent)
+    db.add(InteractionEvent(tenant_id=tenant_id,customer_id=call.customer_id,call_id=call.id,channel=call.source or "pwa",event_type="call_routed",payload_json=json.dumps(routed,ensure_ascii=False)))
+    if routed.get("urgency") in ("high","urgent","emergency"):
+        db.add(ReceptionAlert(tenant_id=tenant_id,customer_id=call.customer_id,call_id=call.id,department_id=routed.get("department_id"),staff_id=(routed.get("staff") or {}).get("id"),category=intent or "general",priority=routed.get("urgency","normal"),title="Customer call requires attention",message=(call.summary or call.intent or "Customer requested assistance")))
+    db.commit()
+    return routed
 
 @app.get("/api/v1/tenants/{tenant_id}/calls/{call_id}/context")
 def call_context(tenant_id, call_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
