@@ -197,17 +197,36 @@ export default function SSNutritions(){
     nextAudioTimeRef.current+=buffer.duration;
   },[]);
 
+  const preferredVoiceGender="female";
+  const voiceCacheRef=useRef<Record<string,SpeechSynthesisVoice|null>>({});
+
+  const pickVoice=useCallback((language:string)=>{
+    if(typeof window==="undefined" || !("speechSynthesis" in window)) return null;
+    const map:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
+    const lang=map[language]||"en-IN";
+    if(voiceCacheRef.current[lang]) return voiceCacheRef.current[lang];
+    const voices=window.speechSynthesis.getVoices();
+    const exact=voices.filter(v=>v.lang.toLowerCase()===lang.toLowerCase());
+    const pool=exact.length?exact:voices.filter(v=>v.lang.toLowerCase().startsWith(lang.slice(0,2).toLowerCase()));
+    const femaleMarkers=["female","woman","girl","heera","kalpana","zira","hazel","neerja","veena","priya","aarti","aarti","raveena","swara","aditi","sangeeta","kavya","sara","susan","samantha","aria","jenny","ava"];
+    const maleMarkers=["male","man","boy","ravi","david","mark","george","guy","ryan","daniel","alex"];
+    const female=pool.find(v=>femaleMarkers.some(m=>v.name.toLowerCase().includes(m)));
+    const nonMale=pool.find(v=>!maleMarkers.some(m=>v.name.toLowerCase().includes(m)));
+    const selected=female||nonMale||pool[0]||null;
+    voiceCacheRef.current[lang]=selected;
+    return selected;
+  },[]);
+
   const speakKnowledgeAnswer=useCallback((text:string,language:string)=>{
     if(typeof window==="undefined" || !("speechSynthesis" in window)) return;
     window.speechSynthesis.cancel();
     const map:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
     const utter=new SpeechSynthesisUtterance(text);
     utter.lang=map[language]||"en-IN";
-    const voices=window.speechSynthesis.getVoices();
-    utter.voice=voices.find(v=>v.lang.toLowerCase()===utter.lang.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(utter.lang.slice(0,2).toLowerCase()))||null;
+    utter.voice=pickVoice(language);
     utter.rate=0.98;
     window.speechSynthesis.speak(utter);
-  },[]);
+  },[pickVoice]);
 
   const startBrowserVoice=useCallback((payload:any)=>{
     const Recognition=(window as any).SpeechRecognition||(window as any).webkitSpeechRecognition;
@@ -237,8 +256,7 @@ export default function SSNutritions(){
       await new Promise<void>(resolve=>{
         const utter=new SpeechSynthesisUtterance(text);
         utter.lang=map[language]||"en-IN";
-        const voices=window.speechSynthesis.getVoices();
-        utter.voice=voices.find(v=>v.lang.toLowerCase()===utter.lang.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(utter.lang.slice(0,2).toLowerCase()))||null;
+        utter.voice=pickVoice(language);
         utter.rate=0.98;
         utter.onend=()=>resolve();
         utter.onerror=()=>resolve();
@@ -301,7 +319,7 @@ export default function SSNutritions(){
       await speakTurn(greeting,"en");
     })().catch(()=>{});
 
-  },[business.slug,name,speakKnowledgeAnswer]);
+  },[business.slug,name,pickVoice,speakKnowledgeAnswer]);
 
   const connectLiveAi=useCallback(async(payload:any)=>{
     const AudioCtx=window.AudioContext||((window as any).webkitAudioContext);
