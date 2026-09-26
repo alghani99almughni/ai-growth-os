@@ -25,7 +25,7 @@ class ReceptionWebRtcController(
                     is SignalEvent.IceCandidate -> connection.handleIceCandidate(event)
                     is SignalEvent.PeerLeft -> connection.endCall(false)
                     is SignalEvent.Error -> Unit
-                    SignalEvent.Answer, SignalEvent.PeerJoined -> Unit
+                    is SignalEvent.Answer, SignalEvent.PeerJoined -> Unit
                 }
             }
             delay(50)
