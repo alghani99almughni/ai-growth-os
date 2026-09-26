@@ -179,10 +179,10 @@ def extract_booking_entities(text: str) -> dict:
     relative_day = relative_day_from_text(value)
 
     time_value = None
-    if re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani)\b", value):
+    if re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani|am|pm|a\.m\.|p\.m\.)\b", value):
         time_value = "12 PM"
     else:
-        tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\?)\b", value)
+        tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b", value)
         if tm:
             hour = int(tm.group(1)); minute = tm.group(2)
             meridiem = "AM" if tm.group(3).replace(".","").startswith("a") else "PM"
