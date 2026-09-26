@@ -21,7 +21,11 @@ class ApiClient(private val baseUrl:String){
  }
  suspend fun calls(s:AuthSession)=withContext(Dispatchers.IO){
   val req=Request.Builder().url(baseUrl+"/api/v1/tenants/"+s.tenantId+"/calls").header("Authorization","Bearer "+s.token).get().build()
-  http.newCall(req).execute().use{r->if(!r.isSuccessful)return@withContext emptyList();val arr=JSONObject(r.body?.string().orEmpty()).optJSONArray("items")?:JSONArray();buildList{for(i in 0 until arr.length()){val o=arr.getJSONObject(i);val st=o.optString("status");if(st=="handoff_requested"||st=="ringing")add(PendingCall(o.getString("id"),s.tenantId,o.optString("customer_name","Customer"),st,o.optString("staff_id").takeIf{it.isNotBlank()}))}}}
+  http.newCall(req).execute().use{r->if(!r.isSuccessful)return@withContext emptyList();val arr=JSONObject(r.body?.string().orEmpty()).optJSONArray("items")?:JSONArray();buildList{for(i in 0 until arr.length()){val o=arr.getJSONObject(i);val st=o.optString("status");if(st=="handoff_requested")add(PendingCall(o.getString("id"),s.tenantId,o.optString("customer_name","Customer"),st,o.optString("staff_id").takeIf{it.isNotBlank()}))}}}
+ }
+ suspend fun releaseCall(s:AuthSession,id:String)=withContext(Dispatchers.IO){
+  val req=Request.Builder().url(baseUrl+"/api/v1/tenants/"+s.tenantId+"/calls/"+id+"/staff-release").header("Authorization","Bearer "+s.token).post("{}".toRequestBody(json)).build()
+  http.newCall(req).execute().use{r->if(!r.isSuccessful){val text=r.body?.string().orEmpty();error(JSONObject(text).optString("detail","Unable to release call"))}}
  }
  suspend fun handoffDecision(s:AuthSession,id:String,accept:Boolean)=withContext(Dispatchers.IO){
   val body=JSONObject().put("decision",if(accept)"accept" else "decline").toString().toRequestBody(json)
