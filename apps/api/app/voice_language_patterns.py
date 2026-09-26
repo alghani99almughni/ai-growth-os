@@ -5,6 +5,19 @@ existing conversation brain more tolerant of natural Indian-language speech and
 browser STT variants without replacing the tenant knowledge/calendar layer.
 """
 
+
+# Indian language names used by the semantic language-switch detector. This is intentionally
+# separate from response templates: adding a language must not require adding dozens of phrases.
+INDIAN_LANGUAGE_ALIASES = {
+    "english":"en","hindi":"hi","telugu":"te","tamil":"ta","kannada":"kn","malayalam":"ml",
+    "marathi":"mr","bengali":"bn","bangla":"bn","gujarati":"gu","punjabi":"pa","urdu":"ur",
+    "odia":"or","oriya":"or","assamese":"as","konkani":"kok","sanskrit":"sa","sindhi":"sd",
+    "kashmiri":"ks","manipuri":"mni","meitei":"mni","nepali":"ne","dogri":"doi","maithili":"mai","santali":"sat",
+    "हिंदी":"hi","తెలుగు":"te","தமிழ்":"ta","ಕನ್ನಡ":"kn","മലയാളം":"ml","मराठी":"mr","বাংলা":"bn",
+    "ગુજરાતી":"gu","ਪੰਜਾਬੀ":"pa","اردو":"ur","ଓଡ଼ିଆ":"or","অসমীয়া":"as","संस्कृत":"sa","सिन्धी":"sd",
+    "कश्मीरी":"ks","नेपाली":"ne","डोगरी":"doi","मैथिली":"mai","ᱥᱟᱱᱛᱟᱲᱤ":"sat","ꯃꯤꯇꯩ":"mni",
+}
+
 LANGUAGE_REQUEST_PHRASES = {
     "en": ("speak english", "in english", "english please", "talk in english"),
     "hi": ("speak hindi", "speak in hindi", "hindi mein", "hindi me", "i want hindi", "talk to me in hindi", "can we talk in hindi", "can you reply in hindi", "hindi please", "हिंदी", "हिन्दी"),
@@ -72,9 +85,26 @@ def language_from_romanized(text: str) -> str | None:
     return best if best_score >= 2 else None
 
 def language_request(text: str) -> str | None:
-    value = text.casefold()
+    """Semantically detect a request to switch/continue in a named language.
+
+    Supports the full Indian-language name catalog without requiring a separate
+    hard-coded sentence for every language. It accepts natural forms such as
+    "speak Telugu", "Telugu lo cheppandi", "can you talk in Marathi", and
+    native-script language names.
+    """
+    value = text.casefold().strip()
     for language, phrases in LANGUAGE_REQUEST_PHRASES.items():
         if any(phrase.casefold() in value for phrase in phrases):
+            return language
+    for name, language in INDIAN_LANGUAGE_ALIASES.items():
+        if name.casefold() not in value:
+            continue
+        if language == "en" and value.strip() == name.casefold():
+            return language
+        # A bare language name in a voice turn is a valid switch signal.
+        if re.search(rf"(^|\s|[,:;.!?]){re.escape(name.casefold())}($|\s|[,:;.!?])", value):
+            return language
+        if any(token in value for token in ("speak","talk","language","in ","mein","lo ","dalli","la ","ma ","vich","mein ","cheppandi","matlad","bol","bata","habla","paray","sang")):
             return language
     return None
 
