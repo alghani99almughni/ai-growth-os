@@ -152,6 +152,51 @@ def needs_voice_clarification(text: str) -> bool:
     value = " ".join(text.casefold().split())
     return value in CLARIFICATION_PHRASES
 
+
+AGENT_GENDER_CONFIRMATIONS = {
+ "en":{"female":"Yes. I can continue in English.","male":"Yes. I can continue in English."},
+ "hi":{"female":"Haan, main Hindi mein baat kar sakti hoon.","male":"Haan, main Hindi mein baat kar sakta hoon."},
+ "te":{"female":"Avunu, nenu Telugu lo maatladagalanu.","male":"Avunu, nenu Telugu lo maatladagalanu."},
+ "ta":{"female":"Aamaam, naan Tamil-la pesalaam.","male":"Aamaam, naan Tamil-la pesalaam."},
+ "kn":{"female":"Howdu, naanu Kannada dalli maatadabahudu.","male":"Howdu, naanu Kannada dalli maatadabahudu."},
+ "ml":{"female":"Athe, enikku Malayalam samsarikkaam.","male":"Athe, enikku Malayalam samsarikkaam."},
+ "mr":{"female":"Ho, mi Marathi madhye bolu shakte.","male":"Ho, mi Marathi madhye bolu shakto."},
+ "bn":{"female":"Hyan, ami Banglay kotha bolte pari.","male":"Hyan, ami Banglay kotha bolte pari."},
+ "gu":{"female":"Haan, hu Gujarati ma vaat kari shaku chhu.","male":"Haan, hu Gujarati ma vaat kari shaku chhu."},
+ "pa":{"female":"Haan, main Punjabi vich gal kar sakdi haan.","male":"Haan, main Punjabi vich gal kar sakda haan."},
+ "ur":{"female":"Ji haan, main Urdu mein baat kar sakti hoon.","male":"Ji haan, main Urdu mein baat kar sakta hoon."},
+ "or":{"female":"Haan, mu Odia re katha kahi paribi.","male":"Haan, mu Odia re katha kahi paribi."},
+ "as":{"female":"Hoi, moi Axomiya't kotha patibo paru.","male":"Hoi, moi Axomiya't kotha patibo paru."},
+ "kok":{"female":"Ho, hanv Konkani bhasheant ulovpak zata.","male":"Ho, hanv Konkani bhasheant ulovpak zata."},
+ "sa":{"female":"Aam, aham Samskrite vaktum shaknomi.","male":"Aam, aham Samskrite vaktum shaknomi."},
+ "sd":{"female":"Haa, maan Sindhi mein galhaai saghan thi.","male":"Haa, maan Sindhi mein galhaai saghan tho."},
+ "ks":{"female":"Haa, bi Kashmiri manz baat karih sakaan.","male":"Haa, bi Kashmiri manz baat karih sakaan."},
+ "mni":{"female":"Ho, eina Manipuri-da waari waari haiba ngammi.","male":"Ho, eina Manipuri-da waari waari haiba ngammi."},
+ "ne":{"female":"Ho, ma Nepali ma kura garna sakchhu.","male":"Ho, ma Nepali ma kura garna sakchhu."},
+ "doi":{"female":"Haan, main Dogri ch gal kari sakdi haan.","male":"Haan, main Dogri ch gal kari sakda haan."},
+ "mai":{"female":"Haan, hum Maithili me baat kari sakait chhi.","male":"Haan, hum Maithili me baat kari sakait chhi."},
+ "sat":{"female":"Hae, ing Santali re katha kana parena.","male":"Hae, ing Santali re katha kana parena."}
+}
+def language_switch_confirmation(language: str, gender: str = "female") -> str:
+    table=AGENT_GENDER_CONFIRMATIONS.get(language,AGENT_GENDER_CONFIRMATIONS["en"])
+    return table.get(gender,table["female"])
+def voice_feedback_reply(language: str, gender: str = "female") -> str:
+    table={
+      "en":{"female":"I understand. I'll continue naturally in the same language.","male":"I understand. I'll continue naturally in the same language."},
+      "hi":{"female":"Samajh gayi. Main Hindi mein hi continue karungi aur conversation naturally rakhoongi.","male":"Samajh gaya. Main Hindi mein hi continue karunga aur conversation naturally rakhoonga."},
+      "mr":{"female":"Samajla. Mi Marathi madhyech continue karen.","male":"Samajla. Mi Marathi madhyech continue karen."},
+      "pa":{"female":"Samajh gayi. Main Punjabi vich hi gal jari rakhangi.","male":"Samajh gaya. Main Punjabi vich hi gal jari rakhanga."},
+      "ur":{"female":"Samajh gayi. Main Urdu mein hi baat jari rakhungi.","male":"Samajh gaya. Main Urdu mein hi baat jari rakhunga."},
+      "te":{"female":"Ardham ayyindi. Nenu Telugu lo continue chestanu.","male":"Ardham ayyindi. Nenu Telugu lo continue chestanu."},
+      "ta":{"female":"Purinjukitten. Naan Tamil-la continue panren.","male":"Purinjukitten. Naan Tamil-la continue panren."},
+      "kn":{"female":"Artha aayitu. Naanu Kannada dalli continue maaduttene.","male":"Artha aayitu. Naanu Kannada dalli continue maaduttene."},
+      "ml":{"female":"Manassilaayi. Njan Malayalam-il thanne continue cheyyam.","male":"Manassilaayi. Njan Malayalam-il thanne continue cheyyam."},
+      "bn":{"female":"Bujhte perechi. Ami Banglayi continue korbo.","male":"Bujhte perechi. Ami Banglayi continue korbo."},
+      "gu":{"female":"Samajyu. Hu Gujarati ma j continue karish.","male":"Samajyu. Hu Gujarati ma j continue karish."}
+    }
+    return table.get(language,table["en"]).get(gender,table["en"]["female"])
+}
+
 SPOKEN_CLARIFICATION = {
     "en": "Sorry, I didn't catch that. Could you please repeat it?",
     "hi": "Maaf kijiye, ek baar phir se bataiye.",
