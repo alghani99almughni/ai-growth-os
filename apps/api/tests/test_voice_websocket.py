@@ -51,6 +51,12 @@ class FakeDB:
     def scalar(self, query):
         return None
 
+    def add(self, obj):
+        pass
+
+    def refresh(self, obj):
+        pass
+
     def commit(self):
         pass
 
