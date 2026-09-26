@@ -1,0 +1,38 @@
+name: Full Multi-Tenant QA Matrix
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qa-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      API_URL: https://ai-growth-os-api.onrender.com
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m pip install -q requests
+      - name: Wait for Render
+        run: |
+          python - <<'PY'
+          import os,time,requests
+          base=os.environ["API_URL"]; expected=os.environ["GITHUB_SHA"]; end=time.time()+300
+          while time.time()<end:
+            r=requests.get(base+"/health",timeout=20); r.raise_for_status()
+            got=r.json().get("commit",""); print("DEPLOYED_COMMIT",got)
+            if got==expected: break
+            time.sleep(8)
+          else: raise SystemExit("Render deployment timeout")
+          PY
+      - name: Execute 15-tenant QA matrix
+        run: python qa/full_matrix.py
+      - name: Upload error log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-qa-error-log
+          path: qa_error_log.md
+          if-no-files-found: warn
