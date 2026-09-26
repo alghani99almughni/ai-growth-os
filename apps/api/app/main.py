@@ -1443,7 +1443,7 @@ async def voice_turn(tenant_id,payload:VoiceTurnRequest,user=Depends(get_current
 
 @app.get("/api/v1/public/languages")
 def supported_languages():
-    return {"languages":[{"code":"en","name":"English"},{"code":"hi","name":"Hindi"},{"code":"te","name":"Telugu"},{"code":"ta","name":"Tamil"},{"code":"kn","name":"Kannada"},{"code":"ml","name":"Malayalam"},{"code":"mr","name":"Marathi"},{"code":"bn","name":"Bengali"},{"code":"gu","name":"Gujarati"},{"code":"pa","name":"Punjabi"},{"code":"ur","name":"Urdu"},{"code":"or","name":"Odia"},{"code":"as","name":"Assamese"}]}
+    return {"languages":[{"code":"en","name":"English"},{"code":"hi","name":"Hindi"},{"code":"te","name":"Telugu"},{"code":"ta","name":"Tamil"},{"code":"kn","name":"Kannada"},{"code":"ml","name":"Malayalam"},{"code":"mr","name":"Marathi"},{"code":"bn","name":"Bengali"},{"code":"gu","name":"Gujarati"},{"code":"pa","name":"Punjabi"},{"code":"ur","name":"Urdu"},{"code":"or","name":"Odia"},{"code":"as","name":"Assamese"},{"code":"kok","name":"Konkani"},{"code":"sa","name":"Sanskrit"},{"code":"sd","name":"Sindhi"},{"code":"ks","name":"Kashmiri"},{"code":"mni","name":"Manipuri"},{"code":"ne","name":"Nepali"},{"code":"doi","name":"Dogri"},{"code":"mai","name":"Maithili"},{"code":"sat","name":"Santali"}]}
 
 @app.get("/api/v1/tenants/{tenant_id}/conversations/{conversation_id}")
 def conversation_history(tenant_id,conversation_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
