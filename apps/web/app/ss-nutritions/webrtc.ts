@@ -10,12 +10,13 @@ function wsBase(apiBase: string) {
 
 export async function connectCustomerToStaff(
   apiBase: string,
+  slug: string,
   callId: string,
   roomToken: string,
   localStream: MediaStream
 ): Promise<HumanWebRtcConnection> {
   const iceResponse = await fetch(
-    apiBase + "/api/v1/public/business/ss-nutritions/voice/ice",
+    apiBase + "/api/v1/public/business/" + encodeURIComponent(slug) + "/voice/ice",
     { cache: "no-store" }
   );
   const icePayload = await iceResponse.json();
