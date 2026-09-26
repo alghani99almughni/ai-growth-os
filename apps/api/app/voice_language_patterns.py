@@ -1,3 +1,5 @@
+import re
+
 """Deterministic multilingual voice patterns extracted/adapted from Aura Reception AI.
 
 These are language and speech-recognition patterns, not tenant facts. They make the
