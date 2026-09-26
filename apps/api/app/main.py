@@ -1420,7 +1420,7 @@ def staff_release(tenant_id, call_id, user=Depends(get_current_user), db: Sessio
 def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
     rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id).order_by(CallRecord.created_at.desc())).all()
-    return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
+    return {"items":[{"id":x.id,"customer_id":x.customer_id,"customer_name":(db.get(Customer,x.customer_id).name if x.customer_id and db.get(Customer,x.customer_id) else "Customer"),"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
 
 @app.get("/api/v1/tenants/{tenant_id}/voice/ice")
 def voice_ice_config(tenant_id,user=Depends(get_current_user)):
@@ -1946,6 +1946,36 @@ class PublicVoiceTurnRequest(BaseModel):
     conversation_id:str|None=None
     call_id:str|None=None
     channel:str="voice"
+
+@app.post("/api/v1/public/business/{slug}/call/{call_id}/handoff")
+def public_handoff_start(slug:str, call_id:str, db:Session=Depends(get_db)):
+    """Promote an AI call to an authenticated staff WebRTC room without exposing tenant auth to the customer."""
+    t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not t: raise HTTPException(404,"Business not found")
+    call=db.scalar(select(CallRecord).where(
+        CallRecord.id==call_id, CallRecord.tenant_id==t.id, CallRecord.source=="pwa_voice"
+    ))
+    if not call: raise HTTPException(404,"Call not found")
+    age=(datetime.utcnow()-call.started_at).total_seconds() if call.started_at else 999999
+    if age>900: raise HTTPException(410,"Call session expired")
+    if call.status not in ("handoff_requested","handoff_accepted","connected"):
+        raise HTTPException(409,"Call is not ready for human handoff")
+    routed=route_call(db,t.id,call,call.intent or "human_handoff")
+    if not routed.get("staff"):
+        call.status="handoff_unavailable"
+        db.commit()
+        return {"call_id":call.id,"status":call.status,"room_id":None,"message":"No assigned staff is currently available."}
+    call.staff_id=(routed.get("staff") or {}).get("id") or call.staff_id
+    call.room_id=call.room_id or "call-"+call.id
+    call.status="handoff_requested"
+    db.commit()
+    return {
+        "call_id":call.id,
+        "status":call.status,
+        "room_id":call.room_id,
+        "room_token":issue_call_room_token(call.id,"call-customer"),
+        "staff":routed.get("staff")
+    }
 
 @app.get("/api/v1/public/business/{slug}/call/{call_id}/handoff")
 def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
