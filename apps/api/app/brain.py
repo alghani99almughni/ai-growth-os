@@ -582,11 +582,17 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             c.state="booking_time_clarification"
     elif active_booking and is_booking_cancellation(message):
         was_confirmed = c.state == "booking_confirmed"
+        prior = previous_booking_context(db, c.id, message) if was_confirmed else {}
+        booking_date = resolve_booking_date(
+            tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
+        ) if was_confirmed else None
         booking={"hi":"ठीक है। मैंने अपॉइंटमेंट बुकिंग रोक दी है।",
                  "te":"సరే. అపాయింట్‌మెంట్ బుకింగ్‌ను ఆపేశాను."}.get(
                  language,"Okay. I’ve stopped the appointment booking.")
         c.state="information"
-        booking_data={"complete":False,"cancelled":True,"cancel_requested":was_confirmed}
+        booking_data={"complete":False,"cancelled":True,"cancel_requested":was_confirmed,
+                      "date":booking_date.isoformat() if booking_date else None,
+                      "time":prior.get("time") if was_confirmed else None}
     elif intent=="availability" and active_booking:
         prior=previous_booking_context(db,c.id,message)
         requested_day=current_entities.get("day") or prior.get("day")
