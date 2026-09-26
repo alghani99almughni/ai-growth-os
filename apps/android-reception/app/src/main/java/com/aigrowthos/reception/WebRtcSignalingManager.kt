@@ -68,7 +68,6 @@ class WebRtcSignalingManager(
             override fun onRenegotiationNeeded() = Unit
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) { (receiver.track() as? AudioTrack)?.setEnabled(true) }
             override fun onStandardizedIceConnectionChange(s: PeerConnection.IceConnectionState) = Unit
-            override fun onSelectedCandidatePairChanged(e: PeerConnection.CandidatePairChangeEvent) = Unit
             override fun onTrack(t: RtpTransceiver) = Unit
         }) ?: error("PeerConnection creation failed")
         val constraints = MediaConstraints().apply { mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation","true")); mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression","true")); mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl","true")) }
