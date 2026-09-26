@@ -48,6 +48,9 @@ class FakeDB:
             return self.tenant
         return None
 
+    def scalar(self, query):
+        return None
+
     def commit(self):
         pass
 
@@ -65,6 +68,7 @@ class FailingGateway:
 
 def test_public_voice_provider_failure_is_structured_not_http_500(monkeypatch):
     monkeypatch.setattr(main, "SessionLocal", FakeDB)
+    monkeypatch.setattr(main, "ensure_schema", lambda: None)
     monkeypatch.setattr(main, "knowledge_context", lambda db, tenant_id: "")
     monkeypatch.setattr(main, "tenant_policy", lambda db, tenant_id: {})
     monkeypatch.setattr(main, "policy_context", lambda policy: "")
