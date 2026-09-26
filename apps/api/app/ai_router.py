@@ -6,12 +6,7 @@ from .models_ai import GlobalFaq
 from .models import Service, Product
 LANGUAGE_PATTERNS={"en":r"[a-z]","hi":r"[\u0900-\u097f]","te":r"[\u0c00-\u0c7f]","ta":r"[\u0b80-\u0bff]","kn":r"[\u0c80-\u0cff]","ml":r"[\u0d00-\u0d7f]","mr":r"[\u0900-\u097f]","bn":r"[\u0980-\u09ff]","gu":r"[\u0a80-\u0aff]","pa":r"[\u0a00-\u0a7f]","or":r"[\u0b00-\u0b7f]","as":r"[\u0980-\u09ff]","ur":r"[\u0600-\u06ff]"}
 def detect_language(text:str)->str:
-    scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
-    if max(scores.values(),default=0)>0:
-        winner=max(scores,key=scores.get)
-        if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
-        if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
-        return winner
+    value=text.casefold()
     explicit_languages={
         "hi":("hindi","हिंदी","हिन्दी"), "te":("telugu","telugulo","తెలుగు"),
         "ta":("tamil","tamil la","தமிழ்"), "kn":("kannada","kannadadalli","ಕನ್ನಡ"),
@@ -20,22 +15,27 @@ def detect_language(text:str)->str:
         "pa":("punjabi","punjabi vich","ਪੰਜਾਬੀ"), "ur":("urdu","urdu mein","اردو"),
     }
     for lang,markers in explicit_languages.items():
-        if any(marker in text.casefold() for marker in markers):
+        if any(marker in value for marker in markers):
             return lang
-    romanized=text.casefold()
+    scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
+    if max(scores.values(),default=0)>0:
+        winner=max(scores,key=scores.get)
+        if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
+        if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
+        return winner
     roman_scores={
-        "hi":("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye","hindi"),
-        "te":("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara","telugu"),
-        "ta":("enakku","ungal","naalai","venum","pannanum","eppo","pesanum","tamil"),
-        "kn":("nanage","nimma","naale","beku","madbeku","maatadbeku","kannada"),
-        "ml":("enikku","ningalude","naale","venam","enthaa","eppozha","malayalam"),
-        "mr":("mala","tumche","udya","aahe","kay","havi","marathi"),
-        "bn":("amar","apnader","korte","chai","koto","kokhon","bengali"),
-        "gu":("mane","tamara","kaale","joiye","shu","chhe","gujarati"),
-        "pa":("mainu","tuhade","chahidi","kadon","kinna","gal","punjabi"),
-        "ur":("mujhe","aapke","kaun","bataiye","urdu"),
+        "hi":("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye"),
+        "te":("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara"),
+        "ta":("enakku","ungal","naalai","venum","pannanum","eppo","pesanum"),
+        "kn":("nanage","nimma","naale","beku","madbeku","maatadbeku","yavaga"),
+        "ml":("enikku","ningalude","naale","venam","enthaa","eppozha","parayamo"),
+        "mr":("mala","tumche","udya","aahe","kay","havi","sanga"),
+        "bn":("amar","apnader","korte","chai","koto","kokhon","bolben"),
+        "gu":("mane","tamara","kaale","joiye","shu","chhe","kyare"),
+        "pa":("mainu","tuhade","chahidi","kadon","kinna","gal","karni"),
+        "ur":("mujhe","aapke","kaun","bataiye","karna"),
     }
-    ranked={lang:sum(1 for marker in markers if marker in romanized) for lang,markers in roman_scores.items()}
+    ranked={lang:sum(1 for marker in markers if marker in value) for lang,markers in roman_scores.items()}
     winner,score=max(ranked.items(),key=lambda item:item[1])
     return winner if score>=2 else "en"
 def normalize(text:str)->set[str]:
