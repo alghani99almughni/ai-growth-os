@@ -466,6 +466,13 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
     }
 
 
+def is_booking_cancellation(message: str) -> bool:
+    value=" ".join(message.casefold().split())
+    phrases=("cancel","leave it","don't want","do not want","not needed",
+             "nahi chahiye","nahin chahiye","cancel kar do","बुक नहीं चाहिए",
+             "नहीं चाहिए","मत चाहिए","रद्द","रद्द कर")
+    return any(p in value for p in phrases)
+
 async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:str|None=None,channel:str="pwa")->dict:
     tenant=db.get(Tenant,tenant_id)
     if not tenant: raise ValueError("Tenant not found")
@@ -572,6 +579,34 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
                 "confirmation_requested":False,
             }
             c.state="booking_time_clarification"
+    elif active_booking and is_booking_cancellation(message):
+        booking={"hi":"ठीक है। मैंने अपॉइंटमेंट की प्रक्रिया रोक दी है। अगर बाद में बुक करना हो तो बताइए。",
+                 "te":"సరే. అపాయింట్‌మెంట్ బుకింగ్‌ను ఆపేశాను. తర్వాత బుక్ చేయాలంటే చెప్పండి."}.get(
+                 language,"Okay. I’ve stopped the appointment booking. If you want to book later, just let me know.")
+        c.state="information"
+        booking_data={"complete":False,"cancelled":True}
+    elif intent=="availability" and active_booking:
+        prior=previous_booking_context(db,c.id,message)
+        requested_day=current_entities.get("day") or prior.get("day")
+        requested_relative=current_entities.get("relative_day") or (None if current_entities.get("day") else prior.get("relative_day"))
+        booking_date=resolve_booking_date(tenant,requested_day,requested_relative)
+        service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
+        if booking_date and service:
+            slots=available_slots(db,tenant,service.id,booking_date)
+            if slots:
+                times=[datetime.fromisoformat(x["start"]).strftime("%-I:%M %p") for x in slots[:4]]
+                booking=(f"{booking_date.strftime('%A, %B %-d')}, available times are {', '.join(times)}. Which time would you like?"
+                         if language=="en" else
+                         f"{booking_date.strftime('%A, %B %-d')} को उपलब्ध समय {', '.join(times)} हैं। इनमें से कौन सा समय चाहिए?"
+                         if language=="hi" else
+                         f"{booking_date.strftime('%A, %B %-d')} అందుబాటులో ఉన్న సమయాలు {', '.join(times)}. ఏ సమయం కావాలి?"
+                         if language=="te" else
+                         f"Available times are {', '.join(times)}. Which time would you like?")
+            else:
+                booking=booking_text(language,"unavailable",time="A slot",day=booking_date.strftime("%A"))
+        else:
+            booking=AVAILABILITY_PROMPTS.get(language,AVAILABILITY_PROMPTS["en"])
+        c.state="booking_day"
     elif active_booking:
         booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif intent=="doctor_information":
