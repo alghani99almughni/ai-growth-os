@@ -1727,8 +1727,31 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
         providers.append(VoiceProvider("openai",getattr(settings,"openai_realtime_model","gpt-realtime-2.1"),settings.openai_api_key,priority=200))
     state=VoiceSessionState(call_id=call.id,provider_name="")
     gateway=VoiceGateway({"gemini":GeminiLiveAdapter(),"openai":OpenAIRealtimeAdapter()})
+    provider=None
+    session=None
     try:
         provider,session=await gateway.connect_with_failover(providers,system_instruction=system,tools=tool_declarations,state=state)
+    except Exception:
+        logging.getLogger("uvicorn.error").exception(
+            "PUBLIC_VOICE_WS_PROVIDER_CONNECT_FAILED call_id=%s providers=%s",
+            call.id, [p.name for p in providers],
+        )
+        call.status="failed"
+        call.resolution="ai_provider_unavailable"
+        db.commit()
+        try:
+            await websocket.send_json({
+                "type":"error",
+                "code":"ai_provider_unavailable",
+                "message":"The AI voice service is temporarily unavailable.",
+                "recoverable":True,
+            })
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+        db.close()
+        return
+    try:
         await websocket.send_json({"type":"status","status":"ai_connected","provider":provider.name})
         await gateway.adapter_for(provider).send_text(session,"Begin the call now.")
         while True:
@@ -1755,7 +1778,24 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                     old_provider=provider
                     try: await gateway.adapter_for(old_provider).close(session)
                     except Exception: pass
-                    provider,session=await gateway.reconnect(providers,old_provider,system_instruction=system,tools=tool_declarations,state=state)
+                    try:
+                        provider,session=await gateway.reconnect(providers,old_provider,system_instruction=system,tools=tool_declarations,state=state)
+                    except Exception:
+                        logging.getLogger("uvicorn.error").exception(
+                            "PUBLIC_VOICE_WS_RECONNECT_FAILED call_id=%s provider=%s",
+                            call.id, old_provider.name if old_provider else None,
+                        )
+                        try:
+                            await websocket.send_json({
+                                "type":"error",
+                                "code":"ai_provider_reconnect_failed",
+                                "message":"The AI voice connection was interrupted and could not be recovered.",
+                                "recoverable":True,
+                            })
+                            await websocket.close(code=1011)
+                        except Exception:
+                            pass
+                        break
                     await websocket.send_json({"type":"status","status":"ai_reconnected","provider":provider.name,"reconnects":state.reconnects,"failovers":state.failovers})
                     await gateway.adapter_for(provider).send_text(session,"Continue the call naturally from the preserved context.")
                     continue
@@ -1790,6 +1830,9 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 if not service:
                                     raise ValueError("No active appointment service is configured.")
                                 slots=available_slots(db,tenant,service.id,requested_date,str(args.get("staff_id")) if args.get("staff_id") else None)
+                                weekday_rule=db.scalar(select(BusinessHour).where(
+                                    BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==requested_date.weekday()
+                                ))
                                 requested_time=str(args.get("time","")).strip().upper().replace(".","")
                                 if requested_time:
                                     import re as _re
