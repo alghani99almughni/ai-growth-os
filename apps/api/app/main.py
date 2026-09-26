@@ -2170,6 +2170,69 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             result["booking"]={**booking,"confirmed":False,"error":str(exc)}
             result["handoff_required"]=False
 
+    if payload.call_id and booking.get("cancel_requested"):
+        call_for_cancel=db.scalar(select(CallRecord).where(
+            CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id
+        ))
+        try:
+            if not call_for_cancel or not call_for_cancel.customer_id:
+                raise ValueError("Customer identity is required before cancelling an appointment.")
+            customer=db.get(Customer,call_for_cancel.customer_id)
+            if not customer:
+                raise ValueError("Customer record was not found.")
+            appointment=None
+            date_text=str(booking.get("date") or "").strip()
+            time_text=str(booking.get("time") or "").strip().upper()
+            if date_text and time_text:
+                starts_at=datetime.strptime(
+                    f"{date_text} {time_text}", "%Y-%m-%d %I:%M %p"
+                ) if ":" in time_text else datetime.strptime(
+                    f"{date_text} {time_text}", "%Y-%m-%d %I %p"
+                )
+                from .booking import local_to_utc_naive
+                starts_utc=local_to_utc_naive(starts_at,t.timezone)
+                appointment=db.scalar(select(Appointment).where(
+                    Appointment.id==Appointment.id,
+                    Appointment.tenant_id==t.id,
+                    Appointment.customer_id==customer.id,
+                    Appointment.starts_at==starts_utc,
+                    Appointment.status.in_(["requested","confirmed","checked_in","serving"])
+                ).order_by(Appointment.created_at.desc()).limit(1))
+            if not appointment:
+                appointment=db.scalar(select(Appointment).where(
+                    Appointment.tenant_id==t.id,
+                    Appointment.customer_id==customer.id,
+                    Appointment.starts_at>=datetime.utcnow(),
+                    Appointment.status.in_(["requested","confirmed","checked_in","serving"])
+                ).order_by(Appointment.starts_at.asc()).limit(1))
+            if not appointment:
+                raise ValueError("No active upcoming appointment was found.")
+            appointment.status="cancelled"
+            q=db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==appointment.id))
+            if q:
+                q.status="cancelled"
+                q.completed_at=datetime.utcnow()
+                appointment.queue_status="cancelled"
+            db.commit()
+            result["reply"]={
+                "hi":f"ठीक है। आपका {appointment.starts_at.strftime('%-d %B')} का अपॉइंटमेंट रद्द कर दिया गया है।",
+                "te":f"సరే. మీ {appointment.starts_at.strftime('%-d %B')} అపాయింట్‌మెంట్ రద్దు చేశాను."
+            }.get(
+                result.get("language"),
+                f"Okay. Your appointment for {appointment.starts_at.strftime('%B %-d at %-I:%M %p')} has been cancelled."
+            )
+            result["booking"]={**booking,"cancel_requested":False,"cancelled":True,
+                               "booking_id":appointment.id,"cancellation_confirmed":True}
+        except Exception as exc:
+            db.rollback()
+            logging.getLogger("uvicorn.error").warning(
+                "VOICE_PUBLIC_BOOKING_CANCEL_REJECTED call_id=%s booking=%s error=%s",
+                payload.call_id, booking, exc,
+            )
+            result["reply"]="I could not find an active appointment to cancel."
+            result["booking"]={**booking,"cancel_requested":False,"cancelled":False,
+                               "cancellation_confirmed":False,"error":str(exc)}
+
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
