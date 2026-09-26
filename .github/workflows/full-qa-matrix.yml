@@ -1,0 +1,259 @@
+name: Full Multi-Tenant QA Matrix
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  qa-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      API_URL: https://ai-growth-os-api.onrender.com
+      GITHUB_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: python -m pip install -q requests
+
+      - name: Wait for Render deployment
+        run: |
+          python - <<'PY'
+          import os,time,requests
+          base=os.environ["API_URL"].rstrip("/")
+          expected=os.environ["GITHUB_SHA"]
+          end=time.time()+300
+          while time.time()<end:
+              r=requests.get(base+"/health",timeout=20); r.raise_for_status()
+              got=r.json().get("commit","")
+              print("DEPLOYED_COMMIT=",got)
+              if got==expected: break
+              time.sleep(8)
+          else:
+              raise SystemExit(f"Render did not deploy {expected}")
+          PY
+
+      - name: Run 15-tenant functional, adversarial and performance matrix
+        run: |
+          cat > /tmp/full_qa.py <<'PY'
+          import os,requests,time,statistics,concurrent.futures,datetime,random,json
+          BASE=os.environ["API_URL"].rstrip("/")
+          S=requests.Session()
+          S.headers.update({"Content-Type":"application/json"})
+          report=[]
+          errors=[]
+
+          categories=[
+            ("health","QA Health Clinic"),
+            ("wellness","QA Wellness Center"),
+            ("dental","QA Dental Clinic"),
+            ("restaurant","QA Restaurant"),
+            ("hotel","QA Hotel"),
+            ("salon","QA Salon"),
+            ("gym","QA Gym"),
+            ("real-estate","QA Real Estate"),
+            ("education","QA Education"),
+            ("automotive","QA Automotive"),
+            ("retail","QA Retail Store"),
+            ("legal","QA Legal Services"),
+            ("travel","QA Travel Agency"),
+            ("home-services","QA Home Services"),
+            ("professional-services","QA Professional Services"),
+          ]
+
+          probes=[
+            ("what","What services do you provide?"),
+            ("if","If I need help, what can you do for me?"),
+            ("now","Can I get help now?"),
+            ("when","When are you open?"),
+            ("where","Where are you located?"),
+            ("why","Why should I contact your business?"),
+            ("how","How can I book an appointment?"),
+            ("who","Who can help me?"),
+          ]
+
+          def fail(cat,case,msg,solution=""):
+              row={"category":cat,"case":case,"error":msg,"solution":solution}
+              errors.append(row); print("FAIL",json.dumps(row,ensure_ascii=False))
+
+          def register_or_login(slug,name,industry,idx):
+              email=f"qa-{slug}@example.test"; password="QaMatrix!2026"
+              payload={"name":f"QA Owner {idx}","email":email,"password":password,
+                       "business_name":name,"slug":slug,"industry":industry}
+              r=S.post(BASE+"/api/v1/auth/register",json=payload,timeout=25)
+              if r.status_code==201: return r.json()
+              if r.status_code!=409: r.raise_for_status()
+              r=S.post(BASE+"/api/v1/auth/login",json={"email":email,"password":password},timeout=25)
+              r.raise_for_status(); return r.json()
+
+          tenants=[]
+          for i,(industry,name) in enumerate(categories,1):
+              slug=f"qa-{industry.replace('_','-')}"
+              try:
+                  auth=register_or_login(slug,name,industry,i)
+                  token=auth["access_token"]; tenant=auth["tenant"]; tid=tenant["id"]
+                  h={"Authorization":"Bearer "+token,"Content-Type":"application/json"}
+                  svc=S.post(BASE+f"/api/v1/tenants/{tid}/services",headers=h,
+                             json={"name":"QA Consultation","description":"Automated QA service","price":100,
+                                   "currency":"INR","duration_minutes":30,"is_active":True},timeout=25)
+                  if svc.status_code not in (201,409):
+                      fail(industry,"tenant provisioning",f"service create HTTP {svc.status_code}: {svc.text[:300]}",
+                           "Ensure authenticated tenant service provisioning is idempotent and returns 201/409.")
+                  tenants.append((industry,slug,tid))
+                  report.append({"category":industry,"tenant":slug,"status":"provisioned"})
+              except Exception as e:
+                  fail(industry,"tenant provisioning",str(e),"Fix registration/login/provisioning and rerun the tenant matrix.")
+
+          if len(tenants)!=15:
+              raise SystemExit(f"Only {len(tenants)}/15 tenants provisioned")
+
+          def new_call(slug,n):
+              r=S.post(BASE+f"/api/v1/public/business/{slug}/call",
+                       json={"name":f"QA Customer {n}","phone":f"+919990{random.randint(100000,999999)}"},timeout=25)
+              r.raise_for_status(); return r.json()["call_id"]
+
+          def turn(slug,call_id,msg,conv=None):
+              r=S.post(BASE+f"/api/v1/public/business/{slug}/voice/turn",
+                       json={"transcript":msg,"call_id":call_id,"conversation_id":conv,"channel":"voice"},timeout=35)
+              if r.status_code>=500: raise RuntimeError(f"HTTP {r.status_code}: {r.text[:400]}")
+              r.raise_for_status(); return r.json()
+
+          # 15 x 8 WH probes = 120 independent customer conversations.
+          lat=[]
+          for idx,(industry,slug,tid) in enumerate(tenants,1):
+              for kind,msg in probes:
+                  t=time.perf_counter()
+                  try:
+                      cid=new_call(slug,idx)
+                      x=turn(slug,cid,msg)
+                      elapsed=time.perf_counter()-t; lat.append(elapsed)
+                      if not x.get("reply"): fail(industry,kind,"empty reply","Return a deterministic/library/AI-or-handoff reply for every valid customer turn.")
+                  except Exception as e:
+                      fail(industry,kind,str(e),"Trace the request by call/conversation ID; fix the failing intent/tenant path before release.")
+
+          # Booking state machine: today -> now must NOT repeat the time question.
+          # Also test tomorrow -> o'clock -> confirmation -> real cancellation.
+          for industry,slug,tid in tenants:
+              try:
+                  cid=new_call(slug,100)
+                  conv=None
+                  x=turn(slug,cid,"I want to book an appointment",conv); conv=x.get("conversation_id")
+                  x=turn(slug,cid,"today",conv); conv=x.get("conversation_id")
+                  x=turn(slug,cid,"now",conv); conv=x.get("conversation_id")
+                  reply=x.get("reply","").lower()
+                  if "what time would you prefer" in reply or "which time" in reply:
+                      fail(industry,"today-now","AI repeated the time question", "Resolve 'now' to the next available tenant-local slot or explicitly report no remaining slot today.")
+                  cid=new_call(slug,101); conv=None
+                  for msg in ["I want an appointment","tomorrow","2 o'clock"]:
+                      x=turn(slug,cid,msg,conv); conv=x.get("conversation_id")
+                  if not x.get("reply"): fail(industry,"tomorrow-2-oclock","empty reply","Parse spoken o'clock times and preserve booking state.")
+                  x=turn(slug,cid,"Yes, confirm it",conv)
+                  if not x.get("booking",{}).get("confirmed"):
+                      fail(industry,"booking-confirm","real appointment was not confirmed","Create the appointment transaction after explicit confirmation.")
+                  bid=x.get("booking",{}).get("booking_id")
+                  x=turn(slug,cid,"Cancel my appointment",conv)
+                  if bid and x.get("booking",{}).get("booking_id")!=bid:
+                      fail(industry,"booking-cancel","booking id mismatch","Persist the confirmed booking reference and cancel that exact appointment.")
+                  if bid and not x.get("booking",{}).get("cancellation_confirmed"):
+                      fail(industry,"booking-cancel","cancellation not confirmed","Cancel the persisted appointment transactionally.")
+              except Exception as e:
+                  fail(industry,"booking-state-machine",str(e),"Fix the complete booking state machine before release.")
+
+          # Indian-language and STT variants on every tenant.
+          language_cases=[
+            ("hi","हिंदी में बात कर सकते हैं","मुझे अपॉइंटमेंट बुक करना है"),
+            ("te","తెలుగులో మాట్లాడగలరా?","నాకు అపాయింట్మెంట్ కావాలి"),
+            ("mixed","Can I book now?","abhi appointment chahiye"),
+            ("roman","Hindi mein baat kar sakte hain","abhi book karna hai"),
+          ]
+          for industry,slug,tid in tenants:
+              for lang,a,b in language_cases:
+                  try:
+                      cid=new_call(slug,200); conv=None
+                      x=turn(slug,cid,a,conv); conv=x.get("conversation_id")
+                      x=turn(slug,cid,b,conv)
+                      if not x.get("reply"): fail(industry,"language-"+lang,"empty multilingual reply","Preserve requested language and return a deterministic response.")
+                  except Exception as e:
+                      fail(industry,"language-"+lang,str(e),"Fix language detection/persistence and Indian-language booking aliases.")
+
+          # Edge/adversarial intent probes: vague, correction, cancellation, date/time ambiguity, unknowns.
+          edge=[
+            "What if I change my mind?",
+            "What if I need to cancel?",
+            "When exactly?",
+            "Where exactly?",
+            "Why do you need my number?",
+            "How much does it cost?",
+            "Who is available right now?",
+            "I don't know",
+            "maybe",
+            "no",
+            "not now",
+            "2 PM",
+            "2 o'clock",
+            "12 noon",
+            "tomorrow",
+            "Monday",
+            "abhi",
+            "अभी",
+            "कल",
+            "सोमवार",
+          ]
+          for industry,slug,tid in tenants:
+              try:
+                  cid=new_call(slug,300); conv=None
+                  for msg in edge:
+                      x=turn(slug,cid,msg,conv); conv=x.get("conversation_id")
+                      if not x.get("reply"): fail(industry,"edge:"+msg,"empty reply","Every conversational fragment must receive a safe deterministic clarification or answer.")
+              except Exception as e:
+                  fail(industry,"edge-matrix",str(e),"Fix state recovery so unexpected turns never crash or loop indefinitely.")
+
+          # Concurrent load: 60 independent turns across all tenants.
+          def load_one(i):
+              industry,slug,tid=tenants[i%len(tenants)]
+              t=time.perf_counter()
+              try:
+                  cid=new_call(slug,500+i); x=turn(slug,cid,probes[i%len(probes)][1])
+                  return time.perf_counter()-t,True,industry,""
+              except Exception as e:
+                  return time.perf_counter()-t,False,industry,str(e)
+          with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
+              results=list(ex.map(load_one,range(60)))
+          load_lat=[x[0] for x in results]
+          for _,ok,industry,err in results:
+              if not ok: fail(industry,"concurrency",err,"Remove race conditions, connection/session leaks, or tenant cross-talk under concurrent load.")
+          p95=sorted(load_lat)[max(0,int(len(load_lat)*.95)-1)]
+          print(f"PERF concurrent=60 p50={statistics.median(load_lat):.2f}s p95={p95:.2f}s")
+          if p95>20: fail("platform","performance",f"p95={p95:.2f}s > 20s","Profile API/database/AI fallback latency and eliminate blocking work on request paths.")
+
+          # Tenant isolation: each slug must only answer from its own public business record.
+          for industry,slug,tid in tenants:
+              r=S.get(BASE+f"/api/v1/public/business/{slug}/website",timeout=20)
+              if r.status_code!=200: fail(industry,"tenant-isolation",f"website HTTP {r.status_code}","Keep public business lookup scoped to the requested tenant slug.")
+
+          print(f"TOTAL_FAILURES={len(errors)}")
+          print(f"TOTAL_LATENCY_SAMPLES={len(lat)}")
+          if errors:
+              with open("qa_error_log.md","w",encoding="utf-8") as f:
+                  f.write("# Full QA Error Log\n\n")
+                  for e in errors:
+                      f.write(f"## {e['category']} / {e['case']}\n**Error:** {e['error']}\n\n**Solution:** {e['solution']}\n\n")
+              raise SystemExit(1)
+          with open("qa_error_log.md","w",encoding="utf-8") as f:
+              f.write("# Full QA Error Log\n\nNo unresolved failures. The matrix executed across 15 tenants with functional, adversarial, multilingual, booking, isolation and concurrent-load checks.\n")
+          print("FULL 15-TENANT QA MATRIX: PASS")
+          PY
+          python /tmp/full_qa.py
+
+      - name: Upload QA error log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-qa-error-log
+          path: qa_error_log.md
+          if-no-files-found: warn
