@@ -48,6 +48,7 @@ ROMANIZED_LANGUAGE_HINTS = {
 }
 
 RELATIVE_DAY_PHRASES = {
+    "yesterday": ("yesterday","day before today"),
     "today": (
         "today", "aaj", "आज", "ee roju", "ivala", "ఈ రోజు",
         "indru", "இன்று", "ivattu", "ಇಂದು", "innu", "ഇന്ന്",
@@ -112,6 +113,8 @@ def language_request(text: str) -> str | None:
 
 def relative_day_from_text(text: str) -> str | None:
     value = text.casefold().strip()
+    if any(phrase.casefold() in value for phrase in RELATIVE_DAY_PHRASES["yesterday"]):
+        return "yesterday"
     if any(phrase.casefold() in value for phrase in RELATIVE_DAY_PHRASES["day_after_tomorrow"]):
         return "day_after_tomorrow"
     if any(phrase.casefold() in value for phrase in RELATIVE_DAY_PHRASES["tomorrow"]):
