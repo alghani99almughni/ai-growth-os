@@ -151,12 +151,14 @@ export default function SSNutritions(){
             const status=await statusResponse.json();
             roomToken=status.room_token||"";
             if(status.status==="handoff_unavailable") throw new Error("No team member is available right now.");
+          if(status.status==="handoff_declined") throw new Error("Our team member could not take the call. Please try again.");
+            if(status.status==="handoff_declined") throw new Error("Our team member could not take the call. Please try again.");
           }
         }
         if(roomToken){
           const stream=streamRef.current||await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
           streamRef.current=stream;
-          humanConnectionRef.current=await connectCustomerToStaff(api(),payload.call_id,roomToken,stream);
+          humanConnectionRef.current=await connectCustomerToStaff(api(),String(business.slug||"ss-nutritions"),payload.call_id,roomToken,stream);
           setCallState("connected");
           setCallError("Connected to our team.");
           return;
