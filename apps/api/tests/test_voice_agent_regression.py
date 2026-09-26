@@ -170,3 +170,32 @@ def test_regression_suite_has_more_than_100_scenarios():
 ])
 def test_romanized_language_detection(message, expected):
     assert detect_language(message) == expected
+
+
+def test_reception_routing_rule_selects_configured_department_and_priority():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db import Base
+    from app.models import Tenant
+    from app.models_ai import Department, StaffMember, RoutingRule
+    from app.models_growth import CallRecord
+    from app.routing import route_call
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    tenant = Tenant(id="t1", name="Demo", slug="demo", industry="wellness")
+    db.add(tenant)
+    dept = Department(id="d1", tenant_id="t1", name="Billing", skills="payment,refund")
+    staff = StaffMember(id="s1", tenant_id="t1", name="Billing Agent", department_id="d1", skills="refund", is_available=True)
+    rule = RoutingRule(id="r1", tenant_id="t1", name="Payment escalation", intent="payment", department_id="d1", staff_id="s1", priority=1, urgency="high", action="route_and_alert")
+    call = CallRecord(id="c1", tenant_id="t1", source="webrtc", status="connected", intent="payment", summary="Customer reports a payment issue")
+    db.add_all([dept, staff, rule, call])
+    db.commit()
+    result = route_call(db, "t1", call, "payment")
+    assert result["department"] == "Billing"
+    assert result["staff"]["id"] == "s1"
+    assert result["urgency"] == "high"
+    assert result["rule_id"] == "r1"
+    db.close()
