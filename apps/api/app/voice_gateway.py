@@ -28,7 +28,20 @@ class VoiceSessionState:
     interrupted: bool = False
     reconnects: int = 0
     failovers: int = 0
+    # Operational call state shared by provider adapters and the reception layer.
+    status: str = "connecting"
+    priority: str = "normal"
+    department: str | None = None
+    staff_id: str | None = None
+    resolution: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def transition(self, status: str) -> None:
+        allowed = {"connecting","ringing","connected","listening","speaking","on_hold","handoff","ending","ended","failed"}
+        if status not in allowed:
+            raise ValueError("Invalid voice session state")
+        self.status = status
+        self.last_activity = time.time()
 
 class VoiceProviderAdapter(Protocol):
     name: str
