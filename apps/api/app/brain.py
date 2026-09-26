@@ -291,6 +291,10 @@ def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_valu
     requested=__import__("datetime").datetime.combine(booking_date,__import__("datetime").time(hour,minute))
     if hours and (requested.time()<hours.open_time or requested.time()>=hours.close_time):
         return {"checked":True,"available":False,"reason":"outside_hours","date":booking_date.isoformat()}
+    from zoneinfo import ZoneInfo as _ZoneInfo
+    now_local=__import__("datetime").datetime.now(_ZoneInfo(tenant.timezone))
+    if booking_date == now_local.date() and requested <= now_local.replace(tzinfo=None):
+        return {"checked":True,"available":False,"reason":"past","date":booking_date.isoformat()}
     service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name)).one_or_none() if False else db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
     duration=(service.duration_minutes if service and service.duration_minutes else 30)
     from .booking import local_to_utc_naive, slot_is_available
@@ -409,9 +413,17 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:str|None=None,channel:str="pwa")->dict:
     tenant=db.get(Tenant,tenant_id)
     if not tenant: raise ValueError("Tenant not found")
-    language=detect_language(message)
+    detected_language=detect_language(message)
     intent=local_intent(message)
-    c=conversation(db,tenant_id,message,language,channel,conversation_id)
+    c=conversation(db,tenant_id,message,detected_language,channel,conversation_id)
+    requested_language=language_request(message)
+    if requested_language:
+        language=requested_language
+    elif c.turns > 1 and c.language and detected_language == "en" and c.language != "en":
+        language=c.language
+    else:
+        language=detected_language
+    c.language=language
     logger.info(
         "VOICE_REPLY_ENTRY conversation_id=%s tenant_id=%s channel=%s message=%r state=%s",
         c.id, tenant_id, channel, message, c.state,
