@@ -510,11 +510,13 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         else:
             reason=calendar.get("reason") if isinstance(calendar,dict) else None
             if reason=="closed":
-                booking="That day is closed. Please choose another day."
+                booking=booking_text(c.language,"closed",day=booking_day_label(c.language,prior.get("day") or prior.get("relative_day")))
             elif reason=="outside_hours":
-                booking=f"{prior.get('time') or 'That time'} is outside our working hours. Please choose another time."
+                booking=booking_text(c.language,"outside",time=prior.get("time") or "That time",day=booking_day_label(c.language,prior.get("day") or prior.get("relative_day")))
+            elif reason=="past":
+                booking=booking_text(c.language,"past",time=prior.get("time") or "That time")
             else:
-                booking=f"{prior.get('time') or 'That time'} is not available on {booking_date.strftime('%A') if booking_date else 'that day'}. Please choose another time."
+                booking=booking_text(c.language,"unavailable",time=prior.get("time") or "That time",day=booking_day_label(c.language,prior.get("day") or prior.get("relative_day")))
             booking_data={
                 "day":prior.get("day") or prior.get("relative_day"),
                 "time":prior.get("time"),
