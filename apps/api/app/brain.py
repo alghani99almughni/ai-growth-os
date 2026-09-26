@@ -50,6 +50,12 @@ def local_intent(message:str)->str:
         return "language_request"
     if any(x in compact for x in ("bye","goodbye","thank you","thanks","you re welcome","you are welcome","that s all","thats all","leave it","cancel")) or "that's all" in m:
         return "closing"
+
+    if any(x in compact for x in (
+        "gender change","voice changed","voice change","voice has changed",
+        "awaaz badal","awaz badal","gender badal","voice badal"
+    )) or any(x in m for x in ("जेंडर चेंज","आवाज़ बदल","आवाज बदल","ವಾಯ್ಸ್ ಬದಲಾಗಿದೆ","వాయిస్ మారింది")):
+        return "voice_feedback"
     if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
         return "human_handoff"
 
@@ -191,9 +197,16 @@ def extract_booking_entities(text: str) -> dict:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
                 hour24=int(tm24.group(1)); minute24=tm24.group(2)
-                meridiem="AM" if hour24<12 else "PM"
                 hour12=hour24%12 or 12
-                time_value=f"{hour12}:{minute24} {meridiem}"
+                # A bare 1–11 time is intentionally left without AM/PM.
+                # booking_reply_from_state resolves it against the tenant's
+                # actual business hours instead of silently assuming AM.
+                if hour24 >= 12:
+                    time_value=f"{hour12}:{minute24} PM"
+                elif hour24 == 0:
+                    time_value=f"12:{minute24} AM"
+                else:
+                    time_value=f"{hour12}:{minute24}"
             else:
                 number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
                 word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
@@ -312,6 +325,37 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
 
+    # Resolve a bare spoken time against the requested day's actual hours.
+    # Example: "Monday ... 2:30" in a 09:00–18:00 business means 2:30 PM;
+    # do not reject it as 2:30 AM merely because the transcript had no marker.
+    if time_value and day_label and not re.search(r"\b(?:AM|PM)\b", time_value, re.I):
+        tm_bare=re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
+        if tm_bare:
+            hour=int(tm_bare.group(1)); minute=int(tm_bare.group(2) or 0)
+            if 1 <= hour <= 11:
+                from datetime import time as _time
+                am_time=_time(hour,minute)
+                pm_time=_time(hour+12,minute)
+                target_date=resolve_booking_date(tenant, day, relative_day, date_hint)
+                hours_row=db.scalar(select(BusinessHour).where(
+                    BusinessHour.tenant_id==tenant.id,
+                    BusinessHour.weekday==target_date.weekday()
+                )) if target_date else None
+                if hours_row and not hours_row.is_closed:
+                    am_inside=hours_row.open_time <= am_time < hours_row.close_time
+                    pm_inside=hours_row.open_time <= pm_time < hours_row.close_time
+                    if pm_inside and not am_inside:
+                        time_value=f"{hour}:{minute:02d} PM" if minute else f"{hour} PM"
+                    elif am_inside and not pm_inside:
+                        time_value=f"{hour}:{minute:02d} AM" if minute else f"{hour} AM"
+                    elif am_inside and pm_inside:
+                        c.state="booking_time_clarification"
+                        return (
+                            f"Do you mean {hour}:{minute:02d} AM or {hour}:{minute:02d} PM?" if minute else
+                            f"Do you mean {hour} AM or {hour} PM?",
+                            {"day":day_label,"time":None,"complete":False}
+                        )
+
     resolved_date=resolve_booking_date(tenant, day, relative_day, date_hint)
     if day_label and time_value:
         calendar=booking_calendar_status(db,tenant,resolved_date,time_value)
@@ -399,6 +443,22 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         booking="You're welcome. If you need anything else, I'm here to help."
         if any(x in m for x in ("bye","goodbye","leave it","cancel","that's all","thats all")):
             c.state="closed"
+    elif intent=="voice_feedback":
+        feedback_replies={
+            "en":"I understand. I'll continue with the same language and keep the conversation natural.",
+            "hi":"Samajh gaya. Main Hindi mein hi continue karunga aur conversation naturally rakhoonga.",
+            "te":"Ardham ayyindi. Nenu Telugu lo continue chestanu.",
+            "ta":"Purinjukitten. Naan Tamil-la continue panren.",
+            "kn":"Artha aayitu. Naanu Kannada dalli continue maaduttene.",
+            "ml":"Manassilaayi. Njan Malayalam-il thanne continue cheyyam.",
+            "mr":"Samajla. Mi Marathi madhyech continue karen.",
+            "bn":"Bujhte perechi. Ami Banglayi continue korbo.",
+            "gu":"Samajyu. Hu Gujarati ma j continue karish.",
+            "pa":"Samajh gaya. Main Punjabi vich hi gal jari rakhanga.",
+            "ur":"Samajh gaya. Main Urdu mein hi baat jari rakhunga.",
+        }
+        booking=feedback_replies.get(language,feedback_replies["en"])
+        c.state="information"
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
