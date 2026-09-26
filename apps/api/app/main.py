@@ -225,9 +225,9 @@ def get_db():
     db=SessionLocal()
     try: yield db
     finally: db.close()
-class Health(BaseModel): status:str; service:str
+class Health(BaseModel): status:str; service:str; commit:str="unknown"
 @app.get("/health",response_model=Health)
-def health(): return {"status":"ok","service":"ai-growth-os-api"}
+def health(): return {"status":"ok","service":"ai-growth-os-api","commit":__import__("os").environ.get("RENDER_GIT_COMMIT","unknown")}
 def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),db:Session=Depends(get_db))->User:
     if not credentials: raise HTTPException(401,"Authentication required")
     try:
