@@ -118,6 +118,34 @@ def relative_day_from_text(text: str) -> str | None:
         return "today"
     return None
 
+CONFIRMATION_PHRASES = {
+    "yes", "yeah", "yep", "yes please", "sure", "confirm", "confirmed", "please confirm",
+    "go ahead", "do it", "okay confirm", "ok confirm", "okay", "ok",
+    "haan", "han", "ji haan", "haan confirm", "confirm kijiye",
+    "avunu", "sare", "sari", "confirm cheyyandi",
+    "aamaam", "seri", "confirm pannunga",
+    "howdu", "sari", "confirm madi",
+    "athe", "shari", "confirm cheyyu",
+    "ho", "barobar", "confirm kara",
+    "hyan", "thik ache", "confirm korun",
+    "haan", "theek", "confirm karo",
+    "ಹೌದು", "సరే", "हो", "হ্যাঁ", "હા", "ਹਾਂ", "آں", "نعم",
+}
+
+def is_explicit_confirmation(text: str) -> bool:
+    """Recognize a short affirmative confirmation without tying it to English only."""
+    value = " ".join(text.casefold().split()).strip(" .,!?:;")
+    if not value or len(value) > 80:
+        return False
+    if value in CONFIRMATION_PHRASES:
+        return True
+    # Natural confirmation with a small polite suffix.
+    return bool(re.search(
+        r"^(yes|yeah|yep|sure|confirm|confirmed|okay|ok|haan|han|avunu|sare|sari|howdu|athe|ho|hyan)"
+        r"(\s+(please|sir|maam|ma'am|ji|kijiye|cheyyandi|pannunga|madi|kara|karo))?$",
+        value,
+    ))
+
 def needs_voice_clarification(text: str) -> bool:
     value = " ".join(text.casefold().split())
     return value in CLARIFICATION_PHRASES
