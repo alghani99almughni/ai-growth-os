@@ -54,6 +54,23 @@ def local_intent(message:str)->str:
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
         return "booking"
+    # Native-script booking phrases must enter the deterministic booking router
+    # before the generic knowledge/fallback path. Keep these terms specific so
+    # ordinary hours/questions are not accidentally classified as bookings.
+    native_booking_terms=(
+        "अपॉइंटमेंट","अपॉइंट","बुकिंग","बुक","रिजर्व","आरक्षण","स्लॉट",
+        "అపాయింట్మెంట్","అపాయింట్","బుకింగ్","బుక్","రిజర్వ్","స్లాట్",
+        "அப்பாயிண்ட்மென்ட்","அப்பாயிண்ட்மெண்ட்","புக்கிங்","புக்","முன்பதிவு","ஸ்லாட்",
+        "ಅಪಾಯಿಂಟ್ಮೆಂಟ್","ಅಪಾಯಿಂಟ್","ಬುಕಿಂಗ್","ಬುಕ್","ಮೀಸಲಾತಿ","ಸ್ಲಾಟ್",
+        "അപ്പോയിന്റ്മെന്റ്","അപ്പോയിന്റ്","ബുക്കിംഗ്","ബുക്ക്","റിസർവ്","സ്ലോട്ട്",
+        "अपॉइंटमेंट","बुकिंग","बुक","आरक्षण","रिजर्वेशन",
+        "অ্যাপয়েন্টমেন্ট","বুকিং","বুক","রিজার্ভ","স্লট",
+        "અપોઇન્ટમેન્ટ","બુકિંગ","બુક","રિઝર્વ","સ્લોટ",
+        "ਅਪਾਇੰਟਮੈਂਟ","ਬੁਕਿੰਗ","ਬੁੱਕ","ਰਿਜ਼ਰਵ","ਸਲਾਟ",
+        "اپائنٹمنٹ","بکنگ","بک","ریزرو","سلاٹ",
+    )
+    if any(x in m for x in native_booking_terms):
+        return "booking"
     if any(x in compact for x in ("bhukamp","bukamp","buking","boking","bok an")) and any(
         x in compact for x in ("today","tomorrow","kal","repu","naale","time","slot","appointment","schedule","for")
     ):
