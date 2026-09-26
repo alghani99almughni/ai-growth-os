@@ -168,16 +168,16 @@ SPOKEN_CLARIFICATION = {
 
 LANGUAGE_SWITCH_CONFIRMATIONS = {
     "en": "Yes. I can continue in English.",
-    "hi": "Haan, main Hindi mein baat kar sakta hoon.",
-    "te": "Avunu, nenu Telugu lo maatladagalanu.",
-    "ta": "Aamaam, naan Tamil-la pesalaam.",
-    "kn": "Howdu, naanu Kannada dalli maatadabahudu.",
-    "ml": "Athe, enikku Malayalam samsarikkaam.",
-    "mr": "Ho, mi Marathi madhye bolu shakto.",
-    "bn": "Hyan, ami Banglay kotha bolte pari.",
-    "gu": "Haan, hu Gujarati ma vaat kari shaku chhu.",
-    "pa": "Haan, main Punjabi vich gal kar sakda haan.",
-    "ur": "Ji haan, main Urdu mein baat kar sakta hoon.",
+    "hi": "Haan, ab hum Hindi mein baat karte hain.",
+    "te": "Avunu, ippudu Telugu lo maatladudam.",
+    "ta": "Aamaam, ippudu Tamil-la pesalaam.",
+    "kn": "Howdu, ippudu Kannada dalli maatadona.",
+    "ml": "Athe, ippol Malayalam-il samsarikkaam.",
+    "mr": "Ho, aata Marathi madhye boluya.",
+    "bn": "Hyan, ekhon Banglay kotha boli.",
+    "gu": "Haan, have Gujarati ma vaat kariye.",
+    "pa": "Haan, hun Punjabi vich gal karde haan.",
+    "ur": "Ji haan, ab Urdu mein baat karte hain.",
 }
 
 BUSINESS_HOURS_SIMPLE = {
