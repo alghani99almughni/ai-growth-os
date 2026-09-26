@@ -1,7 +1,7 @@
 package com.aigrowthos.reception
 
 import android.Manifest
-import android.app.Activity
+import androidx.activity.ComponentActivity
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -17,7 +17,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-class MainActivity : Activity() {
+class MainActivity : ComponentActivity() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var controller: ReceptionWebRtcController
     private lateinit var status: TextView
