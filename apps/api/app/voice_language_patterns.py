@@ -168,16 +168,16 @@ SPOKEN_CLARIFICATION = {
 
 LANGUAGE_SWITCH_CONFIRMATIONS = {
     "en": "Yes. I can continue in English.",
-    "hi": "Haan, ab hum Hindi mein baat karte hain.",
-    "te": "Avunu, ippudu Telugu lo maatladudam.",
-    "ta": "Aamaam, ippudu Tamil-la pesalaam.",
-    "kn": "Howdu, ippudu Kannada dalli maatadona.",
-    "ml": "Athe, ippol Malayalam-il samsarikkaam.",
-    "mr": "Ho, aata Marathi madhye boluya.",
-    "bn": "Hyan, ekhon Banglay kotha boli.",
-    "gu": "Haan, have Gujarati ma vaat kariye.",
-    "pa": "Haan, hun Punjabi vich gal karde haan.",
-    "ur": "Ji haan, ab Urdu mein baat karte hain.",
+    "hi": "Haan, main Hindi mein baat kar sakti hoon.",
+    "te": "Avunu, nenu Telugu lo maatladagalanu.",
+    "ta": "Aamaam, naan Tamil-la pesalaam.",
+    "kn": "Howdu, naanu Kannada dalli maatadabahudu.",
+    "ml": "Athe, enikku Malayalam samsarikkaam.",
+    "mr": "Ho, mi Marathi madhye bolu shakte.",
+    "bn": "Hyan, ami Banglay kotha bolte pari.",
+    "gu": "Haan, hu Gujarati ma vaat kari shaku chhu.",
+    "pa": "Haan, main Punjabi vich gal kar sakdi haan.",
+    "ur": "Ji haan, main Urdu mein baat kar sakti hoon.",
 }
 
 BUSINESS_HOURS_SIMPLE = {
@@ -196,28 +196,28 @@ BUSINESS_HOURS_SIMPLE = {
 
 AVAILABILITY_PROMPTS = {
     "en": "I can help check availability. What day and time are you looking for?",
-    "hi": "Main availability check kar sakta hoon. Aap kis din aur kis time ke liye dekh rahe hain?",
+    "hi": "Main availability check kar sakti hoon. Aap kis din aur kis time ke liye dekh rahe hain?",
     "te": "Nenu availability check cheyyagalanu. Meeku ye roju, ye time kavali?",
     "ta": "Availability check pannalaam. Endha naal, endha time venum?",
     "kn": "Availability check madabahudu. Yava dina, yava samaya beku?",
     "ml": "Availability check cheyyam. Ethu divasam, ethu samayam venam?",
-    "mr": "Mi availability check karu shakto. Kontya divshi ani kiti vajta pahije?",
+    "mr": "Mi availability check karu shakte. Kontya divshi ani kiti vajta pahije?",
     "bn": "Ami availability check korte pari. Kon din ebong koto tay chan?",
     "gu": "Hu availability check kari shaku chhu. Kaya divase ane ketla vagye joiye?",
-    "pa": "Main availability check kar sakda haan. Kehre din te kinne vajje chahide ne?",
-    "ur": "Main availability check kar sakta hoon. Kis din aur kis waqt chahiye?",
+    "pa": "Main availability check kar sakdi haan. Kehre din te kinne vajje chahide ne?",
+    "ur": "Main availability check kar sakti hoon. Kis din aur kis waqt chahiye?",
 }
 
 DOCTOR_DETAILS_MISSING = {
     "en": "I don't have verified doctor details configured yet. I can arrange for the team to share the doctor's name and details with you.",
-    "hi": "Doctor ki verified details abhi configured nahi hain. Main team se doctor ka naam aur details share karne ke liye keh sakta hoon.",
+    "hi": "Doctor ki verified details abhi configured nahi hain. Main team se doctor ka naam aur details share karne ke liye keh sakti hoon.",
     "te": "Doctor verified details ippudu configure cheyyaledu. Team tho doctor peru mariyu details share cheyinchagalanu.",
     "ta": "Doctor-oda verified details innum configure pannala. Team kitta doctor peru matrum details share panna sollalaam.",
     "kn": "Doctor avara verified details innu configure aagilla. Team inda doctor hesaru mattu details share madisabahudu.",
     "ml": "Doctorinte verified details ippol configure cheythittilla. Teamine kondu doctorinte perum detailsum share cheyyikkaam.",
-    "mr": "Doctoranchi verified mahiti ajun configure keleli nahi. Mi team kadun doctoranche naav ani details share karu shakto.",
+    "mr": "Doctoranchi verified mahiti ajun configure keleli nahi. Mi team kadun doctoranche naav ani details share karu shakte.",
     "bn": "Doctor-er verified details ekhono configure kora nei. Ami team-ke doctor-er naam ebong details share korte bolte pari.",
     "gu": "Doctor ni verified details haju configure nathi. Hu team pase doctor nu naam ane details share karavi shaku chhu.",
-    "pa": "Doctor di verified details hun tak configure nahi han. Main team ton doctor da naam te details share karva sakda haan.",
-    "ur": "Doctor ki verified details abhi configured nahi hain. Main team se doctor ka naam aur details share karwa sakta hoon.",
+    "pa": "Doctor di verified details hun tak configure nahi han. Main team ton doctor da naam te details share karva sakdi haan.",
+    "ur": "Doctor ki verified details abhi configured nahi hain. Main team se doctor ka naam aur details share karwa sakti hoon.",
 }
