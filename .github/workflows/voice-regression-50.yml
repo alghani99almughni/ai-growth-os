@@ -177,6 +177,17 @@ jobs:
           if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking time failed: {x}")
           print("BOOKING STATE REGRESSION: PASS")
 
+          # Gender/persona acceptance for the configured female agent.
+          gender_call=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Gender Regression","phone":"+919999999996"},timeout=20)
+          gender_call.raise_for_status()
+          bcid=gender_call.json()["call_id"]
+          bconv=None
+          x=booking_turn("Hindi mein bol sakte hain")
+          gender_reply=x.get("reply","")
+          if "sakti" not in gender_reply.lower() and "सकती" not in gender_reply:
+              raise RuntimeError(f"Female Hindi grammar regression: {x}")
+          print("FEMALE VOICE GRAMMAR REGRESSION: PASS")
+
           # Real browser smoke: validates the customer-facing PWA, browser WebSocket
           # upgrade, microphone path and first realtime AI response.
           import time, sys
