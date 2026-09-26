@@ -197,7 +197,7 @@ def extract_booking_entities(text: str) -> dict:
             else:
                 number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
                 word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
-                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku)\b",value)
+                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
                 hour=int(digit_hour.group(1)) if digit_hour else word_hour
                 if hour:
                     if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b",value):
