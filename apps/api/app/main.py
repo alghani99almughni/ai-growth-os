@@ -1666,6 +1666,7 @@ async def public_voice(websocket:WebSocket,call_id:str):
     tenant=db.get(Tenant,call.tenant_id)
     if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
+    customer=db.get(Customer,call.customer_id) if call.customer_id else None
     context=knowledge_context(db,tenant.id)
     policy=tenant_policy(db,tenant.id)
     system = f"""You are the AI customer engagement voice agent for {tenant.name}.
@@ -1686,13 +1687,13 @@ Website: {tenant.website or "not configured"}
 Only state a location, address, phone number, or website when it is present in the business profile or approved business context. Never invent a location.
 
 CUSTOMER ALREADY VERIFIED:
-Name: {call.customer.name if call.customer else "Customer"}
-Mobile: {call.customer.phone if call.customer else "not provided"}
+Name: {customer.name if customer else "Customer"}
+Mobile: {customer.phone if customer else "not provided"}
 
 This call has already collected and verified the customer's name and mobile number before the AI connection started.
 Do NOT ask the customer for their name or mobile number again.
 Start the call immediately with a warm spoken greeting such as:
-"Hello {call.customer.name if call.customer and call.customer.name else "there"}, welcome to {tenant.name}. How can I help you today?"
+"Hello {customer.name if customer and customer.name else "there"}, welcome to {tenant.name}. How can I help you today?"
 Then listen for the customer's request.
 Do not invent business facts, prices, availability, policies, bookings or payment success.
 Today in the business timezone is {datetime.now(ZoneInfo(tenant.timezone)).date().isoformat()}. Resolve phrases such as "coming Tuesday", "next Tuesday", "this Friday", "tomorrow", and "the 29th" to an actual calendar date before discussing an appointment. Never ask the customer which date a weekday means when the calendar can resolve it.
