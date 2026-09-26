@@ -8,7 +8,7 @@ browser STT variants without replacing the tenant knowledge/calendar layer.
 LANGUAGE_REQUEST_PHRASES = {
     "en": ("speak english", "in english", "english please", "talk in english"),
     "hi": ("speak hindi", "speak in hindi", "hindi mein", "hindi me", "i want hindi", "talk to me in hindi", "can we talk in hindi", "can you reply in hindi", "hindi please", "हिंदी", "हिन्दी"),
-    "te": ("speak telugu", "in telugu", "telugulo", "తెలుగు"),
+    "te": ("speak telugu", "in telugu", "telugulo", "telugu cheppandi", "telugu lo cheppandi", "telugulo cheppandi", "telugu matladandi", "telugu lo maatladandi", "తెలుగు"),
     "ta": ("speak tamil", "in tamil", "tamil la", "தமிழ்"),
     "kn": ("speak kannada", "in kannada", "kannadadalli", "ಕನ್ನಡ"),
     "ml": ("speak malayalam", "in malayalam", "malayalathil", "മലയാളം"),
