@@ -12,6 +12,16 @@ def detect_language(text:str)->str:
         if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
         if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
         return winner
+    explicit_languages={
+        "hi":("hindi","हिंदी","हिन्दी"), "te":("telugu","telugulo","తెలుగు"),
+        "ta":("tamil","tamil la","தமிழ்"), "kn":("kannada","kannadadalli","ಕನ್ನಡ"),
+        "ml":("malayalam","malayalathil","മലയാളം"), "mr":("marathi","marathit","मराठी"),
+        "bn":("bengali","banglay","বাংলা"), "gu":("gujarati","gujarati ma","ગુજરાતી"),
+        "pa":("punjabi","punjabi vich","ਪੰਜਾਬੀ"), "ur":("urdu","urdu mein","اردو"),
+    }
+    for lang,markers in explicit_languages.items():
+        if any(marker in text.casefold() for marker in markers):
+            return lang
     romanized=text.casefold()
     roman_scores={
         "hi":("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye","hindi"),
