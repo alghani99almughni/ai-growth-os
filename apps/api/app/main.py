@@ -1420,7 +1420,7 @@ def staff_release(tenant_id, call_id, user=Depends(get_current_user), db: Sessio
 def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
     rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id).order_by(CallRecord.created_at.desc())).all()
-    return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
+    return {"items":[{"id":x.id,"customer_id":x.customer_id,"customer_name":(db.get(Customer,x.customer_id).name if x.customer_id and db.get(Customer,x.customer_id) else "Customer"),"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
 
 @app.get("/api/v1/tenants/{tenant_id}/voice/ice")
 def voice_ice_config(tenant_id,user=Depends(get_current_user)):
