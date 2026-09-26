@@ -483,8 +483,21 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             }
             c.state="booking_confirmation_requested"
         else:
-            booking="I couldn't verify that slot right now. I'll arrange for our team to call you back."
-            booking_data={"complete":False,"confirmation_requested":False}
+            reason=calendar.get("reason") if isinstance(calendar,dict) else None
+            if reason=="closed":
+                booking="That day is closed. Please choose another day."
+            elif reason=="outside_hours":
+                booking=f"{prior.get('time') or 'That time'} is outside our working hours. Please choose another time."
+            else:
+                booking=f"{prior.get('time') or 'That time'} is not available on {booking_date.strftime('%A') if booking_date else 'that day'}. Please choose another time."
+            booking_data={
+                "day":prior.get("day") or prior.get("relative_day"),
+                "time":prior.get("time"),
+                "date":booking_date.isoformat() if booking_date else None,
+                "complete":False,
+                "confirmation_requested":False,
+            }
+            c.state="booking_time_clarification"
     elif intent=="doctor_information":
         doctor_answer=knowledge_match(db,tenant_id,message)
         if doctor_answer:
