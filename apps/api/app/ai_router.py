@@ -7,11 +7,27 @@ from .models import Service, Product
 LANGUAGE_PATTERNS={"en":r"[a-z]","hi":r"[\u0900-\u097f]","te":r"[\u0c00-\u0c7f]","ta":r"[\u0b80-\u0bff]","kn":r"[\u0c80-\u0cff]","ml":r"[\u0d00-\u0d7f]","mr":r"[\u0900-\u097f]","bn":r"[\u0980-\u09ff]","gu":r"[\u0a80-\u0aff]","pa":r"[\u0a00-\u0a7f]","or":r"[\u0b00-\u0b7f]","as":r"[\u0980-\u09ff]","ur":r"[\u0600-\u06ff]"}
 def detect_language(text:str)->str:
     scores={k:len(re.findall(p,text)) for k,p in LANGUAGE_PATTERNS.items()}
-    if max(scores.values(),default=0)==0:return "en"
-    winner=max(scores,key=scores.get)
-    if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text):return "mr"
-    if winner=="bn" and re.search(r"[অআইঈউএও]",text):return "bn"
-    return winner
+    if max(scores.values(),default=0)>0:
+        winner=max(scores,key=scores.get)
+        if winner=="hi" and re.search(r"\b(आहे|मला|काय|कुठे)\b",text): return "mr"
+        if winner=="bn" and re.search(r"[অআইঈউএও]",text): return "bn"
+        return winner
+    romanized=text.casefold()
+    roman_scores={
+        "hi":("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye","hindi"),
+        "te":("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara","telugu"),
+        "ta":("enakku","ungal","naalai","venum","pannanum","eppo","pesanum","tamil"),
+        "kn":("nanage","nimma","naale","beku","madbeku","maatadbeku","kannada"),
+        "ml":("enikku","ningalude","naale","venam","enthaa","eppozha","malayalam"),
+        "mr":("mala","tumche","udya","aahe","kay","havi","marathi"),
+        "bn":("amar","apnader","korte","chai","koto","kokhon","bengali"),
+        "gu":("mane","tamara","kaale","joiye","shu","chhe","gujarati"),
+        "pa":("mainu","tuhade","chahidi","kadon","kinna","gal","punjabi"),
+        "ur":("mujhe","aapke","kaun","bataiye","urdu"),
+    }
+    ranked={lang:sum(1 for marker in markers if marker in romanized) for lang,markers in roman_scores.items()}
+    winner,score=max(ranked.items(),key=lambda item:item[1])
+    return winner if score>=2 else "en"
 def normalize(text:str)->set[str]:
     return {x.casefold() for x in re.findall(r"[\w\u00c0-\uffff]{2,}",text,flags=re.UNICODE)}
 def _score(message:str,candidate:str)->float:
@@ -49,23 +65,4 @@ def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
         score=_score(message,(row.title or "")+" "+(row.content or ""))
         if row.language==language:score+=0.08
         if score>best_score:best_score,best=score,row
-    return best.content if best and best_score>=0.38 else None    # Romanized Indian-language speech is common in browser STT. Use multiple
-    # corroborating markers so a single shared word such as "kal" does not misclassify.
-    romanized = text.casefold()
-    roman_scores = {
-        "hi": ("mujhe","aap","aapke","kya","hai","hain","chahiye","karna","bataiye"),
-        "te": ("naaku","meeru","repu","enti","kavali","cheyyali","matladagalara","unnara"),
-        "ta": ("enakku","ungal","naalai","venum","pannanum","eppo","pesanum"),
-        "kn": ("nanage","nimma","naale","beku","madbeku","maatadbeku","yavaga"),
-        "ml": ("enikku","ningalude","naale","venam","enthaa","eppozha","parayamo"),
-        "mr": ("mala","tumche","udya","aahe","kay","havi","sanga"),
-        "bn": ("amar","apnader","korte","chai","koto","kokhon","bolben"),
-        "gu": ("mane","tamara","kaale","joiye","shu","chhe","kyare"),
-        "pa": ("mainu","tuhade","chahidi","kadon","kinna","gal","karni"),
-        "ur": ("mujhe","aapke","kaun","bataiye","karna"),
-    }
-    roman_scores = {lang: sum(1 for marker in markers if marker in romanized) for lang, markers in roman_scores.items()}
-    roman_lang, roman_score = max(roman_scores.items(), key=lambda item: item[1])
-    if roman_score >= 2:
-        return roman_lang
-
+    return best.content if best and best_score>=0.38 else None    
