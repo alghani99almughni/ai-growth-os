@@ -285,6 +285,8 @@ def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, 
     from datetime import date as _date, timedelta as _timedelta
     from zoneinfo import ZoneInfo as _ZoneInfo
     now_local=__import__("datetime").datetime.now(_ZoneInfo(tenant.timezone)).date()
+    if relative_day=="yesterday":
+        return now_local - _timedelta(days=1)
     if relative_day=="today":
         return now_local
     if relative_day=="tomorrow":
@@ -409,6 +411,9 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
     if day_label and time_value:
         calendar=booking_calendar_status(db,tenant,resolved_date,time_value)
         if calendar.get("available") is False:
+            if calendar.get("reason")=="past":
+                c.state="booking_time_clarification"
+                return (booking_text(c.language,"past",time=time_value), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
             if calendar.get("reason")=="closed":
                 c.state="booking_time_clarification"
                 return (booking_text(c.language,"closed",day=booking_day_label(c.language,day_label)), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
