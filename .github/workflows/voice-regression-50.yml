@@ -81,8 +81,18 @@ jobs:
 
           s=requests.Session()
           s.headers.update({"Content-Type":"application/json"})
-          r=s.get(base+"/health",timeout=20)
-          r.raise_for_status()
+          expected_commit=os.environ.get("GITHUB_SHA","")
+          deadline=time.time()+180
+          while True:
+              r=s.get(base+"/health",timeout=20)
+              r.raise_for_status()
+              deployed=r.json().get("commit","")
+              print(f"DEPLOYED_COMMIT={deployed}")
+              if deployed==expected_commit:
+                  break
+              if time.time()>=deadline:
+                  raise RuntimeError(f"Render did not deploy expected commit {expected_commit}; current={deployed}")
+              time.sleep(5)
 
           start=time.perf_counter()
           r=s.post(f"{base}/api/v1/public/business/{slug}/call",
@@ -149,7 +159,7 @@ jobs:
               return data
           x=booking_turn("I want to book an appointment")
           if not x.get("reply") or not bconv: raise RuntimeError(f"Booking start failed: {x}")
-          x=booking_turn("tomorrow")
+          x=booking_turn("Monday")
           if not x.get("reply"): raise RuntimeError(f"Booking date continuation failed: {x}")
           x=booking_turn("10 AM")
           if not any(k in x.get("reply","").lower() for k in ("confirm","appointment","10")): raise RuntimeError(f"Booking time state failed: {x}")
@@ -161,7 +171,7 @@ jobs:
           if "hindi" not in x.get("reply","").lower() and "हिंदी" not in x.get("reply",""): raise RuntimeError(f"Hindi switch failed: {x}")
           x=booking_turn("मुझे अपॉइंटमेंट बुक करना है")
           if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking start failed: {x}")
-          x=booking_turn("कल")
+          x=booking_turn("Monday")
           if not x.get("reply"): raise RuntimeError(f"Hindi date continuation failed: {x}")
           x=booking_turn("10 बजे")
           if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking time failed: {x}")
