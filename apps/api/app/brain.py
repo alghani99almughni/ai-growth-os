@@ -309,6 +309,19 @@ def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_valu
     }
 
 
+BOOKING_TEXT={
+"en":{"day_time":"Sure. What time would you prefer on {day}?","day":booking_text(c.language,"day"),"both":booking_text(c.language,"both"),"confirm":"Great. I have {date} at {time}. Shall I confirm that appointment?","closed":"{day} is closed. Please choose another day.","outside":"{time} is outside our hours on {day}. Please choose another time.","unavailable":"{time} is not available on {day}. Please choose another time.","past":"{time} has already passed today. Please choose a later time.","ampm":"Do you mean {hour} AM or {hour} PM?","hint":"Sure. I have {day} in the {hint}. What exact time would you prefer?","date":"Got it, the {date}th. Which month and time would you prefer?"},
+"hi":{"day_time":"ज़रूर। {day} को आप किस समय अपॉइंटमेंट चाहते हैं?","day":"ज़रूर। आप किस दिन का अपॉइंटमेंट चाहते हैं?","both":"ज़रूर। आप किस दिन और किस समय का अपॉइंटमेंट चाहते हैं?","confirm":"ठीक है। मैंने {date} को {time} का अपॉइंटमेंट रखा है। क्या मैं इसे कन्फर्म कर दूँ?","closed":"{day} को हम बंद रहते हैं। कृपया दूसरा दिन चुनिए।","outside":"{time} हमारे {day} के काम के समय के बाहर है। कृपया दूसरा समय चुनिए।","unavailable":"{day} को {time} का स्लॉट उपलब्ध नहीं है। कृपया दूसरा समय चुनिए।","past":"{time} का समय आज निकल चुका है। कृपया बाद का समय चुनिए।","ampm":"आप {hour} AM कहना चाहते हैं या {hour} PM?","hint":"ज़रूर। {day} को {hint} का समय है। कृपया सही समय बताइए।","date":"ठीक है, {date} तारीख। किस महीने और किस समय का अपॉइंटमेंट चाहिए?"},
+"te":{"day_time":"తప్పకుండా. {day} ఏ సమయంలో అపాయింట్‌మెంట్ కావాలి?","day":"తప్పకుండా. ఏ రోజు అపాయింట్‌మెంట్ కావాలి?","both":"తప్పకుండా. ఏ రోజు మరియు ఏ సమయంలో అపాయింట్‌మెంట్ కావాలి?","confirm":"సరే. {date} న {time} అపాయింట్‌మెంట్ ఉంది. నేను కన్ఫర్మ్ చేయనా?","closed":"{day} రోజు మేము మూసి ఉంటాము. మరో రోజు ఎంచుకోండి.","outside":"{time} {day} మా పని సమయానికి బయట ఉంది. మరో సమయం ఎంచుకోండి.","unavailable":"{day} {time} స్లాట్ అందుబాటులో లేదు. మరో సమయం ఎంచుకోండి.","past":"{time} ఈరోజు గడిచిపోయింది. దయచేసి తర్వాతి సమయం ఎంచుకోండి.","ampm":"మీరు {hour} AM అంటున్నారా లేదా {hour} PM అంటున్నారా?","hint":"సరే. {day} {hint} సమయం. ఖచ్చితమైన సమయం చెప్పండి.","date":"సరే, {date} తేదీ. ఏ నెల మరియు ఏ సమయం కావాలి?"}}
+def booking_text(language,key,**values):
+    return BOOKING_TEXT.get(language,BOOKING_TEXT["en"]).get(key,BOOKING_TEXT["en"][key]).format(**values)
+def booking_day_label(language,value):
+    if language=="hi":
+        return {"today":"आज","tomorrow":"कल","day after tomorrow":"परसों"}.get(value,value or "उस दिन")
+    if language=="te":
+        return {"today":"ఈ రోజు","tomorrow":"రేపు","day after tomorrow":"ఎల్లుండి"}.get(value,value or "ఆ రోజు")
+    return value or "that day"
+
 def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
     """Merge current-turn entities with active booking context."""
     current = extract_booking_entities(message)
@@ -366,29 +379,29 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
         if calendar.get("available") is False:
             if calendar.get("reason")=="closed":
                 c.state="booking_time_clarification"
-                return (f"{day_label.capitalize()} is closed. Please choose another day.", {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+                return (booking_text(c.language,"closed",day=booking_day_label(c.language,day_label)), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
             if calendar.get("reason")=="outside_hours":
                 c.state="booking_time_clarification"
-                return (f"{time_value} is outside our hours on {day_label}. Please choose another time.", {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+                return (booking_text(c.language,"outside",time=time_value,day=booking_day_label(c.language,day_label)), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
             c.state="booking_time_clarification"
-            return (f"{time_value} is not available on {day_label}. Please choose another time.", {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+            return (booking_text(c.language,"unavailable",time=time_value,day=booking_day_label(c.language,day_label)), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
         c.state = "booking_confirmation"
         date_phrase=resolved_date.strftime("%A, %B %-d, %Y") if resolved_date else day_label
         return (
-            f"Great. I have {date_phrase} at {time_value}. Shall I confirm that appointment?",
+            booking_text(c.language,"confirm",date=date_phrase,time=time_value),
             {"day": day_label, "time": time_value, "date": resolved_date.isoformat() if resolved_date else None, "service_id":calendar.get("service_id"), "complete": True},
         )
 
     if day_label and time_hint:
         c.state = "booking_time_clarification"
         return (
-            f"Sure. I have {day_label} in the {time_hint}. What exact time would you prefer?",
+            booking_text(c.language,"hint",day=booking_day_label(c.language,day_label),hint=time_hint),
             {"day": day_label, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False},
         )
 
     if day_label:
         c.state = "booking_day"
-        return f"Sure. What time would you prefer on {day_label}?", {
+        return booking_text(c.language,"day_time",day=booking_day_label(c.language,day_label)), {
             "day": day_label, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False
         }
 
@@ -400,7 +413,7 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     if date_hint:
         c.state = "booking_date"
-        return f"Got it, the {date_hint}th. Which month and time would you prefer?", {
+        return booking_text(c.language,"date",date=date_hint), {
             "day": None, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False
         }
 
