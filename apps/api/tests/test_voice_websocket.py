@@ -12,6 +12,7 @@ class FakeCustomer:
 
 class FakeCall:
     id = "call-test"
+    customer_id = "customer-test"
     tenant_id = "tenant-test"
     customer = FakeCustomer()
     source = "pwa_voice"
@@ -40,12 +41,15 @@ class FakeDB:
     def __init__(self):
         self.call = FakeCall()
         self.tenant = FakeTenant()
+        self.customer = FakeCustomer()
 
     def get(self, model, ident):
         if ident == self.call.id:
             return self.call
         if ident == self.tenant.id:
             return self.tenant
+        if ident == "customer-test":
+            return self.customer
         return None
 
     def scalar(self, query):
