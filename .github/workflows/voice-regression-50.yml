@@ -148,19 +148,59 @@ jobs:
               ])
               context=browser.new_context(permissions=["microphone"])
               page=context.new_page()
+
+              # Headless Chromium does not expose a real SpeechRecognition service.
+              # Inject one deterministic recognition turn so this smoke test exercises
+              # the actual PWA call -> /voice/turn -> transcript path without any
+              # external AI provider credentials.
+              page.add_init_script("""
+                (() => {
+                  class FakeSpeechRecognition {
+                    constructor() {
+                      this.continuous = true;
+                      this.interimResults = false;
+                      this.maxAlternatives = 1;
+                      this.lang = "en-IN";
+                      this.started = false;
+                    }
+                    start() {
+                      if (this.started) return;
+                      this.started = true;
+                      setTimeout(() => {
+                        if (!this.onresult) return;
+                        const result = {
+                          isFinal: true,
+                          0: { transcript: "What are your timings?" }
+                        };
+                        this.onresult({
+                          resultIndex: 0,
+                          results: [result]
+                        });
+                      }, 250);
+                    }
+                    stop() {
+                      this.started = false;
+                    }
+                  }
+                  window.SpeechRecognition = FakeSpeechRecognition;
+                  window.webkitSpeechRecognition = FakeSpeechRecognition;
+                })();
+              """)
+
               page.goto(page_url,wait_until="networkidle",timeout=60_000)
               page.get_by_role("button",name="Call us").first.click()
               page.get_by_placeholder("Your name").fill("Voice Browser Test")
               page.get_by_placeholder("+91 98765 43210").fill("+919999999999")
               page.get_by_role("button",name="☎ Start call").click()
-              page.get_by_text("AI is listening…").wait_for(timeout=60_000)
-              page.get_by_text("Hello",exact=False).wait_for(timeout=60_000)
+              page.get_by_text("AI is listening…").wait_for(timeout=20_000)
+              page.get_by_text("What are your timings?",exact=False).wait_for(timeout=20_000)
+              page.get_by_text("We're open",exact=False).wait_for(timeout=20_000)
               transcript=page.locator(".ss-transcript").inner_text()
-              print("BROWSER_VOICE_TRANSCRIPT="+transcript.replace("\\n"," | ")[:500])
-              if "AI:" not in transcript:
-                  raise RuntimeError("Browser realtime call connected but no AI transcript was received")
+              print("BROWSER_BUILT_IN_VOICE_TRANSCRIPT="+transcript.replace("\\n"," | ")[:500])
+              if "AI:" not in transcript or "What are your timings?" not in transcript:
+                  raise RuntimeError("Built-in browser voice path did not produce the expected AI transcript")
               page.get_by_role("button",name="End call").click()
               browser.close()
-          print("BROWSER REALTIME REGRESSION: PASS")
+          print("BROWSER BUILT-IN VOICE REGRESSION: PASS")
           print("VOICE REGRESSION: PASS")
           PY
