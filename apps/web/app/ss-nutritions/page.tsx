@@ -381,18 +381,21 @@ export default function SSNutritions(){
       const payload=await start.json();
       if(!start.ok) throw new Error(payload.detail||"Unable to start the call.");
       try{
-        // Primary path: provider-neutral realtime AI.
-        await connectLiveAi(payload);
+        // Primary path: built-in browser voice agent.
+        // This uses the tenant knowledge/booking/CRM engine through /voice/turn
+        // and does not require Gemini/OpenAI credentials.
+        startBrowserVoice(payload);
         return;
-      }catch(realtimeError){
-        // Production-safe voice fallback: do not make the customer retry.
+      }catch(localVoiceError){
+        // Rare fallback only: use the provider-neutral realtime gateway when
+        // the browser cannot provide SpeechRecognition.
         cleanupCall();
         try{
-          startBrowserVoice(payload);
+          await connectLiveAi(payload);
           return;
-        }catch(fallbackError:any){
+        }catch(realtimeError:any){
           callActiveRef.current=false;
-          setCallError(fallbackError?.message||"Voice calling is unavailable right now.");
+          setCallError(realtimeError?.message||"Voice calling is unavailable right now.");
           setCallState("error");
         }
       }
