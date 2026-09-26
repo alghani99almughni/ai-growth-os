@@ -7,7 +7,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-data class AuthSession(val token:String,val tenantId:String,val userId:String,val userName:String)
+data class AuthSession(val token:String,val tenantId:String,val tenantSlug:String,val userId:String,val userName:String)
 data class PendingCall(val id:String,val tenantId:String,val customerName:String,val status:String,val staffId:String?)
 class ApiClient(private val baseUrl:String){
  private val http=OkHttpClient.Builder().connectTimeout(10,TimeUnit.SECONDS).readTimeout(15,TimeUnit.SECONDS).build()
@@ -16,7 +16,7 @@ class ApiClient(private val baseUrl:String){
   val body=JSONObject().put("email",email).put("password",password).toString().toRequestBody(json)
   http.newCall(Request.Builder().url(baseUrl+"/api/v1/auth/login").post(body).build()).execute().use{r->
    val text=r.body?.string().orEmpty();if(!r.isSuccessful)error(JSONObject(text).optString("detail","Login failed"));val o=JSONObject(text)
-   AuthSession(o.getString("access_token"),o.getJSONObject("tenant").getString("id"),o.getJSONObject("user").getString("id"),o.getJSONObject("user").optString("name",email))
+   AuthSession(o.getString("access_token"),o.getJSONObject("tenant").getString("id"),o.getJSONObject("tenant").getString("slug"),o.getJSONObject("user").getString("id"),o.getJSONObject("user").optString("name",email))
   }
  }
  suspend fun calls(s:AuthSession)=withContext(Dispatchers.IO){
