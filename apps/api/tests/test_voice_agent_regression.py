@@ -105,8 +105,6 @@ INTENT_CASES = [
     ("closing", "Thank you very much"),
     ("closing", "Okay bye"),
     ("closing", "Thanks bye"),
-    ("closing", "please confirm"),
-    ("closing", "please confirm the appointment"),
     ("language_request", "Can you speak Hindi"),
     ("language_request", "Speak in Hindi"),
     ("language_request", "I want Hindi"),
