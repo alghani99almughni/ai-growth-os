@@ -37,3 +37,8 @@ This file records discovered defects and their solutions; a release is not marke
 - Root cause: the new deterministic next-slot branch referenced `datetime` without importing it in `brain.py`.
 - Evidence: Render reported `NameError: name 'datetime' is not defined` during `booking_reply_from_state()`.
 - Solution: add the explicit `datetime` import and keep the full `today -> now -> next slot` regression mandatory.
+
+### Failure: timezone name missing in next-slot calculation
+- Root cause: the new `now` path referenced `ZoneInfo` at module scope without a global import; function-local imports elsewhere did not provide that symbol.
+- Evidence: Render reported `NameError: name 'ZoneInfo' is not defined` for the 15-tenant `today -> now` tests.
+- Solution: add a module-level `ZoneInfo` import and keep native/romanized `now` cases in the matrix.
