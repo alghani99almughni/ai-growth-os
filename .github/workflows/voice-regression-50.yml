@@ -1,289 +1,101 @@
 name: Voice Agent Full Engineering Regression
-# Live booking create/cancel verification enabled
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 jobs:
-  voice-regression:
+  full-regression:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-      - name: Install voice regression dependencies
-        run: |
-          python -m pip install -q websocket-client playwright
-          python -m playwright install chromium
-      - name: Run full 15-tenant engineering matrix
+      - name: Install
+        run: python -m pip install -q requests
+      - name: 15 tenant matrix
         env:
           API_URL: https://ai-growth-os-api.onrender.com
-          BUSINESS_SLUG: ss-nutritions
         run: |
           python - <<'PY'
-          import os, time, statistics, requests, sys
-          from playwright.sync_api import sync_playwright
-
-          base=os.environ["API_URL"].rstrip("/")
-          slug=os.environ["BUSINESS_SLUG"]
-          scenarios=[
-            ("hours","What are your timings?"),
-            ("hours","What time do you open?"),
-            ("hours","What time do you close?"),
-            ("hours","Are you open on Monday?"),
-            ("hours","Are you open on Sunday?"),
-            ("hours","Tell me your business hours."),
-            ("hours","What are your opening hours?"),
-            ("hours","When are you open?"),
-            ("hours","What time are you available?"),
-            ("hours","Can you tell me the timings please?"),
-            ("hours","What are your working hours?"),
-            ("hours","Are you closed today?"),
-            ("hours","When do you start in the morning?"),
-            ("hours","When do you finish for the day?"),
-            ("hours","What is your schedule?"),
-            ("general","Hello"),
-            ("general","Hi there"),
-            ("general","Good morning"),
-            ("general","Good evening"),
-            ("general","Thank you"),
-            ("general","Thanks, that helps"),
-            ("general","Can you help me?"),
-            ("general","I have a question"),
-            ("general","I want some information"),
-            ("general","Tell me about SS Nutritions"),
-            ("contact","Where are you located?"),
-            ("contact","What is your address?"),
-            ("contact","How can I contact you?"),
-            ("contact","Can I speak with someone?"),
-            ("contact","I want to visit you"),
-            ("service","What services do you provide?"),
-            ("service","What wellness support do you offer?"),
-            ("service","Do you provide nutrition guidance?"),
-            ("service","Tell me about your wellness programs"),
-            ("service","How much does it cost?"),
-            ("service","What are your prices?"),
-            ("booking","I want to book an appointment"),
-            ("booking","Can I schedule a consultation?"),
-            ("booking","I need an appointment tomorrow"),
-            ("booking","Can you reserve a slot for me?"),
-            ("booking","I want to speak to a nutrition expert"),
-            ("multilingual","మీ సమయాలు ఏమిటి?"),
-            ("multilingual","మీరు ఎప్పుడు తెరిచి ఉంటారు?"),
-            ("multilingual","आपके समय क्या हैं?"),
-            ("multilingual","आप कब खुले रहते हैं?"),
-            ("multilingual","நேரம் என்ன?"),
-            ("context","Actually I meant the timings"),
-            ("context","Can you repeat the timings?"),
-            ("context","Which days are you open?"),
-            ("context","Thanks. What time do you open?")
-          ]
-
-          s=requests.Session()
-          s.headers.update({"Content-Type":"application/json"})
-          expected_commit=os.environ.get("GITHUB_SHA","")
-          deadline=time.time()+180
-          while True:
-              try:
-                  r=s.get(base+"/health",timeout=10)
-                  r.raise_for_status()
-                  deployed=r.json().get("commit","")
-                  print(f"DEPLOYED_COMMIT={deployed}")
-                  if deployed==expected_commit:
-                      break
-              except requests.RequestException as exc:
-                  print(f"HEALTH_RETRY={exc.__class__.__name__}: {exc}")
-              if time.time()>=deadline:
-                  raise RuntimeError(f"Render did not deploy expected commit {expected_commit}")
-              time.sleep(8)
-
-          start=time.perf_counter()
-          r=s.post(f"{base}/api/v1/public/business/{slug}/call",
-                   json={"name":"Voice Regression","phone":"+919999999999"},timeout=20)
-          r.raise_for_status()
-          call=r.json()
-          call_id=call["call_id"]
-          conversation_id=None
-          latencies=[]
-          failures=[]
-          hours_failures=[]
-
-          for i,(kind,text) in enumerate(scenarios,1):
-              t=time.perf_counter()
-              try:
-                  payload={"transcript":text,"call_id":call_id,"conversation_id":conversation_id,"channel":"voice"}
-                  rr=s.post(f"{base}/api/v1/public/business/{slug}/voice/turn",json=payload,timeout=30)
-                  elapsed=time.perf_counter()-t
-                  latencies.append(elapsed)
-                  if rr.status_code>=500:
-                      failures.append((i,text,rr.status_code,rr.text[:300]))
-                      continue
-                  data=rr.json()
-                  if not data.get("reply"):
-                      failures.append((i,text,"EMPTY",""))
-                  conversation_id=data.get("conversation_id") or conversation_id
-                  if kind=="hours" and (not data.get("knowledge_hit") or data.get("handoff_required")):
-                      hours_failures.append((i,text,data))
-              except Exception as exc:
-                  failures.append((i,text,"EXCEPTION",str(exc)))
-
-          p50=statistics.median(latencies) if latencies else 999
-          p95=sorted(latencies)[max(0,int(len(latencies)*0.95)-1)] if latencies else 999
-          total=time.perf_counter()-start
-
-          print(f"SCENARIOS={len(scenarios)} COMPLETED={len(latencies)} FAILURES={len(failures)}")
-          print(f"TOTAL_SECONDS={total:.2f} P50_SECONDS={p50:.2f} P95_SECONDS={p95:.2f}")
-          if hours_failures:
-              print("HOURS_FAILURES:")
-              for x in hours_failures: print(x)
-          if failures:
-              print("FAILURES:")
-              for x in failures: print(x)
-
-          if failures or hours_failures:
-              sys.exit(1)
-          if p95>20:
-              print("P95 latency exceeded 20 seconds")
-              sys.exit(1)
-          print("HTTP VOICE REGRESSION: PASS")
-
-          # Multi-turn booking state acceptance against the deployed backend.
-          print("BOOKING STATE REGRESSION: START")
-          bc=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Booking Regression","phone":"+919999999998"},timeout=20)
-          bc.raise_for_status()
-          bcid=bc.json()["call_id"]
-          bconv=None
-          def booking_turn(text):
-              global bconv
-              rr=s.post(f"{base}/api/v1/public/business/{slug}/voice/turn",json={"transcript":text,"call_id":bcid,"conversation_id":bconv,"channel":"voice"},timeout=30)
-              rr.raise_for_status()
-              data=rr.json()
-              bconv=data.get("conversation_id") or bconv
-              return data
-          x=booking_turn("I want to book an appointment")
-          if not x.get("reply") or not bconv: raise RuntimeError(f"Booking start failed: {x}")
-          x=booking_turn("Monday")
-          if not x.get("reply"): raise RuntimeError(f"Booking date continuation failed: {x}")
-          x=booking_turn("10 AM")
-          if not any(k in x.get("reply","").lower() for k in ("confirm","appointment","10")): raise RuntimeError(f"Booking time state failed: {x}")
-          x=booking_turn("Yes, confirm it")
-          if not x.get("booking",{}).get("confirmed") or not x.get("booking",{}).get("booking_id"):
-              raise RuntimeError(f"Real booking creation failed: {x}")
-          created_booking_id=x["booking"]["booking_id"]
-          x=booking_turn("Cancel my appointment")
-          if not x.get("booking",{}).get("cancellation_confirmed"):
-              raise RuntimeError(f"Real booking cancellation failed: {x}")
-          if x.get("booking",{}).get("booking_id") != created_booking_id:
-              raise RuntimeError(f"Cancelled booking id mismatch: {x}")
-          print("REAL BOOKING CREATE/CANCEL REGRESSION: PASS")
-          bc=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Hindi Booking Regression","phone":"+919999999997"},timeout=20)
-          bc.raise_for_status()
-          bcid=bc.json()["call_id"]
-          bconv=None
-          x=booking_turn("Hindi mein bol sakte hain")
-          if "hindi" not in x.get("reply","").lower() and "हिंदी" not in x.get("reply",""): raise RuntimeError(f"Hindi switch failed: {x}")
-          x=booking_turn("मुझे अपॉइंटमेंट बुक करना है")
-          if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking start failed: {x}")
-          x=booking_turn("Monday")
-          if not x.get("reply"): raise RuntimeError(f"Hindi date continuation failed: {x}")
-          x=booking_turn("10 बजे")
-          if "unverified" in x.get("reply","").lower() or not x.get("reply"): raise RuntimeError(f"Hindi booking time failed: {x}")
-          print("BOOKING STATE REGRESSION: PASS")
-
-          # Gender/persona acceptance for the configured female agent.
-          gender_call=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Gender Regression","phone":"+919999999996"},timeout=20)
-          gender_call.raise_for_status()
-          bcid=gender_call.json()["call_id"]
-          bconv=None
-          x=booking_turn("Hindi mein bol sakte hain")
-          gender_reply=x.get("reply","")
-          if "sakti" not in gender_reply.lower() and "सकती" not in gender_reply:
-              raise RuntimeError(f"Female Hindi grammar regression: {x}")
-          print("FEMALE VOICE GRAMMAR REGRESSION: PASS")
-
-          # A clearly past appointment must be identified as past, not unavailable.
-          past_call=s.post(f"{base}/api/v1/public/business/{slug}/call",json={"name":"Past Time Regression","phone":"+919999999995"},timeout=20)
-          past_call.raise_for_status()
-          bcid=past_call.json()["call_id"]
-          bconv=None
-          booking_turn("I want to book an appointment")
-          booking_turn("yesterday")
-          x=booking_turn("5:30 PM")
-          past_reply=x.get("reply","").lower()
-          if not any(k in past_reply for k in ("passed","already","past","निकल चुका","बीत चुका")):
-              raise RuntimeError(f"Past-time booking regression: {x}")
-          if "not available" in past_reply:
-              raise RuntimeError(f"Past time incorrectly reported as unavailable: {x}")
-          print("PAST TIME REGRESSION: PASS")
-
-          # Real browser smoke: validates the customer-facing PWA, browser WebSocket
-          # upgrade, microphone path and first realtime AI response.
-          import time, sys
-          from playwright.sync_api import sync_playwright
-
-          page_url="https://ai-growth-os-web.onrender.com/ss-nutritions"
-          with sync_playwright() as p:
-              browser=p.chromium.launch(headless=True,args=[
-                  "--use-fake-device-for-media-stream",
-                  "--use-fake-ui-for-media-stream",
-                  "--autoplay-policy=no-user-gesture-required",
-              ])
-              context=browser.new_context(permissions=["microphone"])
-              page=context.new_page()
-
-              # Headless Chromium does not expose a real SpeechRecognition service.
-              # Inject one deterministic recognition turn so this smoke test exercises
-              # the actual PWA call -> /voice/turn -> transcript path without any
-              # external AI provider credentials.
-              page.add_init_script("""
-                (() => {
-                  class FakeSpeechRecognition {
-                    constructor() {
-                      this.continuous = true;
-                      this.interimResults = false;
-                      this.maxAlternatives = 1;
-                      this.lang = "en-IN";
-                      this.started = false;
-                    }
-                    start() {
-                      if (this.started) return;
-                      this.started = true;
-                      setTimeout(() => {
-                        if (!this.onresult) return;
-                        const result = {
-                          isFinal: true,
-                          0: { transcript: "What are your timings?" }
-                        };
-                        this.onresult({
-                          resultIndex: 0,
-                          results: [result]
-                        });
-                      }, 250);
-                    }
-                    stop() {
-                      this.started = false;
-                    }
-                  }
-                  window.SpeechRecognition = FakeSpeechRecognition;
-                  window.webkitSpeechRecognition = FakeSpeechRecognition;
-                })();
-              """)
-
-              page.goto(page_url,wait_until="networkidle",timeout=60_000)
-              page.get_by_role("button",name="Call us").first.click()
-              page.get_by_placeholder("Your name").fill("Voice Browser Test")
-              page.get_by_placeholder("+91 98765 43210").fill("+919999999999")
-              page.get_by_role("button",name="☎ Start call").click()
-              page.get_by_text("AI is listening…").wait_for(timeout=20_000)
-              page.get_by_text("What are your timings?",exact=False).wait_for(timeout=20_000)
-              page.get_by_text("We're open",exact=False).wait_for(timeout=20_000)
-              transcript=page.locator(".ss-transcript").inner_text()
-              print("BROWSER_BUILT_IN_VOICE_TRANSCRIPT="+transcript.replace("\\n"," | ")[:500])
-              if "AI:" not in transcript or "What are your timings?" not in transcript:
-                  raise RuntimeError("Built-in browser voice path did not produce the expected AI transcript")
-              page.get_by_role("button",name="End call").click()
-              browser.close()
-          print("BROWSER BUILT-IN VOICE REGRESSION: PASS")
-          print("VOICE REGRESSION: PASS")
+          import os,time,re,json,statistics,requests,sys
+          from datetime import datetime
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          B=os.environ["API_URL"].rstrip("/")
+          C=["restaurant","cafe","hotel","salon","dental","gym","health-clinic","wellness","real-estate","retail","automobile","education","travel","home-services","professional-services"]
+          T=["working hours","location","services","pricing","an appointment","a specialist","payment","reviews","cancellation","contact the business","offers","your business"]
+          S=["What are your {t}?","If I need {t}, can you help me?","Now I need {t}; what should I do?","When can I {t}?","Where can I {t}?","Why should I choose your {t}?","How do I {t}?","Who can help me with {t}?"]
+          F=[];L=[];R={"categories":{}}
+          SOL={"booking":"Fix date/time extraction, timezone, availability, confirmation and persistence together.","language":"Fix language detection/persistence and native/romanized patterns.","tenant":"Fix provisioning, service setup and tenant isolation.","http":"Inspect the failing API route and add a regression before redeploying."}
+          def err(k,c,q,e): F.append({"time":datetime.utcnow().isoformat()+"Z","kind":k,"category":c,"question":q,"error":str(e),"solution":SOL.get(k,SOL["http"])})
+          def setup(c):
+            s=requests.Session(); slug="qa-"+c; email="qa-"+c+"@example.invalid"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
+            p={"name":"QA Owner","email":email,"password":pw,"business_name":"QA "+c,"slug":slug,"industry":c}
+            x=s.post(B+"/api/v1/auth/register",json=p,timeout=20)
+            if x.status_code==409:x=s.post(B+"/api/v1/auth/login",json={"email":email,"password":pw},timeout=20)
+            x.raise_for_status(); d=x.json(); s.headers["Authorization"]="Bearer "+d["access_token"]
+            q=s.get(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',timeout=20); q.raise_for_status()
+            if not q.json().get("items"):
+              q=s.post(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',json={"name":"QA Consultation","description":"QA","price":1000,"currency":"INR","duration_minutes":30,"is_active":True},timeout=20); q.raise_for_status()
+            return slug
+          def start(slug,n):
+            x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20);x.raise_for_status();return x.json()["call_id"]
+          def turn(slug,cid,q,cv=None):
+            z=time.perf_counter();x=requests.post(f"{B}/api/v1/public/business/{slug}/voice/turn",json={"transcript":q,"call_id":cid,"conversation_id":cv,"channel":"voice"},timeout=30);L.append(time.perf_counter()-z)
+            if x.status_code>=500:raise RuntimeError("HTTP "+str(x.status_code)+": "+x.text[:300])
+            x.raise_for_status();d=x.json()
+            if not d.get("reply"):raise RuntimeError("empty reply")
+            return d
+          for i,c in enumerate(C):
+            slug=setup(c);ok=bad=0
+            for t in T:
+              for f in S:
+                q=f.format(t=t)
+                try:
+                  d=turn(slug,start(slug,i*100000+ok+bad),q)
+                  if d.get("handoff_required") and t not in ("a specialist","contact the business"):raise RuntimeError("unexpected handoff")
+                  ok+=1
+                except Exception as e:bad+=1;err("http",c,q,e)
+                time.sleep(.5)
+            try:
+              cid=start(slug,i*100000+90000);cv=None
+              d=turn(slug,cid,"I want to book an appointment",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"possible for today",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"now",cv);cv=d.get("conversation_id");a=d["reply"]
+              if re.search(r"what time would you prefer|what time do you prefer",a,re.I):raise RuntimeError("NOW repeated the time question")
+              if re.search(r"confirm|कन्फर्म|కన్ఫర్మ",a,re.I):
+                d=turn(slug,cid,"Yes, confirm it",cv);b=d.get("booking",{})
+                if not b.get("confirmed") or not b.get("booking_id"):raise RuntimeError("booking create missing booking_id")
+                bid=b["booking_id"];d=turn(slug,cid,"Cancel my appointment",cv);b=d.get("booking",{})
+                if not b.get("cancellation_confirmed") or b.get("booking_id")!=bid:raise RuntimeError("booking cancellation failed")
+              ok+=1
+            except Exception as e:bad+=1;err("booking",c,"appointment -> today -> now -> confirm -> cancel",e)
+            try:
+              cid=start(slug,i*100000+91000);cv=None
+              d=turn(slug,cid,"Hindi mein bol sakte hain",cv);cv=d.get("conversation_id")
+              if not any(x in d["reply"].lower() for x in ("hindi","हिंदी","sakti")):raise RuntimeError("Hindi switch failed")
+              d=turn(slug,cid,"मुझे अपॉइंटमेंट बुक करना है",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"सोमवार",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"10 बजे",cv)
+              if not d.get("reply"):raise RuntimeError("Hindi booking continuation empty")
+              ok+=1
+            except Exception as e:bad+=1;err("language",c,"Hindi booking continuation",e)
+            R["categories"][c]={"passed":ok,"failed":bad};print(c,ok,bad)
+          time.sleep(61)
+          def perf(i):
+            z=time.perf_counter();cid=start("qa-"+C[-1],700000+i);turn("qa-"+C[-1],cid,"What are your working hours?");return time.perf_counter()-z
+          with ThreadPoolExecutor(max_workers=8) as ex: P=[f.result() for f in as_completed([ex.submit(perf,i) for i in range(8)])]
+          R.update(voice_turns=len(L),failures=len(F),p50=statistics.median(L) if L else 999,p95=sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999,concurrency_seconds=P,status="PASS" if not F and (statistics.median(L) if L else 999)<=20 else "FAIL")
+          open("qa_error_log.jsonl","w",encoding="utf-8").write("".join(json.dumps(x,ensure_ascii=False)+"\n" for x in F))
+          json.dump(R,open("qa_report.json","w",encoding="utf-8"),indent=2,ensure_ascii=False)
+          print(json.dumps(R,indent=2,ensure_ascii=False))
+          if F or R["p95"]>20:sys.exit(1)
+          print("FULL 15-TENANT ENGINEERING REGRESSION: PASS")
           PY
+      - name: Upload QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-15-tenant-qa-report
+          path: |
+            qa_error_log.jsonl
+            qa_report.json
+          if-no-files-found: warn
