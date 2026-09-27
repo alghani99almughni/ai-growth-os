@@ -47,13 +47,15 @@ jobs:
             return slug
           def start(slug,n):
             for _ in range(5):
-              x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20);              if x.status_code!=429: break
+              x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20)
+              if x.status_code!=429: break
               time.sleep(3)
             x.raise_for_status();return x.json()["call_id"]
           def turn(slug,cid,q,cv=None):
             z=time.perf_counter()
             for _ in range(5):
-              x=requests.post(f"{B}/api/v1/public/business/{slug}/voice/turn",json={"transcript":q,"call_id":cid,"conversation_id":cv,"channel":"voice"},timeout=30);L.append(time.perf_counter()-z)
+              x=requests.post(f"{B}/api/v1/public/business/{slug}/voice/turn",json={"transcript":q,"call_id":cid,"conversation_id":cv,"channel":"voice"},timeout=30)
+              L.append(time.perf_counter()-z)
               if x.status_code!=429: break
               time.sleep(3)
             if x.status_code>=500:raise RuntimeError("HTTP "+str(x.status_code)+": "+x.text[:300])
