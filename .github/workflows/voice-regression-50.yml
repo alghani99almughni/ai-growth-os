@@ -29,7 +29,7 @@ jobs:
           SOL={"booking":"Fix date/time extraction, timezone, availability, confirmation and persistence together.","language":"Fix language detection/persistence and native/romanized patterns.","tenant":"Fix provisioning, service setup and tenant isolation.","http":"Inspect the failing API route and add a regression before redeploying."}
           def err(k,c,q,e): F.append({"time":datetime.utcnow().isoformat()+"Z","kind":k,"category":c,"question":q,"error":str(e),"solution":SOL.get(k,SOL["http"])})
           def setup(c):
-            s=requests.Session(); slug="qa-"+c; email="qa-"+c+"@example.com"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
+            s=requests.Session(); run=os.environ.get("GITHUB_RUN_ID","local"); slug="qa-"+c+"-"+run; email="qa-"+c+"-"+run+"@example.com"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
             p={"name":"QA Owner","email":email,"password":pw,"business_name":"QA "+c,"slug":slug,"industry":c}
             x=s.post(B+"/api/v1/auth/register",json=p,timeout=20)
             if x.status_code==409:
@@ -87,7 +87,7 @@ jobs:
             R["categories"][c]={"passed":ok,"failed":bad};print(c,ok,bad)
           time.sleep(61)
           def perf(i):
-            z=time.perf_counter();cid=start("qa-"+C[-1],700000+i);turn("qa-"+C[-1],cid,"What are your working hours?");return time.perf_counter()-z
+            z=time.perf_counter();cid=start("qa-"+C[-1]+"-"+os.environ.get("GITHUB_RUN_ID","local"),700000+i);turn("qa-"+C[-1],cid,"What are your working hours?");return time.perf_counter()-z
           with ThreadPoolExecutor(max_workers=8) as ex: P=[f.result() for f in as_completed([ex.submit(perf,i) for i in range(8)])]
           R.update(voice_turns=len(L),failures=len(F),p50=statistics.median(L) if L else 999,p95=sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999,concurrency_seconds=P,status="PASS" if not F and (statistics.median(L) if L else 999)<=20 else "FAIL")
           open("qa_error_log.jsonl","w",encoding="utf-8").write("".join(json.dumps(x,ensure_ascii=False)+"\n" for x in F))
