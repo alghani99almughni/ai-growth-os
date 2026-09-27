@@ -29,7 +29,7 @@ jobs:
           SOL={"booking":"Fix date/time extraction, timezone, availability, confirmation and persistence together.","language":"Fix language detection/persistence and native/romanized patterns.","tenant":"Fix provisioning, service setup and tenant isolation.","http":"Inspect the failing API route and add a regression before redeploying."}
           def err(k,c,q,e): F.append({"time":datetime.utcnow().isoformat()+"Z","kind":k,"category":c,"question":q,"error":str(e),"solution":SOL.get(k,SOL["http"])})
           def setup(c):
-            s=requests.Session(); slug="qa-"+c; email="qa-"+c+"@example.invalid"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
+            s=requests.Session(); slug="qa-"+c; email="qa-"+c+"@example.com"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
             p={"name":"QA Owner","email":email,"password":pw,"business_name":"QA "+c,"slug":slug,"industry":c}
             x=s.post(B+"/api/v1/auth/register",json=p,timeout=20)
             if x.status_code==409:x=s.post(B+"/api/v1/auth/login",json={"email":email,"password":pw},timeout=20)
