@@ -1,4 +1,4 @@
-name: Voice Agent 50-Scenario Regression
+name: Voice Agent Full Engineering Regression
 # Live booking create/cancel verification enabled
 
 on:
@@ -16,7 +16,7 @@ jobs:
         run: |
           python -m pip install -q websocket-client playwright
           python -m playwright install chromium
-      - name: Run 50 live voice-agent scenarios
+      - name: Run full 15-tenant engineering matrix
         env:
           API_URL: https://ai-growth-os-api.onrender.com
           BUSINESS_SLUG: ss-nutritions
