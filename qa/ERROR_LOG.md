@@ -32,3 +32,8 @@ This file records discovered defects and their solutions; a release is not marke
 - Scope: QA/voice workflow deployment gate during overlapping Render deploys.
 - Root cause: the workflow treated one 20-second health read timeout as a deployment failure.
 - Solution: retry transient `requests` health errors with a bounded deployment window before failing the gate.
+
+### Failure: `now` booking still returned HTTP 500 after the first fix
+- Root cause: the new deterministic next-slot branch referenced `datetime` without importing it in `brain.py`.
+- Evidence: Render reported `NameError: name 'datetime' is not defined` during `booking_reply_from_state()`.
+- Solution: add the explicit `datetime` import and keep the full `today -> now -> next slot` regression mandatory.
