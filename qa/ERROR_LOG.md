@@ -27,3 +27,8 @@ This file records discovered defects and their solutions; a release is not marke
 - Trigger: Monday -> 10 AM -> natural confirmation.
 - Root cause: the production tenant had bookings enabled but no active Service row, so the transaction rejected the booking.
 - Solution: create an explicit tenant-scoped `General Appointment` service on first confirmed booking when no active service exists; configured services remain preferred.
+
+### Infrastructure test failure: transient Render health timeout
+- Scope: QA/voice workflow deployment gate during overlapping Render deploys.
+- Root cause: the workflow treated one 20-second health read timeout as a deployment failure.
+- Solution: retry transient `requests` health errors with a bounded deployment window before failing the gate.
