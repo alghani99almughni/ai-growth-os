@@ -85,15 +85,18 @@ jobs:
           expected_commit=os.environ.get("GITHUB_SHA","")
           deadline=time.time()+180
           while True:
-              r=s.get(base+"/health",timeout=20)
-              r.raise_for_status()
-              deployed=r.json().get("commit","")
-              print(f"DEPLOYED_COMMIT={deployed}")
-              if deployed==expected_commit:
-                  break
+              try:
+                  r=s.get(base+"/health",timeout=10)
+                  r.raise_for_status()
+                  deployed=r.json().get("commit","")
+                  print(f"DEPLOYED_COMMIT={deployed}")
+                  if deployed==expected_commit:
+                      break
+              except requests.RequestException as exc:
+                  print(f"HEALTH_RETRY={exc.__class__.__name__}: {exc}")
               if time.time()>=deadline:
-                  raise RuntimeError(f"Render did not deploy expected commit {expected_commit}; current={deployed}")
-              time.sleep(5)
+                  raise RuntimeError(f"Render did not deploy expected commit {expected_commit}")
+              time.sleep(8)
 
           start=time.perf_counter()
           r=s.post(f"{base}/api/v1/public/business/{slug}/call",
