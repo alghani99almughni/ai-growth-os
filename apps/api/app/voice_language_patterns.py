@@ -144,12 +144,12 @@ def is_explicit_confirmation(text: str) -> bool:
         return False
     if value in CONFIRMATION_PHRASES:
         return True
-    # Natural confirmation with a small polite suffix.
-    return bool(re.search(
-        r"^(yes|yeah|yep|sure|confirm|confirmed|okay|ok|haan|han|avunu|sare|sari|howdu|athe|ho|hyan)"
-        r"(\s+(please|sir|maam|ma'am|ji|kijiye|cheyyandi|pannunga|madi|kara|karo))?$",
-        value,
-    ))
+    # Natural confirmations may contain punctuation and a short action phrase,
+    # e.g. "yes, confirm it", "sure please confirm", "okay book it".
+    affirmative = r"(yes|yeah|yep|sure|confirm|confirmed|okay|ok|haan|han|avunu|sare|sari|howdu|athe|ho|hyan)"
+    action = r"(?:\s+(?:please\s+)?(?:confirm|confirmed|book|book\s+it|confirm\s+it|do\s+it|go\s+ahead))?"
+    suffix = r"(?:\s+(?:please|sir|maam|ma'am|ji|kijiye|cheyyandi|pannunga|madi|kara|karo))?"
+    return bool(re.search(r"^" + affirmative + action + suffix + r"$", value))
 
 def needs_voice_clarification(text: str) -> bool:
     value = " ".join(text.casefold().split())
