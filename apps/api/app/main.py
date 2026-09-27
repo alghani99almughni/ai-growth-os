@@ -2100,8 +2100,26 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 select(Service).where(Service.tenant_id==t.id,Service.is_active==True)
                 .order_by(Service.name).limit(1)
             )
+            # A tenant can enable bookings before configuring a service. Keep the
+            # booking engine usable by creating one explicit generic appointment
+            # service instead of failing the confirmed transaction.
             if not service:
-                raise ValueError("No active appointment service is configured.")
+                service=Service(
+                    id=str(uuid.uuid4()),
+                    tenant_id=t.id,
+                    name="General Appointment",
+                    description="Default appointment service; replace with your configured service.",
+                    price=0,
+                    currency="INR",
+                    duration_minutes=30,
+                    is_active=True,
+                )
+                db.add(service)
+                db.flush()
+                logging.getLogger("uvicorn.error").info(
+                    "VOICE_BOOKING_DEFAULT_SERVICE_CREATED tenant_id=%s service_id=%s",
+                    t.id, service.id,
+                )
             date_text=str(booking.get("date") or "").strip()
             time_text=str(booking.get("time") or "").strip().upper()
             if not date_text or not time_text:
