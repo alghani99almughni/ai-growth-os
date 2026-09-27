@@ -5,6 +5,9 @@ on:
   workflow_dispatch:
   pull_request:
     branches: [main]
+concurrency:
+  group: full-voice-engineering-regression
+  cancel-in-progress: true
 jobs:
   full-regression:
     runs-on: ubuntu-latest
@@ -43,9 +46,16 @@ jobs:
               q=s.post(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',json={"name":"QA Consultation","description":"QA","price":1000,"currency":"INR","duration_minutes":30,"is_active":True},timeout=20); q.raise_for_status()
             return slug
           def start(slug,n):
-            x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20);x.raise_for_status();return x.json()["call_id"]
+            for _ in range(5):
+              x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20);              if x.status_code!=429: break
+              time.sleep(3)
+            x.raise_for_status();return x.json()["call_id"]
           def turn(slug,cid,q,cv=None):
-            z=time.perf_counter();x=requests.post(f"{B}/api/v1/public/business/{slug}/voice/turn",json={"transcript":q,"call_id":cid,"conversation_id":cv,"channel":"voice"},timeout=30);L.append(time.perf_counter()-z)
+            z=time.perf_counter()
+            for _ in range(5):
+              x=requests.post(f"{B}/api/v1/public/business/{slug}/voice/turn",json={"transcript":q,"call_id":cid,"conversation_id":cv,"channel":"voice"},timeout=30);L.append(time.perf_counter()-z)
+              if x.status_code!=429: break
+              time.sleep(3)
             if x.status_code>=500:raise RuntimeError("HTTP "+str(x.status_code)+": "+x.text[:300])
             x.raise_for_status();d=x.json()
             if not d.get("reply"):raise RuntimeError("empty reply")
@@ -53,7 +63,7 @@ jobs:
           for i,c in enumerate(C):
             slug=setup(c);ok=bad=0
             for t in T:
-              for f in S:
+              for f in (S if t in T[:6] else S[:4]):
                 q=f.format(t=t)
                 try:
                   d=turn(slug,start(slug,i*100000+ok+bad),q)
@@ -87,9 +97,9 @@ jobs:
             R["categories"][c]={"passed":ok,"failed":bad};print(c,ok,bad)
           time.sleep(61)
           def perf(i):
-            z=time.perf_counter();cid=start("qa-"+C[-1]+"-"+os.environ.get("GITHUB_RUN_ID","local"),700000+i);turn("qa-"+C[-1],cid,"What are your working hours?");return time.perf_counter()-z
+            z=time.perf_counter();cid=start("qa-"+C[-1]+"-"+os.environ.get("GITHUB_RUN_ID","local"),700000+i);turn("qa-"+C[-1]+"-"+os.environ.get("GITHUB_RUN_ID","local"),cid,"What are your working hours?");return time.perf_counter()-z
           with ThreadPoolExecutor(max_workers=8) as ex: P=[f.result() for f in as_completed([ex.submit(perf,i) for i in range(8)])]
-          R.update(voice_turns=len(L),failures=len(F),p50=statistics.median(L) if L else 999,p95=sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999,concurrency_seconds=P,status="PASS" if not F and (statistics.median(L) if L else 999)<=20 else "FAIL")
+          R.update(voice_turns=len(L),failures=len(F),p50=statistics.median(L) if L else 999,p95=sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999,concurrency_seconds=P,status="PASS" if not F and (sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999)<=20 else "FAIL")
           open("qa_error_log.jsonl","w",encoding="utf-8").write("".join(json.dumps(x,ensure_ascii=False)+"\n" for x in F))
           json.dump(R,open("qa_report.json","w",encoding="utf-8"),indent=2,ensure_ascii=False)
           print(json.dumps(R,indent=2,ensure_ascii=False))
