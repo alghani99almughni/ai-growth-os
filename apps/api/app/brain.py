@@ -13,6 +13,7 @@ from .ai_provider_pool import last_resort_reply
 from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
+from .booking import available_slots
 
 logger = logging.getLogger(__name__)
 
