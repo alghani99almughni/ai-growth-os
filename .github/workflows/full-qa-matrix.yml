@@ -21,9 +21,12 @@ jobs:
           import os,time,requests
           base=os.environ["API_URL"]; expected=os.environ["GITHUB_SHA"]; end=time.time()+300
           while time.time()<end:
-            r=requests.get(base+"/health",timeout=20); r.raise_for_status()
-            got=r.json().get("commit",""); print("DEPLOYED_COMMIT",got)
-            if got==expected: break
+            try:
+              r=requests.get(base+"/health",timeout=10); r.raise_for_status()
+              got=r.json().get("commit",""); print("DEPLOYED_COMMIT",got)
+              if got==expected: break
+            except requests.RequestException as exc:
+              print("HEALTH_RETRY",type(exc).__name__,str(exc))
             time.sleep(8)
           else: raise SystemExit("Render deployment timeout")
           PY
