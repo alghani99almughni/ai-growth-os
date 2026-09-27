@@ -21,3 +21,9 @@
 
 ## Release gate
 This file records discovered defects and their solutions; a release is not marked production-ready until the complete automated matrix reports zero unresolved failures.
+
+### Failure: live booking confirmation had no service configured
+- Scope: SS Nutritions 50-scenario voice regression.
+- Trigger: Monday -> 10 AM -> natural confirmation.
+- Root cause: the production tenant had bookings enabled but no active Service row, so the transaction rejected the booking.
+- Solution: create an explicit tenant-scoped `General Appointment` service on first confirmed booking when no active service exists; configured services remain preferred.
