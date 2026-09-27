@@ -32,7 +32,11 @@ jobs:
             s=requests.Session(); slug="qa-"+c; email="qa-"+c+"@example.com"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
             p={"name":"QA Owner","email":email,"password":pw,"business_name":"QA "+c,"slug":slug,"industry":c}
             x=s.post(B+"/api/v1/auth/register",json=p,timeout=20)
-            if x.status_code==409:x=s.post(B+"/api/v1/auth/login",json={"email":email,"password":pw},timeout=20)
+            if x.status_code==409:
+              for _ in range(8):
+                x=s.post(B+"/api/v1/auth/login",json={"email":email,"password":pw},timeout=20)
+                if x.status_code==200: break
+                time.sleep(2)
             x.raise_for_status(); d=x.json(); s.headers["Authorization"]="Bearer "+d["access_token"]
             q=s.get(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',timeout=20); q.raise_for_status()
             if not q.json().get("items"):
