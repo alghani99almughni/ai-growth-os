@@ -139,7 +139,8 @@ CONFIRMATION_PHRASES = {
 
 def is_explicit_confirmation(text: str) -> bool:
     """Recognize a short affirmative confirmation without tying it to English only."""
-    value = " ".join(text.casefold().split()).strip(" .,!?:;")
+    value = re.sub(r"[,.!?;:]+", " ", text.casefold())
+    value = " ".join(value.split()).strip()
     if not value or len(value) > 80:
         return False
     if value in CONFIRMATION_PHRASES:
