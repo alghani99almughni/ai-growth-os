@@ -48,13 +48,29 @@ for ind,slug,_ in tenants:
         conv=turn(slug,cid,"today",conv).get("conversation_id")
         x=turn(slug,cid,"now",conv); conv=x.get("conversation_id"); rep=x.get("reply","").lower()
         if "what time would you prefer" in rep or "which time" in rep: fail(ind,"today-now","repeated time question","Resolve now to next available local slot or explicitly say no remaining slot.")
+        # Native/romanized Indian-language equivalents of "now" must enter the same state machine.
+        for now_text in ("abhi","अभी"):
+            cid=call(slug,20); conv=turn(slug,cid,"I want to book an appointment").get("conversation_id")
+            conv=turn(slug,cid,"today",conv).get("conversation_id")
+            x=turn(slug,cid,now_text,conv); rep=x.get("reply","").lower()
+            if "what time would you prefer" in rep or "which time" in rep:
+                fail(ind,"now-"+now_text,"repeated time question","Resolve now/abhi/अभी to the next available local slot.")
         cid=call(slug,3); conv=None
         for m in ("I want an appointment","tomorrow","2 o'clock"):
             x=turn(slug,cid,m,conv); conv=x.get("conversation_id")
         x=turn(slug,cid,"Yes, confirm it",conv); bid=x.get("booking",{}).get("booking_id")
-        if not bid: fail(ind,"booking-confirm","no booking_id","Create the appointment only after explicit confirmation.")
+        if not bid: fail(ind,"booking-confirm-natural","no booking_id","Accept natural affirmative confirmation and create the appointment transactionally.")
         x=turn(slug,cid,"Cancel my appointment",conv)
         if bid and not x.get("booking",{}).get("cancellation_confirmed"): fail(ind,"booking-cancel","not cancelled","Persist and transactionally cancel the exact appointment.")
+        # Exercise a second natural confirmation form after a fresh booking.
+        cid=call(slug,30); conv=None
+        for m in ("I want an appointment","tomorrow","3 PM"):
+            x=turn(slug,cid,m,conv); conv=x.get("conversation_id")
+        x=turn(slug,cid,"Okay book it",conv); bid2=x.get("booking",{}).get("booking_id")
+        if not bid2: fail(ind,"booking-confirm-okay-book","no booking_id","Accept bounded natural confirmation phrases.")
+        else:
+            x=turn(slug,cid,"cancel it",conv)
+            if not x.get("booking",{}).get("cancellation_confirmed"): fail(ind,"booking-cancel-second","not cancelled","Cancel the exact active appointment.")
     except Exception as e: fail(ind,"booking-state-machine",str(e),"Fix booking state persistence and transaction boundaries.")
     for lang,a,b in [
         ("hi","हिंदी में बात कर सकते हैं","मुझे अपॉइंटमेंट बुक करना है"),
@@ -64,7 +80,7 @@ for ind,slug,_ in tenants:
             cid=call(slug,4); conv=turn(slug,cid,a).get("conversation_id"); x=turn(slug,cid,b,conv)
             if not x.get("reply"): fail(ind,"language-"+lang,"empty reply","Preserve requested language and return a safe response.")
         except Exception as e: fail(ind,"language-"+lang,str(e),"Fix language detection/persistence.")
-    for m in ["What if I change my mind?","When exactly?","Where exactly?","Why do you need my number?","How much does it cost?","Who is available right now?","maybe","no","not now","2 PM","2 o'clock","12 noon","tomorrow","Monday","abhi","अभी","कल","सोमवार"]:
+    for m in ["What if I change my mind?","What if the slot is unavailable?","When exactly?","When can I come?","Where exactly?","Where are you located?","Why do you need my number?","Why is this service useful?","How much does it cost?","How can I book?","Who is available right now?","Who can help me?","maybe","no","not now","2 PM","2 o'clock","12 noon","12 PM","tomorrow","Monday","abhi","अभी","कल","सोमवार","cancel","I changed my mind"]:
         try:
             cid=call(slug,5); x=turn(slug,cid,m)
             if not x.get("reply"): fail(ind,"edge:"+m,"empty reply","Never crash or return an empty conversational response.")
