@@ -26,4 +26,6 @@ boto3==1.35.90
 twilio==9.4.1
 
 qrcode[pil]==8.0
+aiosmtplib
+imap-tools
 
