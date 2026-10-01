@@ -7,6 +7,7 @@ export type NavItem = {
   label: string;
   icon: string;   // lucide icon name
   exact?: boolean; // true = only active when URL matches exactly
+  labelKey?: string; // i18n key — when present, translated via t(labelKey)
 };
 
 export const TENANT_NAV: NavItem[] = [
