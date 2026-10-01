@@ -62,7 +62,24 @@ def ensure_schema():
             # ── New columns added in later sessions ──
             conn.execute(text("ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS updated_by VARCHAR(36)"))
             conn.execute(text("ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
-
+            # ── conversation columns added after initial table creation ──
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS channel VARCHAR(30) DEFAULT 'pwa'"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS language VARCHAR(16) DEFAULT 'en'"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS state VARCHAR(60) DEFAULT 'new'"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS intent VARCHAR(120)"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_user_message TEXT"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS last_assistant_message TEXT"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS turns INTEGER DEFAULT 0"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP"))
+            # ── conversation_messages columns ──
+            conn.execute(text("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS role VARCHAR(20)"))
+            conn.execute(text("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content TEXT"))
+            conn.execute(text("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS language VARCHAR(16) DEFAULT 'en'"))
+            conn.execute(text("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS intent VARCHAR(120)"))
+            conn.execute(text("ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS created_at TIMESTAMP"))
+            conn.execute(text("ALTER TABLE conversations ADD COLUMN IF NOT EXISTS cleared_at TIMESTAMP"))
             # ── Tables added in later sessions (Session 17b, 18, 20a) ──
             conn.execute(text("CREATE TABLE IF NOT EXISTS support_tickets (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, subject VARCHAR(300) NOT NULL, body TEXT, category VARCHAR(40) NOT NULL DEFAULT 'support', priority VARCHAR(20) NOT NULL DEFAULT 'normal', status VARCHAR(40) NOT NULL DEFAULT 'new', sla_hours INTEGER NOT NULL DEFAULT 24, sla_due_at TIMESTAMP, sla_breached BOOLEAN NOT NULL DEFAULT FALSE, assigned_to VARCHAR(36), created_by VARCHAR(36), created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL, resolved_at TIMESTAMP, resolved_by VARCHAR(36))"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_support_tickets_tenant_id ON support_tickets(tenant_id)"))
