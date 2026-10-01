@@ -1,0 +1,93 @@
+# Render Blueprint — production configuration
+services:
+  - type: web
+    name: ai-growth-os-api
+    runtime: python
+    plan: starter                # upgrade from free to avoid cold starts in prod
+    region: singapore
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    buildCommand: pip install -r apps/api/requirements.txt
+    startCommand: uvicorn app.main:app --app-dir apps/api --host 0.0.0.0 --port $PORT --workers 2 --timeout-keep-alive 30
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.1
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ai-growth-os-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: ai-growth-os-redis
+          type: keyvalue
+          property: connectionString
+
+      - key: ALLOWED_ORIGINS
+        value: https://ai-growth-os-web.onrender.com
+      - key: PUBLIC_APP_URL
+        value: https://ai-growth-os-web.onrender.com
+
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WHATSAPP_CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+      - key: INTEGRATION_CREDENTIAL_ENCRYPTION_KEY
+        sync: false
+
+      - key: TURN_PROVIDER
+        value: cloudflare
+      - key: TURN_PROVIDER_FALLBACK
+        value: metered
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false
+      - key: METERED_APP_NAME
+        sync: false
+      - key: METERED_SECRET_KEY
+        sync: false
+
+      - key: RESEND_API_KEY
+        sync: false
+      - key: NOTIFICATION_FROM_EMAIL
+        sync: false
+      - key: NOTIFICATION_FROM_NAME
+        value: AI Growth OS
+      - key: PASSWORD_RESET_TTL_MINUTES
+        value: "30"
+      - key: PLATFORM_ADMIN_EMAIL
+        sync: false
+      - key: PLATFORM_ADMIN_PASSWORD
+        sync: false
+      - key: PLATFORM_ADMIN_NAME
+        value: Platform Administrator
+
+  - type: web
+    name: ai-growth-os-web
+    runtime: node
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    buildCommand: cd apps/web && npm install && npm run build
+    startCommand: cd apps/web && npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://ai-growth-os-api.onrender.com
+
+  - type: keyvalue
+    name: ai-growth-os-redis
+    plan: starter
+    region: singapore
+    ipAllowList:
+      - source: 0.0.0.0/32
+        description: Block public internet; API uses Render private networking
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: ai-growth-os-db
+    plan: starter
+    region: singapore
+    postgresMajorVersion: "18"

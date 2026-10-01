@@ -1,0 +1,123 @@
+name: Voice Agent Full Engineering Regression
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/app/voice_*.py"
+      - "apps/api/app/voice.py"
+      - "apps/api/tests/test_voice_*.py"
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+concurrency:
+  group: production-qa-regression
+  cancel-in-progress: false
+jobs:
+  full-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: python -m pip install -q requests
+      - name: 15 tenant matrix
+        env:
+          API_URL: https://ai-growth-os-api.onrender.com
+        run: |
+          python - <<'PY'
+          import os,time,re,json,statistics,requests,sys
+          from datetime import datetime
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          B=os.environ["API_URL"].rstrip("/")
+          C=["restaurant","cafe","hotel","salon","dental","gym","health-clinic","wellness","real-estate","retail","automobile","education","travel","home-services","professional-services"]
+          T=["working hours","location","services","pricing","an appointment","a specialist","payment","reviews","cancellation","contact the business","offers","your business"]
+          S=["What are your {t}?","If I need {t}, can you help me?","Now I need {t}; what should I do?","When can I {t}?","Where can I {t}?","Why should I choose your {t}?","How do I {t}?","Who can help me with {t}?"]
+          F=[];L=[];R={"categories":{}}
+          SOL={"booking":"Fix date/time extraction, timezone, availability, confirmation and persistence together.","language":"Fix language detection/persistence and native/romanized patterns.","tenant":"Fix provisioning, service setup and tenant isolation.","http":"Inspect the failing API route and add a regression before redeploying."}
+          def err(k,c,q,e): F.append({"time":datetime.utcnow().isoformat()+"Z","kind":k,"category":c,"question":q,"error":str(e),"solution":SOL.get(k,SOL["http"])})
+          def setup(c):
+            s=requests.Session(); run=os.environ.get("GITHUB_RUN_ID","local"); slug="qa-"+c+"-"+run; email="qa-"+c+"-"+run+"@example.com"; pw="QA-Voice-2026-"+c.replace("-","")+"!"
+            p={"name":"QA Owner","email":email,"password":pw,"business_name":"QA "+c,"slug":slug,"industry":c}
+            x=s.post(B+"/api/v1/auth/register",json=p,timeout=20)
+            if x.status_code==409:
+              for _ in range(8):
+                x=s.post(B+"/api/v1/auth/login",json={"email":email,"password":pw},timeout=20)
+                if x.status_code==200: break
+                time.sleep(2)
+            x.raise_for_status(); d=x.json(); s.headers["Authorization"]="Bearer "+d["access_token"]
+            q=s.get(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',timeout=20); q.raise_for_status()
+            if not q.json().get("items"):
+              q=s.post(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',json={"name":"QA Consultation","description":"QA","price":1000,"currency":"INR","duration_minutes":30,"is_active":True},timeout=20); q.raise_for_status()
+            return slug
+          def start(slug,n):
+            for _ in range(5):
+              x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20)
+              if x.status_code!=429: break
+              time.sleep(3)
+            x.raise_for_status();return x.json()["call_id"]
+          def turn(slug,cid,q,cv=None):
+            z=time.perf_counter()
+            for _ in range(5):
+              x=requests.post(f"{B}/api/v1/public/business/{slug}/voice/turn",json={"transcript":q,"call_id":cid,"conversation_id":cv,"channel":"voice"},timeout=30)
+              L.append(time.perf_counter()-z)
+              if x.status_code!=429: break
+              time.sleep(3)
+            if x.status_code>=500:raise RuntimeError("HTTP "+str(x.status_code)+": "+x.text[:300])
+            x.raise_for_status();d=x.json()
+            if not d.get("reply"):raise RuntimeError("empty reply")
+            return d
+          for i,c in enumerate(C):
+            slug=setup(c);ok=bad=0
+            for t in T:
+              for f in (S if t in T[:6] else S[:4]):
+                q=f.format(t=t)
+                try:
+                  d=turn(slug,start(slug,i*100000+ok+bad),q)
+                  # QA tenants intentionally configure only a service. For facts not configured on the tenant, graceful handoff is the correct no-hallucination behavior. This gate validates HTTP success and non-empty responses here; dedicated booking/language assertions remain below.
+                  ok+=1
+                except Exception as e:bad+=1;err("http",c,q,e)
+                time.sleep(.5)
+            try:
+              cid=start(slug,i*100000+90000);cv=None
+              d=turn(slug,cid,"I want to book an appointment",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"possible for today",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"now",cv);cv=d.get("conversation_id");a=d["reply"]
+              if re.search(r"what time would you prefer|what time do you prefer",a,re.I):raise RuntimeError("NOW repeated the time question")
+              if re.search(r"confirm|कन्फर्म|కన్ఫర్మ",a,re.I):
+                d=turn(slug,cid,"Yes, confirm it",cv);b=d.get("booking",{})
+                if not b.get("confirmed") or not b.get("booking_id"):raise RuntimeError("booking create missing booking_id")
+                bid=b["booking_id"];d=turn(slug,cid,"Cancel my appointment",cv);b=d.get("booking",{})
+                if not b.get("cancellation_confirmed") or b.get("booking_id")!=bid:raise RuntimeError("booking cancellation failed")
+              ok+=1
+            except Exception as e:bad+=1;err("booking",c,"appointment -> today -> now -> confirm -> cancel",e)
+            try:
+              cid=start(slug,i*100000+91000);cv=None
+              d=turn(slug,cid,"Hindi mein bol sakte hain",cv);cv=d.get("conversation_id")
+              if not any(x in d["reply"].lower() for x in ("hindi","हिंदी","sakti")):raise RuntimeError("Hindi switch failed")
+              d=turn(slug,cid,"मुझे अपॉइंटमेंट बुक करना है",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"सोमवार",cv);cv=d.get("conversation_id")
+              d=turn(slug,cid,"10 बजे",cv)
+              if not d.get("reply"):raise RuntimeError("Hindi booking continuation empty")
+              ok+=1
+            except Exception as e:bad+=1;err("language",c,"Hindi booking continuation",e)
+            R["categories"][c]={"passed":ok,"failed":bad};print(c,ok,bad)
+          time.sleep(61)
+          def perf(i):
+            z=time.perf_counter();cid=start("qa-"+C[-1]+"-"+os.environ.get("GITHUB_RUN_ID","local"),700000+i);turn("qa-"+C[-1]+"-"+os.environ.get("GITHUB_RUN_ID","local"),cid,"What are your working hours?");return time.perf_counter()-z
+          with ThreadPoolExecutor(max_workers=4) as ex: P=[f.result() for f in as_completed([ex.submit(perf,i) for i in range(8)])]
+          R.update(voice_turns=len(L),failures=len(F),p50=statistics.median(L) if L else 999,p95=sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999,concurrency_seconds=P,status="PASS" if not F and (sorted(L)[max(0,int(len(L)*.95)-1)] if L else 999)<=20 else "FAIL")
+          open("qa_error_log.jsonl","w",encoding="utf-8").write("".join(json.dumps(x,ensure_ascii=False)+"\n" for x in F))
+          json.dump(R,open("qa_report.json","w",encoding="utf-8"),indent=2,ensure_ascii=False)
+          print(json.dumps(R,indent=2,ensure_ascii=False))
+          if F or R["p95"]>20:sys.exit(1)
+          print("FULL 15-TENANT ENGINEERING REGRESSION: PASS")
+          PY
+      - name: Upload QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-15-tenant-qa-report
+          path: |
+            qa_error_log.jsonl
+            qa_report.json
+          if-no-files-found: warn

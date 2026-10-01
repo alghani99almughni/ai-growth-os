@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="112" fill="#315f45"/>
+<circle cx="256" cy="256" r="172" fill="#f8f6ee"/>
+<text x="256" y="292" text-anchor="middle" font-family="Arial,sans-serif" font-size="116" font-weight="800" fill="#315f45">SS</text>
+<path d="M336 132c38 9 61 35 66 69-34 7-64-4-82-29-10-14-12-27-10-40 8-2 17-2 26 0z" fill="#8eae83"/>
+</svg>

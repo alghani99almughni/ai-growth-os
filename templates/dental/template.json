@@ -1,0 +1,13 @@
+{
+  "id": "dental",
+  "name": "Dental Clinic",
+  "version": 1,
+  "modules": ["profile", "services", "leads", "appointments", "ai_chat", "qr", "crm"],
+  "lead_intents": ["new_patient", "appointment", "pricing", "emergency", "existing_patient"],
+  "required_business_data": ["clinic_name", "phone", "address", "hours", "services", "pricing_policy"],
+  "ai_rules": [
+    "Never invent prices or availability.",
+    "Confirm bookings only after backend success.",
+    "Escalate emergencies to configured human staff."
+  ]
+}

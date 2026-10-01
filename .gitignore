@@ -1,0 +1,67 @@
+# Secrets
+.env
+.env.local
+.env.*.local
+apps/api/.env
+apps/web/.env.local
+
+# Databases & backups
+*.db
+*.db-journal
+*.db.backup.*
+*.sqlite
+apps/api/local_dev.db
+apps/api/backups/
+apps/api/recordings/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+.cache/
+.turbo/
+*.tsbuildinfo
+
+# Logs
+*.log
+logs/
+uvicorn.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Backup and stray artifacts
+project-dump.txt
+project-tree.txt
+PROJECT_STATE.md
+verify-all.txt
+local-all.txt
+*.BEFORE-VOICE
+*.BEFORE-NAV
+*.OLD-BACKUP
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp{ 
+{
