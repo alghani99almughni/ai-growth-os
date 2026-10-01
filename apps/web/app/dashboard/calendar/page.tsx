@@ -260,7 +260,7 @@ export default function TenantCalendarPage() {
           ) : view === "month" ? (
             <MonthView data={monthData} onCreate={openCreate} onEdit={openEdit} onSelectDay={setSidePanel} />
           ) : view === "week" ? (
-            <TimeGridView anchor={anchor} events={events} days={7} onCreate={openCreate} onEdit={openEdit} onDayHeader={(d: string) => { setAnchor(d); setView("day"); }} />
+            <TimeGridView anchor={anchor} events={events} days={7} onCreate={openCreate} onEdit={openEdit} onDayHeader={(d: string) => { setAnchor(new Date(d)); setView("day"); }} />
           ) : (
             <TimeGridView anchor={anchor} events={events} days={1} onCreate={openCreate} onEdit={openEdit} onDayHeader={null} />
           )}
