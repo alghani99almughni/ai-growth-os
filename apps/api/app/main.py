@@ -2116,13 +2116,39 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
         return
     try:
         await websocket.send_json({"type":"status","status":"ai_connected","provider":provider.name})
-        await gateway.adapter_for(provider).send_text(session,"Begin the call now.")
+        greeting_customer_name = customer.name if customer and customer.name else "there"
+        greeting_text = (
+            f"Say exactly this greeting now, out loud, and nothing else: "
+            f"Hello {greeting_customer_name}, welcome to {tenant.name}. How can I help you today?"
+        )
+        logging.getLogger("uvicorn.error").info(
+            "PUBLIC_VOICE_GREETING_SENT call_id=%s provider=%s text=%r",
+            call.id, provider.name, greeting_text,
+        )
+        await gateway.adapter_for(provider).send_text(session, greeting_text)
+        logging.getLogger("uvicorn.error").info("PUBLIC_VOICE_WS_LOOP_START call_id=%s", call.id)
         while True:
             recv_task=asyncio.create_task(websocket.receive_text())
             provider_task=asyncio.create_task(gateway.adapter_for(provider).recv(session))
             done,_=await asyncio.wait([recv_task,provider_task],return_when=asyncio.FIRST_COMPLETED)
             if recv_task in done:
-                msg=json.loads(recv_task.result()); typ=msg.get("type"); state.last_activity=time.time()
+                raw_text = recv_task.result()
+                logging.getLogger("uvicorn.error").info(
+                    "PUBLIC_VOICE_WS_INBOUND call_id=%s bytes=%d preview=%r",
+                    call.id, len(raw_text or ""), (raw_text or "")[:200],
+                )
+                try:
+                    msg=json.loads(raw_text)
+                except Exception:
+                    logging.getLogger("uvicorn.error").exception(
+                        "PUBLIC_VOICE_WS_INBOUND_BAD_JSON call_id=%s", call.id
+                    )
+                    continue
+                typ=msg.get("type"); state.last_activity=time.time()
+                logging.getLogger("uvicorn.error").info(
+                    "PUBLIC_VOICE_WS_INBOUND_TYPE call_id=%s type=%s",
+                    call.id, typ,
+                )
                 if typ=="audio":
                     await gateway.adapter_for(provider).send_audio(session,msg["data"])
                 elif typ=="interrupt":
@@ -2173,6 +2199,11 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                     if trace:
                         await websocket.send_json({"type":"turn_metrics","voice_to_first_audio_ms":trace.voice_to_first_audio_ms,"interrupted":trace.interrupted_at is not None})
                     continue
+                logging.getLogger("uvicorn.error").info(
+                    "PUBLIC_VOICE_PROVIDER_EVENT call_id=%s keys=%s serverContent_keys=%s",
+                    call.id, list(event.keys()),
+                    list((event.get("serverContent") or {}).keys()),
+                )
                 sc=event.get("serverContent") or {}
                 inp=(sc.get("inputTranscription") or {}).get("text")
                 out=(sc.get("outputTranscription") or {}).get("text")
@@ -2322,7 +2353,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
                                     "confirmed":False,"error":str(exc),"retryable":False
                                 }}})
-                        if name=="request_human_handoff":
+                        elif name=="request_human_handoff":
                                 try:
                                     routed=route_call(db,tenant.id,call,str(args.get("department") or "human_handoff"))
                                     staff=routed.get("staff")
