@@ -1,3 +1,4 @@
+===
 import logging
 from fastapi import FastAPI,Depends,HTTPException,Query,Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,18 +16,14 @@ from .services import *
 from .brain import generate_reply,knowledge_context
 from .config import settings
 from .signaling import signal
-from . import ws_voice                                    
 from .events import publish_event_sync, subscribe_events
 from .integrations import WhatsAppAdapter,PaymentAdapter,encrypt_channel_config,tenant_whatsapp_adapter,tenant_payment_adapter,decrypt_channel_config
-
-# ... whatever comes next in your file, e.g. logger = logging.getLogger(...)
 
 app = FastAPI(
     title="AI Growth OS API",
     version="1.0.0",
-)                                       
-app.include_router(ws_voice.router)                       
-# ... your existing CORS middleware and everything else stays untouched
+)
+
 from .models_integrations import TenantIntegration,PlatformAIProvider
 from .models_email import TenantEmailAccount, EmailLog
 from .models_monitoring import HealthSnapshot, SelfHealAction, MonitoringAlert, BackupRecord
