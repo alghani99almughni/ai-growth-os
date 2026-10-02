@@ -8,6 +8,24 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 import asyncio, json, time
 
+# Old/invalid Gemini Live model names -> currently valid model IDs.
+# This makes the fix work even if the old name is still set in an env var on Render.
+GEMINI_MODEL_ALIASES = {
+    "gemini-live-2.5-flash-native-audio": "gemini-2.5-flash-native-audio-latest",
+}
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-native-audio-latest"
+
+
+def normalize_gemini_model(name: str | None) -> str:
+    """Return a bare, valid Gemini Live model ID (no 'models/' prefix)."""
+    name = (name or "").strip()
+    if name.startswith("models/"):
+        name = name[len("models/"):]
+    if not name:
+        return GEMINI_DEFAULT_MODEL
+    return GEMINI_MODEL_ALIASES.get(name, name)
+
+
 @dataclass
 class VoiceProvider:
     name: str
@@ -57,17 +75,33 @@ class GeminiLiveAdapter:
     name = "gemini"
     async def connect(self, provider, *, system_instruction, tools, state):
         import websockets
+        model = normalize_gemini_model(provider.model)
         url = ("wss://generativelanguage.googleapis.com/ws/"
                "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
                "?key=" + provider.api_key)
         ws = await websockets.connect(url, max_size=8*1024*1024, ping_interval=20, ping_timeout=20)
-        setup = {"setup":{"model":"models/"+provider.model,
+        setup = {"setup":{"model":"models/"+model,
             "generationConfig":{"responseModalities":["AUDIO"]},
             "systemInstruction":{"parts":[{"text":system_instruction}]},
             "inputAudioTranscription":{},"outputAudioTranscription":{},
             "realtimeInputConfig":{"automaticActivityDetection":{"disabled":False,"startOfSpeechSensitivity":"START_SENSITIVITY_HIGH","endOfSpeechSensitivity":"END_SENSITIVITY_LOW","prefixPaddingMs":240,"silenceDurationMs":420}},
-            "sessionResumption":{},"tools":[{"functionDeclarations":tools}]}}
-        await ws.send(json.dumps(setup))
+            "sessionResumption":{}}}
+        if tools:
+            setup["setup"]["tools"] = [{"functionDeclarations":tools}]
+        try:
+            await ws.send(json.dumps(setup))
+            # Wait for Gemini to confirm the setup. If the model name is wrong, Google
+            # closes the socket here, so the error surfaces inside connect() and the
+            # gateway's failover/error handling can react instead of hanging silently.
+            first = await asyncio.wait_for(ws.recv(), timeout=10)
+            if isinstance(first, bytes):
+                first = first.decode()
+            if "setupComplete" not in json.loads(first):
+                raise RuntimeError("Gemini setup failed: " + first[:300])
+        except Exception:
+            try: await ws.close()
+            except Exception: pass
+            raise
         if state.customer_transcript or state.assistant_transcript:
             history = [{"role":"user","parts":[{"text":"Previous call context (resume):\nCustomer: "+c}]} for c in state.customer_transcript[-8:]]
             if state.assistant_transcript:
