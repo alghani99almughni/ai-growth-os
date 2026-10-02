@@ -58,9 +58,6 @@ def local_intent(message:str)->str:
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
         return "booking"
-    # Native-script booking phrases must enter the deterministic booking router
-    # before the generic knowledge/fallback path. Keep these terms specific so
-    # ordinary hours/questions are not accidentally classified as bookings.
     native_booking_terms=(
         "अपॉइंटमेंट","अपॉइंट","बुकिंग","बुक","रिजर्व","आरक्षण","स्लॉट",
         "అపాయింట్మెంట్","అపాయింట్","బుకింగ్","బుక్","రిజర్వ్","స్లాట్",
@@ -144,8 +141,6 @@ def business_hours_reply(db: Session, tenant_id: str, message: str, language: st
     if local_intent(message) != "business_hours":
         return None
 
-    # Business-hours questions are a zero-model-token path. Repair only missing
-    # weekday rows using the platform defaults; never overwrite configured hours.
     rows=db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id).order_by(BusinessHour.weekday)).all()
     existing={row.weekday: row for row in rows}
     if len(existing)==7 and all(not existing[d].is_closed and existing[d].open_time.strftime("%H:%M")=="09:00" and existing[d].close_time.strftime("%H:%M")=="18:00" for d in range(5)) and not existing[5].is_closed and existing[5].open_time.strftime("%H:%M")=="09:00" and existing[5].close_time.strftime("%H:%M")=="14:00" and existing[6].is_closed:
@@ -206,7 +201,6 @@ _WEEKDAY_ALIASES = {
 _RELATIVE_DAYS = ("today", "tomorrow", "day after tomorrow")
 
 def extract_booking_entities(text: str) -> dict:
-    """Extract booking entities while tolerating natural Indian-language speech and STT variants."""
     value = text.casefold().strip()
     day = None
     for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
@@ -220,7 +214,6 @@ def extract_booking_entities(text: str) -> dict:
                 break
 
     relative_day = relative_day_from_text(value)
-    # "now"/"right now" means the next bookable slot in the tenant's local timezone.
     now_requested = bool(re.search(r"\b(?:now|right now|immediately|abhi|abhi ke abhi|अभी|अभी के अभी)\b", value))
     if now_requested and relative_day is None:
         relative_day = "today"
@@ -240,9 +233,6 @@ def extract_booking_entities(text: str) -> dict:
             if tm24:
                 hour24=int(tm24.group(1)); minute24=tm24.group(2)
                 hour12=hour24%12 or 12
-                # A bare 1–11 time is intentionally left without AM/PM.
-                # booking_reply_from_state resolves it against the tenant's
-                # actual business hours instead of silently assuming AM.
                 if hour24 >= 12:
                     time_value=f"{hour12}:{minute24} PM"
                 elif hour24 == 0:
@@ -265,8 +255,6 @@ def extract_booking_entities(text: str) -> dict:
 
     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
     date_hint = None
-    # A standalone number is a time response in an active booking flow, not a calendar date.
-    # Only treat numeric dates as date hints when explicitly marked as a date/day/month.
     dm=re.search(r"\b(?:date|day|on)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
     if dm:
         date_hint=int(dm.group(1))
@@ -275,13 +263,6 @@ def extract_booking_entities(text: str) -> dict:
 
 
 def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
-    """Recover useful booking entities from the ACTIVE booking conversation only.
-
-    Stops scanning at the last state reset (cancel, conflict, close) so that
-    booking entities from a previous, closed conversation cannot leak into a
-    new booking attempt. This is the fix for the "no thanks" loop where the
-    assistant kept re-entering the old booking state.
-    """
     c = db.get(Conversation, conversation_id)
     ctx = {"day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None, "now_requested": False}
     if not c:
@@ -309,7 +290,6 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
 
 
 def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, date_hint: int|None = None):
-    """Resolve natural-language booking dates against the tenant's local calendar."""
     from datetime import date as _date, timedelta as _timedelta
     from zoneinfo import ZoneInfo as _ZoneInfo
     now_local=__import__("datetime").datetime.now(_ZoneInfo(tenant.timezone)).date()
@@ -335,10 +315,6 @@ def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, 
     return None
 
 def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_value: str|None):
-    """Check the owned calendar before presenting an appointment as confirmable.
-    Handles overnight business hours and excludes appointments already created
-    by this same conversation so a just-confirmed booking is not treated as a
-    self-conflict on the next turn."""
     if not booking_date or not time_value:
         return {"checked":False,"available":None,"date":booking_date.isoformat() if booking_date else None}
     hours=db.scalar(select(BusinessHour).where(
@@ -391,7 +367,6 @@ def booking_day_label(language,value):
     return value or "that day"
 
 def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
-    """Merge current-turn entities with active booking context."""
     current = extract_booking_entities(message)
     logger.info(
         "VOICE_BOOKING_EXTRACTION conversation_id=%s state_before=%s message=%r entities=%s",
@@ -401,7 +376,6 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
         "day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None
     }
 
-    # Current turn always wins. A correction therefore replaces the old value.
     day = current["day"] or prior["day"]
     relative_day = current["relative_day"] or (None if current["day"] else prior["relative_day"])
     time_value = current["time"] or prior["time"]
@@ -411,9 +385,6 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
 
-    # Resolve a bare spoken time against the requested day's actual hours.
-    # Example: "Monday ... 2:30" in a 09:00–18:00 business means 2:30 PM;
-    # do not reject it as 2:30 AM merely because the transcript had no marker.
     if time_value and day_label and not re.search(r"\b(?:AM|PM)\b", time_value, re.I):
         tm_bare=re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
         if tm_bare:
@@ -445,9 +416,6 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     resolved_date=resolve_booking_date(tenant, day, relative_day, date_hint)
 
-    # "Now" means the next bookable slot, not a literal wall-clock time.
-    # If today has no remaining slot, continue to the next open day instead of
-    # leaving the customer stuck on a dead-end "now is unavailable" response.
     if now_requested and resolved_date:
         service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
         if service:
@@ -470,8 +438,6 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
                 day=None
                 relative_day=None
                 if today_had_no_slot and selected_date != datetime.now(ZoneInfo(tenant.timezone)).date():
-                    # Make the fallback explicit rather than pretending the
-                    # requested "now" slot itself was available.
                     c.state="booking_confirmation"
                     date_phrase=selected_date.strftime("%A, %B %-d, %Y")
                     return (
@@ -571,14 +537,11 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     )
     db.add(ConversationMessage(conversation_id=c.id,role="user",content=message,language=language,intent=intent))
 
-    # Library-first policy: these paths consume zero model tokens.
     hours=business_hours_reply(db,tenant_id,message,language)
     booking=None
     booking_data={"day": None, "time": None, "date": None, "complete": False}
     policy=tenant_policy(db,tenant_id)
     m=message.casefold()
-    # Keep short conversational turns deterministic: greetings should never
-    # fall through to the model/handoff path.
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
     current_entities=extract_booking_entities(message)
     has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested"))
@@ -598,28 +561,12 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             c.state="closed"
             c.cleared_at=datetime.utcnow()
     elif intent=="voice_feedback" and not active_booking:
-        feedback_replies={
-            "en":"I understand. I'll continue with the same language and keep the conversation natural.",
-            "hi":"Samajh gayi. Main Hindi mein hi continue karungi aur conversation naturally rakhoongi.",
-            "te":"Ardham ayyindi. Nenu Telugu lo continue chestanu.",
-            "ta":"Purinjukitten. Naan Tamil-la continue panren.",
-            "kn":"Artha aayitu. Naanu Kannada dalli continue maaduttene.",
-            "ml":"Manassilaayi. Njan Malayalam-il thanne continue cheyyam.",
-            "mr":"Samajla. Mi Marathi madhyech continue karen.",
-            "bn":"Bujhte perechi. Ami Banglayi continue korbo.",
-            "gu":"Samajyu. Hu Gujarati ma j continue karish.",
-            "pa":"Samajh gayi. Main Punjabi vich hi gal jari rakhangi.",
-            "ur":"Samajh gayi. Main Urdu mein hi baat jari rakhungi.",
-        }
         booking=voice_feedback_reply(language,agent_gender(db,tenant_id))
         c.state="information"
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
     elif c.state=="booking_confirmation" and is_explicit_confirmation(message):
-        # The browser voice path uses /voice/turn rather than the realtime
-        # provider WebSocket. Preserve the booking state here so the public
-        # endpoint can execute the owned booking transaction.
         prior=previous_booking_context(db,c.id,message)
         booking_date=resolve_booking_date(
             tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
@@ -655,8 +602,6 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             }
             c.state="booking_time_clarification"
     elif c.state=="booking_conflict":
-        # A failed confirmation is a completed booking attempt, not an active
-        # confirmation. Never reuse its stale date/time on the next turn.
         if is_booking_cancellation(message):
             booking="Okay. I've stopped the appointment booking. If you need anything else, I'm here to help."
             c.state="information"
@@ -734,9 +679,6 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         booking="Appointments are not enabled for this business right now. I can help with another question or arrange a message for the team."
 
     else:
-        # Contextual booking continuation: a short answer such as "Saturday" is
-        # a booking response when the immediately preceding AI turn explicitly
-        # asked for a booking day/time. This is contextual, not a global keyword rule.
         previous_assistant = db.scalar(
             select(ConversationMessage)
             .where(ConversationMessage.conversation_id==c.id, ConversationMessage.role=="assistant")
@@ -797,8 +739,6 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "\n\nCUSTOMER LANGUAGE: " + language +
             "\nCUSTOMER:\n" + message
         )
-        # Model fallback is reserved for tenants with approved brain content.
-        # An unconfigured tenant must take the verified handoff path instead.
         approved_knowledge=db.scalar(select(KnowledgeItem).where(
             KnowledgeItem.tenant_id==tenant_id,
             KnowledgeItem.is_active==True,
@@ -848,4 +788,5 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
     db.commit()
-    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage,"booking":booking_data}
+    next_step = "escalate" if handoff_required else "reply"
+    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage,"booking":booking_data,"next_step":next_step}
