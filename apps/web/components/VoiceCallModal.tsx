@@ -48,7 +48,7 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
     const audioCtxRef = useRef<AudioContext | null>(null);
     const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
-    const playbackQueueRef = useRef<Float32Array[]>([]);
+    const playbackQueueRef = useRef<Float32Array<ArrayBuffer>[]>([]);
     const playingRef = useRef(false);
     const humanConnectionRef = useRef<any>(null);
     const wakeLockRef = useRef<any>(null);
@@ -84,7 +84,7 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                 const chunk = playbackQueueRef.current.shift();
                 if (!chunk) continue;
                 const buffer = ctx.createBuffer(1, chunk.length, sampleRate);
-                buffer.copyToChannel(chunk, 0);
+                buffer.copyToChannel(chunk as Float32Array<ArrayBuffer>, 0);
                 const source = ctx.createBufferSource();
                 source.buffer = buffer;
                 source.connect(ctx.destination);
