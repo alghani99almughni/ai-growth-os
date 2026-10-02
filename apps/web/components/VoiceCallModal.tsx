@@ -122,8 +122,9 @@ export default function VoiceCallModal({ slug, businessName, agentGender = "fema
         const bytes = new Uint8Array(raw.length);
         for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
         const view = new DataView(bytes.buffer);
-        const samples = new Float32Array(Math.floor(bytes.byteLength / 2));
-        for (let i = 0; i < samples.length; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
+        const sampleCount = Math.floor(bytes.byteLength / 2);
+        const samples = new Float32Array(new ArrayBuffer(sampleCount * 4));
+        for (let i = 0; i < sampleCount; i++) samples[i] = view.getInt16(i * 2, true) / 32768;
         geminiPlaybackQueueRef.current.push(samples);
         if (geminiPlayingRef.current) return;
         geminiPlayingRef.current = true;

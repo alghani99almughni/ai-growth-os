@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import SessionLocal
 from .models import Tenant, Customer
-from .models_growth import CallRecord, BusinessHour, Service
+from .models import Service
+from .models_growth import CallRecord, BusinessHour
 from .brain import knowledge_context
 from .agent_training import AGENT_TRAINING_CONTEXT
 from .tenant_policy import tenant_policy, policy_context, capability_enabled
