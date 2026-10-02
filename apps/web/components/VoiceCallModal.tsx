@@ -50,7 +50,7 @@ export default function VoiceCallModal({ slug, businessName, agentGender = "fema
     const geminiInputRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const geminiProcessorRef = useRef<ScriptProcessorNode | null>(null);
     const geminiMicRef = useRef<MediaStream | null>(null);
-    const geminiPlaybackQueueRef = useRef<Float32Array[]>([]);
+    const geminiPlaybackQueueRef = useRef<Float32Array<ArrayBuffer>[]>([]);
     const geminiPlayingRef = useRef(false);
 
     const requestWakeLock = useCallback(async () => {
