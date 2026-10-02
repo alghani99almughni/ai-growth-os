@@ -61,6 +61,18 @@ export default function VoiceCallModal({
     const humanConnectionRef = useRef<any>(null);
     const wakeLockRef = useRef<any>(null);
 
+    // Load cached name + phone for this slug once, so the form is pre-filled
+    // for returning customers and so we can always send name + phone.
+    useEffect(() => {
+        try {
+            const n = localStorage.getItem(`cust:${slug}:name`) || "";
+            const p = localStorage.getItem(`cust:${slug}:phone`) || "";
+            if (n) setName(prev => prev || n);
+            if (p) setPhone(prev => prev || p);
+        } catch {}
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [slug]);
+
     const appendTranscript = useCallback((role: "ai" | "customer", text: string) => {
         const value = String(text || "").trim();
         if (!value) return;
@@ -429,18 +441,32 @@ export default function VoiceCallModal({
         };
     }, [appendTranscript, escalateToGemini, handoffToHuman, playPcm, prepareMic, speakHoldLine, teardown]);
 
+    // ------------------------------------------------------------------
+    // startCall — always sends name + phone (API requires them) and
+    // includes customer_id when we have one so the CRM dedups correctly.
+    // ------------------------------------------------------------------
     const startCall = async (payload?: { customer_id?: string }) => {
         setCallError("");
         setTranscript([]);
         setLayer("brain");
 
-        const usingExisting = !!(payload?.customer_id || existingCustomerId);
-        if (!usingExisting) {
-            const cleanPhone = phone.replace(/\D/g, "");
-            if (name.trim().length < 1 || cleanPhone.length < 5) {
-                setCallError("Please enter your name and mobile number first.");
-                return;
-            }
+        // Read any previously stored name/phone for this slug as a fallback.
+        let storedName = "";
+        let storedPhone = "";
+        try {
+            storedName  = localStorage.getItem(`cust:${slug}:name`)  || "";
+            storedPhone = localStorage.getItem(`cust:${slug}:phone`) || "";
+        } catch {}
+
+        const effectiveName  = (name  || storedName).trim();
+        const effectivePhone = (phone || storedPhone).trim();
+        const cid            = payload?.customer_id || existingCustomerId || "";
+
+        if (!effectiveName || effectivePhone.replace(/\D/g, "").length < 5) {
+            setCallError("Please enter your name and mobile number first.");
+            setCallState("idle");
+            callActiveRef.current = false;
+            return;
         }
 
         setCallState("starting");
@@ -456,9 +482,13 @@ export default function VoiceCallModal({
                 }
             } catch {}
 
-            const body = usingExisting
-                ? { customer_id: payload?.customer_id || existingCustomerId }
-                : { name: name.trim(), phone: phone.trim() };
+            // Body: name + phone are always required by the API.
+            // customer_id is optional and used for CRM matching.
+            const body: Record<string, string> = {
+                name:  effectiveName,
+                phone: effectivePhone,
+            };
+            if (cid) body.customer_id = cid;
 
             const response = await fetch(
                 API() + "/api/v1/public/business/" + encodeURIComponent(slug) + "/call",
@@ -469,13 +499,17 @@ export default function VoiceCallModal({
                 }
             );
             const result = await response.json();
-            if (!response.ok) throw new Error(result.detail || "Unable to start the call.");
+            if (!response.ok) {
+                throw new Error(result?.error?.message || result?.detail || "Unable to start the call.");
+            }
 
             callIdRef.current = result.call_id;
             if (result.customer_id) {
                 try {
                     onCustomerIdentified?.(result.customer_id);
-                    localStorage.setItem(`cust:${slug}:id`, result.customer_id);
+                    localStorage.setItem(`cust:${slug}:id`,    result.customer_id);
+                    localStorage.setItem(`cust:${slug}:name`,  effectiveName);
+                    localStorage.setItem(`cust:${slug}:phone`, effectivePhone);
                     localStorage.setItem("cust:last-business", slug);
                 } catch {}
             }
