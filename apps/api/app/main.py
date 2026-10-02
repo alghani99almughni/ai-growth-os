@@ -2037,6 +2037,7 @@ For appointment booking, treat speech-recognition errors such as "bhukamp", "buk
 If booking details are missing, ask for exactly one missing detail at a time. If a requested time is unavailable or outside hours, offer another time instead of handing off.
 Use save_customer_identity only if the customer explicitly corrects or changes their name/number.
 If a capability is disabled in TENANT POLICY, do not offer it or call a tool for it.
+For human requests or unresolved requests, use request_human_handoff. Do not announce a handoff before actually requesting it. Keep the customer informed in the customer's current language.
 LANGUAGE BEHAVIOR — CRITICAL:
 - Automatically detect the language the caller is speaking from the actual conversation, including Indian languages and code-switching between English and an Indian language.
 - Reply in the same language the caller is currently using. Do not force English.
@@ -2053,6 +2054,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
     if capability_enabled(policy,"bookings",True):
         tool_declarations.append({"name":"check_availability","description":"Check the owned appointment calendar for a specific calendar date and optional time. ALWAYS use this before saying a requested appointment slot is available. The date must be YYYY-MM-DD in the tenant timezone. If service_id is omitted, use the first active service.","parameters":{"type":"OBJECT","properties":{"date":{"type":"STRING"},"time":{"type":"STRING"},"service_id":{"type":"STRING"},"staff_id":{"type":"STRING"}},"required":["date"]}})
         tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact calendar date, time and service. Never call this merely because the customer supplied details. The server performs a final availability check.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
+    tool_declarations.append({"name":"request_human_handoff","description":"Request a real human executive when the customer explicitly asks for a person, when the requested issue cannot be resolved from approved business knowledge/tools, or when tenant policy requires human assistance. Do not use this for ordinary FAQs, missing booking details, or simple acknowledgements.","parameters":{"type":"OBJECT","properties":{"reason":{"type":"STRING"},"department":{"type":"STRING"}},"required":["reason"]}})
     providers=[]
     # Prefer the tenant's connected realtime-capable AI credential so public voice
     # works with the same per-tenant integration model used by the admin dashboard.
@@ -2320,6 +2322,25 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
                                     "confirmed":False,"error":str(exc),"retryable":False
                                 }}})
+                    if name=="request_human_handoff":
+                            try:
+                                routed=route_call(db,tenant.id,call,str(args.get("department") or "human_handoff"))
+                                staff=routed.get("staff")
+                                if staff:
+                                    call.status="handoff_requested"
+                                    call.staff_id=staff.get("id")
+                                    call.department=(routed.get("department") or args.get("department") or "reception")
+                                    call.room_id="call-"+call.id
+                                    db.commit()
+                                    await websocket.send_json({"type":"handoff_required","reason":str(args.get("reason") or "Customer requested human assistance.")})
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":True,"staff_available":True,"staff_name":staff.get("name"),"department":call.department}}})
+                                else:
+                                    call.status="handoff_unavailable"
+                                    db.commit()
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":False,"staff_available":False,"message":"No team member is available right now."}}})
+                            except Exception as exc:
+                                db.rollback()
+                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":False,"error":str(exc)}}})
                     if responses: await gateway.adapter_for(provider).send_tool_response(session,responses)
     except Exception as exc:
         # Preserve transcript/session state and transparently attempt provider/session recovery.
