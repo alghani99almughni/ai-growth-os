@@ -2322,26 +2322,26 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
                                     "confirmed":False,"error":str(exc),"retryable":False
                                 }}})
-                    if name=="request_human_handoff":
-                            try:
-                                routed=route_call(db,tenant.id,call,str(args.get("department") or "human_handoff"))
-                                staff=routed.get("staff")
-                                if staff:
-                                    call.status="handoff_requested"
-                                    call.staff_id=staff.get("id")
-                                    call.department=(routed.get("department") or args.get("department") or "reception")
-                                    call.room_id="call-"+call.id
-                                    db.commit()
-                                    await websocket.send_json({"type":"handoff_required","reason":str(args.get("reason") or "Customer requested human assistance.")})
-                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":True,"staff_available":True,"staff_name":staff.get("name"),"department":call.department}}})
-                                else:
-                                    call.status="handoff_unavailable"
-                                    db.commit()
-                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":False,"staff_available":False,"message":"No team member is available right now."}}})
-                            except Exception as exc:
-                                db.rollback()
-                                responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":False,"error":str(exc)}}})
-                    if responses: await gateway.adapter_for(provider).send_tool_response(session,responses)
+                        if name=="request_human_handoff":
+                                try:
+                                    routed=route_call(db,tenant.id,call,str(args.get("department") or "human_handoff"))
+                                    staff=routed.get("staff")
+                                    if staff:
+                                        call.status="handoff_requested"
+                                        call.staff_id=staff.get("id")
+                                        call.department=(routed.get("department") or args.get("department") or "reception")
+                                        call.room_id="call-"+call.id
+                                        db.commit()
+                                        await websocket.send_json({"type":"handoff_required","reason":str(args.get("reason") or "Customer requested human assistance.")})
+                                        responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":True,"staff_available":True,"staff_name":staff.get("name"),"department":call.department}}})
+                                    else:
+                                        call.status="handoff_unavailable"
+                                        db.commit()
+                                        responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":False,"staff_available":False,"message":"No team member is available right now."}}})
+                                except Exception as exc:
+                                    db.rollback()
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"handoff_requested":False,"error":str(exc)}}})
+                        if responses: await gateway.adapter_for(provider).send_tool_response(session,responses)
     except Exception as exc:
         # Preserve transcript/session state and transparently attempt provider/session recovery.
         try:
