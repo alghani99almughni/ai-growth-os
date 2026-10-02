@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { connectCustomerToStaff } from "../app/ss-nutritions/webrtc";
+import { connectCustomerToStaff } from "../lib/webrtc";
 
 const API = () =>
     String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
@@ -11,6 +11,8 @@ type Props = {
     slug: string;
     businessName: string;
     agentGender?: "female" | "male";
+    existingCustomerId?: string;
+    onCustomerIdentified?: (customerId: string) => void;
     onClose: () => void;
 };
 
@@ -31,7 +33,13 @@ const HOLD_LINES: Record<string, string> = {
     ur: "براہ کرم انتظار کریں، ہم آپ کو ہماری ٹیم سے جوڑ رہے ہیں۔",
 };
 
-export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
+export default function VoiceCallModal({
+    slug,
+    businessName,
+    existingCustomerId,
+    onCustomerIdentified,
+    onClose,
+}: Props) {
     const [callState, setCallState] = useState<CallState>("idle");
     const [name, setName] = useState("");
     const [phone, setPhone] = useState("");
@@ -145,9 +153,6 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
         setCallState("ended");
     }, [teardown]);
 
-    // ------------------------------------------------------------------
-    // Layer 3 — Human handoff (unchanged from your current file)
-    // ------------------------------------------------------------------
     const handoffToHuman = useCallback(async () => {
         const callId = callIdRef.current;
         if (!callId || !callActiveRef.current) return;
@@ -209,9 +214,6 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
         }
     }, [slug, teardown]);
 
-    // ------------------------------------------------------------------
-    // Mic + AudioContext used by both Layer 1 (/ws/public/voice) and Layer 2 (/ws/escalate)
-    // ------------------------------------------------------------------
     const prepareMic = useCallback(async (ws: WebSocket) => {
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         audioCtxRef.current = ctx;
@@ -256,14 +258,10 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
         processor.connect(ctx.destination);
     }, []);
 
-    // ------------------------------------------------------------------
-    // Layer 2 — Gemini Live escalation
-    // ------------------------------------------------------------------
     const escalateToGemini = useCallback(async (language: string): Promise<"ok" | "fallback"> => {
         const callId = callIdRef.current;
         if (!callId || !callActiveRef.current) return "fallback";
 
-        // Tell the server we're escalating; it will look up the call + tenant.
         try {
             await fetch(
                 API() + "/api/v1/public/business/" + encodeURIComponent(slug) +
@@ -277,7 +275,7 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
 
         try {
             await prepareMic(ws);
-        } catch (err: any) {
+        } catch {
             try { ws.close(); } catch {}
             return "fallback";
         }
@@ -294,7 +292,6 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
         setCallState("connected");
         setCallError("Connected to our team.");
 
-        // Greet via text so Gemini starts speaking immediately.
         try {
             ws.send(JSON.stringify({ type: "text", text: "The customer has been handed over to you. Greet them warmly and continue the conversation." }));
         } catch {}
@@ -312,12 +309,8 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                     const message = JSON.parse(event.data);
 
                     if (message.type === "status") {
-                        if (message.status === "connected") {
-                            setCallError("");
-                        }
-                        if (message.status === "ended") {
-                            finish(callActiveRef.current ? "fallback" : "ok");
-                        }
+                        if (message.status === "connected") setCallError("");
+                        if (message.status === "ended") finish(callActiveRef.current ? "fallback" : "ok");
                         return;
                     }
 
@@ -335,7 +328,6 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                     }
 
                     if (message.type === "error") {
-                        // Server told us Gemini isn't available → Layer 3.
                         finish("fallback");
                         return;
                     }
@@ -346,14 +338,10 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                 if (!callActiveRef.current) { finish("ok"); return; }
                 finish("fallback");
             };
-
             ws.onerror = () => finish("fallback");
         });
     }, [slug, appendTranscript, playPcm, prepareMic]);
 
-    // ------------------------------------------------------------------
-    // Layer 1 — Deterministic brain WebSocket (unchanged)
-    // ------------------------------------------------------------------
     const openVoiceWebSocket = useCallback(async (callId: string) => {
         const ws = new WebSocket(
             WS_API() + "/ws/public/voice/" + encodeURIComponent(callId)
@@ -403,7 +391,6 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
 
                 if (message.type === "handoff_required" || message.type === "handoff") {
                     const language = message.language || "en";
-                    // Close brain socket cleanly.
                     try { ws.send(JSON.stringify({ type: "stop" })); } catch {}
                     try { ws.close(); } catch {}
                     socketRef.current = null;
@@ -412,12 +399,9 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                     try { sourceRef.current?.disconnect(); } catch {}
                     sourceRef.current = null;
 
-                    // Layer 2 first.
                     await speakHoldLine(language);
                     const result = await escalateToGemini(language);
-
                     if (result === "fallback") {
-                        // Layer 3.
                         await handoffToHuman();
                     }
                     return;
@@ -445,15 +429,18 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
         };
     }, [appendTranscript, escalateToGemini, handoffToHuman, playPcm, prepareMic, speakHoldLine, teardown]);
 
-    const startCall = async () => {
+    const startCall = async (payload?: { customer_id?: string }) => {
         setCallError("");
         setTranscript([]);
         setLayer("brain");
 
-        const cleanPhone = phone.replace(/\D/g, "");
-        if (name.trim().length < 1 || cleanPhone.length < 5) {
-            setCallError("Please enter your name and mobile number first.");
-            return;
+        const usingExisting = !!(payload?.customer_id || existingCustomerId);
+        if (!usingExisting) {
+            const cleanPhone = phone.replace(/\D/g, "");
+            if (name.trim().length < 1 || cleanPhone.length < 5) {
+                setCallError("Please enter your name and mobile number first.");
+                return;
+            }
         }
 
         setCallState("starting");
@@ -469,21 +456,31 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                 }
             } catch {}
 
+            const body = usingExisting
+                ? { customer_id: payload?.customer_id || existingCustomerId }
+                : { name: name.trim(), phone: phone.trim() };
+
             const response = await fetch(
-                API() + "/api/v1/public/business/" +
-                encodeURIComponent(slug) + "/call",
+                API() + "/api/v1/public/business/" + encodeURIComponent(slug) + "/call",
                 {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: name.trim(), phone: phone.trim() }),
+                    body: JSON.stringify(body),
                 }
             );
-            const payload = await response.json();
-            if (!response.ok) throw new Error(payload.detail || "Unable to start the call.");
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.detail || "Unable to start the call.");
 
-            callIdRef.current = payload.call_id;
+            callIdRef.current = result.call_id;
+            if (result.customer_id) {
+                try {
+                    onCustomerIdentified?.(result.customer_id);
+                    localStorage.setItem(`cust:${slug}:id`, result.customer_id);
+                    localStorage.setItem("cust:last-business", slug);
+                } catch {}
+            }
             setCallState("connecting");
-            await openVoiceWebSocket(payload.call_id);
+            await openVoiceWebSocket(result.call_id);
         } catch (error: any) {
             callActiveRef.current = false;
             teardown();
@@ -491,6 +488,14 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
             setCallState("error");
         }
     };
+
+    // Auto-start when we already know who the customer is.
+    useEffect(() => {
+        if (existingCustomerId && callState === "idle" && !callActiveRef.current) {
+            void startCall({ customer_id: existingCustomerId });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [existingCustomerId]);
 
     useEffect(() => () => {
         callActiveRef.current = false;
@@ -502,9 +507,11 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
             <div className="ss-call-modal">
                 <button className="ss-call-close" type="button" onClick={onClose} aria-label="Close">×</button>
                 <h2>Talk to {businessName}</h2>
-                <p className="ss-call-sub">Please enter your name and mobile number.</p>
+                {!existingCustomerId && (
+                    <p className="ss-call-sub">Please enter your name and mobile number.</p>
+                )}
 
-                {(callState === "idle" || callState === "starting" || callState === "error") && (
+                {!existingCustomerId && (callState === "idle" || callState === "starting" || callState === "error") && (
                     <div className="ss-call-form">
                         <label>
                             Name
@@ -514,7 +521,7 @@ export default function VoiceCallModal({ slug, businessName, onClose }: Props) {
                             Mobile number
                             <input value={phone} onChange={e => setPhone(e.target.value)} placeholder="+91 98765 43210" autoComplete="tel" inputMode="tel" />
                         </label>
-                        <button type="button" className="ss-call-start" onClick={startCall} disabled={callState === "starting"}>
+                        <button type="button" className="ss-call-start" onClick={() => startCall()} disabled={callState === "starting"}>
                             {callState === "starting" ? "Connecting…" : "☎ Start call"}
                         </button>
                         {callError && <p className="ss-call-error">{callError}</p>}
