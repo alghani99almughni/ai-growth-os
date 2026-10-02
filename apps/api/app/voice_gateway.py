@@ -65,7 +65,7 @@ class GeminiLiveAdapter:
             "generationConfig":{"responseModalities":["AUDIO"]},
             "systemInstruction":{"parts":[{"text":system_instruction}]},
             "inputAudioTranscription":{},"outputAudioTranscription":{},
-            "realtimeInputConfig":{"automaticActivityDetection":{"disabled":false,"startOfSpeechSensitivity":"START_SENSITIVITY_HIGH","endOfSpeechSensitivity":"END_SENSITIVITY_LOW","prefixPaddingMs":240,"silenceDurationMs":420}},
+            "realtimeInputConfig":{"automaticActivityDetection":{"disabled":False,"startOfSpeechSensitivity":"START_SENSITIVITY_HIGH","endOfSpeechSensitivity":"END_SENSITIVITY_LOW","prefixPaddingMs":240,"silenceDurationMs":420}},
             "sessionResumption":{},"tools":[{"functionDeclarations":tools}]}}
         await ws.send(json.dumps(setup))
         if state.customer_transcript or state.assistant_transcript:
@@ -77,9 +77,6 @@ class GeminiLiveAdapter:
     async def send_audio(self, session, pcm16_b64):
         await session.send(json.dumps({"realtimeInput":{"audio":{"data":pcm16_b64,"mimeType":"audio/pcm;rate=16000"}}}))
     async def interrupt(self, session):
-        # Gemini Live handles barge-in through automatic activity detection.
-        # If the gateway receives an explicit interruption, stop the active response
-        # without injecting an empty user turn into the conversation history.
         try: await session.send(json.dumps({"clientContent":{"turns":[],"turnComplete":True}}))
         except Exception: pass
     async def recv(self, session):
@@ -88,8 +85,6 @@ class GeminiLiveAdapter:
         msg=json.loads(raw)
         if (msg.get("serverContent") or {}).get("interrupted"):
             return {"_gateway":{"event":"interruption"}}
-        # Gemini Live emits function calls inside serverContent.modelTurn.parts.
-        # Normalize them into the same gateway toolCall contract used by OpenAI.
         parts=((msg.get("serverContent") or {}).get("modelTurn") or {}).get("parts") or []
         function_calls=[]
         for part in parts:
