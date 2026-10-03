@@ -100,6 +100,7 @@ class BusinessHourInput(BaseModel):
     open_time: str = "09:00"
     close_time: str = "18:00"
     is_closed: bool = False
+    is_24_hours: bool = False
     slot_interval_minutes: int = Field(default=30, ge=5, le=120)
 
 class QueueSettingsInput(BaseModel):
@@ -234,7 +235,7 @@ class WhatsAppConnectionStatus(BaseModel):
 
 class TenantProvisionRequest(BaseModel):
     business_name: str = Field(min_length=2, max_length=160)
-    slug: str = Field(min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
+    slug: Optional[str] = Field(default=None, max_length=100, pattern=r"^[a-z0-9-]+$")
     industry: str = Field(min_length=2, max_length=80)
     owner_name: str = Field(min_length=2, max_length=160)
     owner_email: EmailStr
@@ -243,6 +244,7 @@ class TenantProvisionRequest(BaseModel):
     whatsapp_number: Optional[str] = Field(default=None, max_length=32)
     address: Optional[str] = None
     template: Optional[str] = None
+    business_hours: Optional[list[BusinessHourInput]] = None
 
 class DepartmentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)

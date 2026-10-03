@@ -43,6 +43,42 @@ def ensure_default_hours(db: Session, tenant_id: str):
         db.add(BusinessHour(tenant_id=tenant_id, weekday=weekday, open_time=opening, close_time=closing, is_closed=closed, slot_interval_minutes=30))
     db.commit()
     return db.scalars(select(BusinessHour).where(BusinessHour.tenant_id == tenant_id).order_by(BusinessHour.weekday)).all()
+def seed_hours(db: Session, tenant_id: str, hours: list) -> None:
+    """Write the exact business hours for a new tenant. Called at provision time.
+    Each item is a dict or a pydantic BusinessHourInput with:
+        weekday (0=Mon..6=Sun), open_time 'HH:MM', close_time 'HH:MM',
+        is_closed bool, is_24_hours bool, slot_interval_minutes int.
+    If a row already exists for a weekday, it is replaced."""
+    from datetime import time as _time
+    existing = {row.weekday: row for row in db.scalars(
+        select(BusinessHour).where(BusinessHour.tenant_id == tenant_id)
+    ).all()}
+    for item in hours:
+        wd = int(getattr(item, "weekday", None) if hasattr(item, "weekday") else item["weekday"])
+        is_24 = bool(getattr(item, "is_24_hours", False) if hasattr(item, "is_24_hours") else item.get("is_24_hours", False))
+        is_closed = bool(getattr(item, "is_closed", False) if hasattr(item, "is_closed") else item.get("is_closed", False))
+        if is_24:
+            open_time, close_time, closed = _time(0, 0), _time(23, 59), False
+        else:
+            open_s = getattr(item, "open_time", None) if hasattr(item, "open_time") else item.get("open_time", "09:00")
+            close_s = getattr(item, "close_time", None) if hasattr(item, "close_time") else item.get("close_time", "18:00")
+            try:
+                open_time = _time.fromisoformat(str(open_s))
+                close_time = _time.fromisoformat(str(close_s))
+            except ValueError:
+                open_time, close_time = _time(9, 0), _time(18, 0)
+            closed = is_closed
+        interval = int(getattr(item, "slot_interval_minutes", 30) if hasattr(item, "slot_interval_minutes") else item.get("slot_interval_minutes", 30))
+        row = existing.get(wd)
+        if row is None:
+            row = BusinessHour(tenant_id=tenant_id, weekday=wd)
+            db.add(row)
+            existing[wd] = row
+        row.open_time = open_time
+        row.close_time = close_time
+        row.is_closed = closed
+        row.slot_interval_minutes = interval
+    db.commit()
 
 def is_inside_hours(open_time, close_time, test_time) -> bool:
     """Return True if test_time falls within (open_time, close_time).

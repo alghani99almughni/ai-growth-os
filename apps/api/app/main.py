@@ -933,7 +933,7 @@ ROLE_PRESETS = {
     "billing": ["dashboard.view","customers.view","payments.view","payments.manage"],
 }
 
-def provision_defaults(db, tenant, industry):
+def provision_defaults(db, tenant, industry, business_hours=None):
     key=industry.lower().replace("_","-")
     for name in DEFAULT_DEPARTMENTS.get(key, ["Administration","Sales","Customer Support"]):
         if not db.scalar(select(Department).where(Department.tenant_id==tenant.id,Department.name==name)):
@@ -942,17 +942,42 @@ def provision_defaults(db, tenant, industry):
         if not db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant.id,RoleDefinition.name==name)):
             db.add(RoleDefinition(tenant_id=tenant.id,name=name,permissions_json=json.dumps(permissions),is_system=True))
     db.commit()
+    from .booking import ensure_default_hours, seed_hours
+    if business_hours:
+        seed_hours(db, tenant.id, business_hours)
+    else:
+        ensure_default_hours(db, tenant.id)
+
+def _slugify(name: str) -> str:
+    import re as _re
+    s = _re.sub(r"[^a-z0-9]+", "-", (name or "").strip().lower()).strip("-")
+    return s or "tenant"
+
+def _unique_slug(db: Session, base: str) -> str:
+    slug = base
+    n = 1
+    while db.scalar(select(Tenant).where(Tenant.slug == slug)):
+        n += 1
+        slug = f"{base}-{n}"
+        if n > 100:
+            slug = f"{base}-{uuid.uuid4().hex[:6]}"
+            break
+    return slug
 
 @app.post("/api/v1/platform/tenants/provision",response_model=PlatformTenantProvisionOut,status_code=201)
 async def platform_provision_tenant(payload:TenantProvisionRequest,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_platform_admin(user)
-    if db.scalar(select(Tenant).where(Tenant.slug==payload.slug.lower())): raise HTTPException(409,"Business slug already exists")
+    chosen_slug = (payload.slug or "").strip().lower() or _slugify(payload.business_name)
+    if db.scalar(select(Tenant).where(Tenant.slug==chosen_slug)):
+        if payload.slug:
+            raise HTTPException(409,"Business slug already exists")
+        chosen_slug = _unique_slug(db, chosen_slug)
     if db.scalar(select(User).where(User.email==payload.owner_email.lower())): raise HTTPException(409,"Owner email already registered")
-    t=create_tenant(db,payload.business_name,payload.slug,payload.industry)
+    t=create_tenant(db,payload.business_name,chosen_slug,payload.industry)
     t.phone=payload.phone; t.whatsapp_number=payload.whatsapp_number; t.address=payload.address
     db.commit(); db.refresh(t)
     owner=create_owner(db,payload.owner_name,payload.owner_email,payload.owner_password,t)
-    provision_defaults(db,t,payload.template or payload.industry)
+    provision_defaults(db,t,payload.template or payload.industry,business_hours=payload.business_hours)
     notification_status=await send_owner_credentials(t,owner,payload.owner_password)
     return {"tenant_id":t.id,"tenant":{"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"status":t.status},"owner":{"id":owner.id,"name":owner.name,"email":owner.email,"role":owner.role},"status":"active","notifications":notification_status}
 
