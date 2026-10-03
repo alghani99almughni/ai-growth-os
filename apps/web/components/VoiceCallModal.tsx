@@ -19,6 +19,7 @@ type Props = {
   slug: string;
   businessName: string;
   existingCustomerId?: string;
+  agentGender?: "male" | "female";
   onCustomerIdentified?: (id: string) => void;
   onClose: () => void;
 };
