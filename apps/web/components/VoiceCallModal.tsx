@@ -18,8 +18,8 @@ import { useEffect, useRef, useState } from "react";
 type Props = {
   slug: string;
   businessName: string;
-  existingCustomerId?: string | null;
-  agentGender?: "male" | "female";
+  existingCustomerId?: string;
+  onCustomerIdentified?: (id: string) => void;
   onClose: () => void;
 };
 
@@ -162,7 +162,7 @@ async function connectStaff(opts: {
 }
 
 /* ------------------------------ Component ------------------------------ */
-export default function VoiceCallModal({ slug, businessName, existingCustomerId, agentGender = "female", onClose }: Props) {
+export default function VoiceCallModal({ slug, businessName, existingCustomerId, agentGender = "female", onCustomerIdentified, onClose }: Props) {
   const [phase, setPhase] = useState<Phase>("form");
   const [agentState, setAgentState] = useState<AgentState>("listening");
   const [name, setName] = useState("");
