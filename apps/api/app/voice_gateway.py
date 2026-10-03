@@ -6,7 +6,9 @@ Business logic never talks directly to a realtime vendor.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
-import asyncio, json, time
+import asyncio, json, time, logging
+
+_log = logging.getLogger("uvicorn.error")
 
 # Old/invalid Gemini Live model names -> currently valid model IDs.
 # This makes the fix work even if the old name is still set in an env var on Render.
@@ -117,6 +119,19 @@ class GeminiLiveAdapter:
         raw=await session.recv()
         if isinstance(raw,bytes): raw=raw.decode()
         msg=json.loads(raw)
+        # Diagnostic logging (no audio payloads) so Render logs show what Gemini sends.
+        try:
+            _sc = msg.get("serverContent") or {}
+            _parts = (_sc.get("modelTurn") or {}).get("parts") or []
+            _only_audio = bool(_parts) and all(("inlineData" in x) for x in _parts) and len(_sc) == 1
+            if not _only_audio:
+                _log.info("GEMINI_LIVE_MSG keys=%s serverContent=%s parts=%s",
+                          list(msg.keys()), list(_sc.keys()),
+                          [list(x.keys()) for x in _parts])
+            if "goAway" in msg or "error" in msg:
+                _log.warning("GEMINI_LIVE_NOTICE %s", json.dumps(msg)[:500])
+        except Exception:
+            pass
         if (msg.get("serverContent") or {}).get("interrupted"):
             return {"_gateway":{"event":"interruption"}}
         parts=((msg.get("serverContent") or {}).get("modelTurn") or {}).get("parts") or []
@@ -135,8 +150,10 @@ class GeminiLiveAdapter:
             return normalized
         return msg
     async def send_text(self, session, text):
+        _log.info("GEMINI_LIVE_SEND_TEXT %s", text[:80])
         await session.send(json.dumps({"clientContent":{"turns":[{"role":"user","parts":[{"text":text}]}],"turnComplete":True}}))
     async def send_tool_response(self, session, responses):
+        _log.info("GEMINI_LIVE_TOOL_RESPONSE count=%s", len(responses))
         await session.send(json.dumps({"toolResponse":{"functionResponses":responses}}))
     async def close(self, session):
         try: await session.close()
