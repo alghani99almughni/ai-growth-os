@@ -16,6 +16,7 @@ export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard/qr",        label: "QR codes",       icon: "QrCode", labelKey: "nav.tenant.qr" },
   { href: "/dashboard/orders",    label: "Orders",         icon: "ClipboardList", labelKey: "nav.tenant.orders" },
   { href: "/dashboard/bookings",  label: "Bookings",       icon: "CalendarDays", labelKey: "nav.tenant.bookings" },
+  { href: "/dashboard/business-hours", label: "Business hours", icon: "CalendarDays" },
   { href: "/dashboard/calendar",  label: "Calendar",       icon: "CalendarDays", labelKey: "nav.tenant.calendar" },
   { href: "/dashboard/crm",       label: "Customers",      icon: "Users", labelKey: "nav.tenant.crm" },
   { href: "/dashboard/services",  label: "Services",       icon: "ShoppingBag", labelKey: "nav.tenant.services" },
