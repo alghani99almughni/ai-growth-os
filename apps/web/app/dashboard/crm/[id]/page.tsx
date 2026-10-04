@@ -42,6 +42,7 @@ type CallSummary = {
     language: string | null;
     intent: string | null;
     summary: string | null;
+    transcript: string | null;
   }>;
 };
 
@@ -234,20 +235,30 @@ export default function CustomerDetailPage() {
         {!calls || calls.calls.length === 0 ? (
           <p style={{ color: "#98a2b4", fontSize: 13, margin: 0 }}>No calls yet.</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr><th style={th}>When</th><th style={th}>Duration</th><th style={th}>Status</th><th style={th}>Intent</th><th style={th}>Summary</th></tr></thead>
-            <tbody>
-              {calls.calls.slice(0, 20).map((c) => (
-                <tr key={c.id} style={{ borderTop: "1px solid #f1f4f8" }}>
-                  <td style={td}>{new Date(c.created_at).toLocaleString()}</td>
-                  <td style={td}>{c.duration_seconds ?? 0}s</td>
-                  <td style={td}>{c.status}</td>
-                  <td style={td}>{c.intent || "-"}</td>
-                  <td style={td}>{c.summary || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div>
+            {calls.calls.slice(0, 20).map((c) => (
+              <details key={c.id} style={{ borderTop: "1px solid #f1f4f8", padding: "10px 0" }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, color: "#17213a", fontWeight: 600 }}>
+                  {new Date(c.created_at).toLocaleString()} · {c.status} · {c.intent || "-"} · {c.duration_seconds ?? 0}s
+                </summary>
+                <div style={{ marginTop: 8, fontSize: 12, color: "#4b5563" }}>
+                  {c.summary && <p style={{ margin: "4px 0" }}><b>Summary:</b> {c.summary}</p>}
+                  <div style={{ display: "flex", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
+                    <span><b>Status:</b> {c.status}</span>
+                    <span><b>Resolution:</b> {c.resolution || "-"}</span>
+                    <span><b>Language:</b> {c.language || "-"}</span>
+                  </div>
+                  {c.transcript ? (
+                    <pre style={{ margin: 0, padding: 12, background: "#f7f9fb", borderRadius: 8, whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 12, color: "#4b5563", maxHeight: 400, overflow: "auto" }}>
+                      {c.transcript}
+                    </pre>
+                  ) : (
+                    <p style={{ color: "#98a2b4", fontStyle: "italic" }}>No transcript recorded.</p>
+                  )}
+                </div>
+              </details>
+            ))}
+          </div>
         )}
       </section>
 
@@ -319,12 +330,4 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const input: React.CSSProperties = {
   width: "100%", padding: "10px 12px", border: "1px solid #d7dce5", borderRadius: 8, fontSize: 13, color: "#17213a", background: "#fff", outline: "none", boxSizing: "border-box",
-};
-
-const th: React.CSSProperties = {
-  textAlign: "left", padding: "10px 12px", fontSize: 11, color: "#8b97a9", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600, borderBottom: "1px solid #edf0f5",
-};
-
-const td: React.CSSProperties = {
-  padding: "10px 12px", color: "#4b5563", verticalAlign: "top",
 };

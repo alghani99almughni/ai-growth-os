@@ -2912,7 +2912,7 @@ def list_call_logs(tenant_id,customer_id: str|None=None,limit:int=Query(default=
 def customer_call_summary(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
     rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id,CallRecord.customer_id==customer_id).order_by(CallRecord.created_at)).all()
-    return {"customer_id":customer_id,"total_calls":len(rows),"total_duration_seconds":sum(x.duration_seconds or 0 for x in rows),"last_call_at":rows[-1].created_at.isoformat() if rows else None,"languages":sorted({x.language for x in rows if x.language}),"calls":[{"id":x.id,"call_number":x.call_number,"created_at":x.created_at.isoformat(),"duration_seconds":x.duration_seconds,"status":x.status,"resolution":x.resolution,"language":x.language,"human_callback_requested":x.human_callback_requested,"intent":x.intent,"summary":x.summary} for x in rows]}
+    return {"customer_id":customer_id,"total_calls":len(rows),"total_duration_seconds":sum(x.duration_seconds or 0 for x in rows),"last_call_at":rows[-1].created_at.isoformat() if rows else None,"languages":sorted({x.language for x in rows if x.language}),"calls":[{"id":x.id,"call_number":x.call_number,"created_at":x.created_at.isoformat(),"duration_seconds":x.duration_seconds,"status":x.status,"resolution":x.resolution,"language":x.language,"human_callback_requested":x.human_callback_requested,"intent":x.intent,"summary":x.summary,"transcript":x.transcript} for x in rows]}
 
 @app.post("/api/v1/auth/password-reset/request")
 async def password_reset_request(payload:PasswordResetRequest,db:Session=Depends(get_db)):
