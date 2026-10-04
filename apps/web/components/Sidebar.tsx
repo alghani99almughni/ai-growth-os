@@ -83,22 +83,27 @@ export default function Sidebar({
 }) {
   const pathname = usePathname() || "";
   const { t } = useTranslation();
-  const isAdmin = role === "platform_admin" || role === "super_admin";
+
+  const urlTenant =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tenant") || ""
+      : "";
+
+  // If Super Admin is viewing a tenant via ?tenant=, show the tenant menu.
+  const viewingAsTenant = !!urlTenant;
+  const isAdmin = (role === "platform_admin" || role === "super_admin") && !viewingAsTenant;
+
   const items: NavItem[] = isAdmin ? ADMIN_NAV : TENANT_NAV;
-  
+
   const isActive = (item: NavItem) => {
     if (item.exact) return pathname === item.href;
     return pathname === item.href || pathname.startsWith(item.href + "/");
   };
-    const tenantParam = (() => {
-    if (typeof window === "undefined") return "";
-    const t = new URLSearchParams(window.location.search).get("tenant");
-    return t ? `?tenant=${encodeURIComponent(t)}` : "";
-  })();
+
+  const tenantParam = viewingAsTenant ? `?tenant=${encodeURIComponent(urlTenant)}` : "";
 
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
           onClick={onClose}
@@ -129,7 +134,6 @@ export default function Sidebar({
         }}
         className="ago-sidebar"
       >
-        {/* Brand */}
         <div style={{ padding: "22px 18px 12px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 15, color: "#fff", fontWeight: 700 }}>
@@ -157,7 +161,6 @@ export default function Sidebar({
             </button>
           </div>
 
-          {/* Workspace */}
           <div
             style={{
               marginTop: 22,
@@ -203,7 +206,6 @@ export default function Sidebar({
           </div>
         </div>
 
-        {/* Nav */}
         <div
           style={{
             padding: "16px 20px 8px",
@@ -249,7 +251,6 @@ export default function Sidebar({
           })}
         </nav>
 
-        {/* Footer */}
         <div style={{ padding: 14 }}>
           {!isAdmin && (
             <div
@@ -268,7 +269,7 @@ export default function Sidebar({
                 Share your QR so customers can order, book and chat.
               </div>
               <Link
-                href="/dashboard/qr"
+                href={"/dashboard/qr" + tenantParam}
                 style={{
                   display: "inline-block",
                   border: "1px solid #2b5276",
