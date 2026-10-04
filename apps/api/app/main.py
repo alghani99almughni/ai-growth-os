@@ -71,6 +71,7 @@ class ReceptionAlertPayload(BaseModel):
 from .voice_gateway import VoiceGateway, VoiceProvider, VoiceSessionState, OpenAIRealtimeAdapter, GeminiLiveAdapter
 from .voice_escalate import router as voice_escalate_router
 from .routes_onboarding import router as onboarding_router
+from .routes_platform_comms import router as platform_comms_router
 from .voice_runtime import VoiceTurnController
 from .agent_training import AGENT_TRAINING_CONTEXT
 
@@ -101,6 +102,7 @@ app.include_router(integration_router)
 app.include_router(social_router)
 app.include_router(voice_escalate_router)
 app.include_router(onboarding_router)
+app.include_router(platform_comms_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in settings.allowed_origins.split(",") if x.strip()],

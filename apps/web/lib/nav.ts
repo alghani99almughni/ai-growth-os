@@ -36,6 +36,8 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform",           label: "Platform overview", icon: "LayoutDashboard", exact: true, labelKey: "nav.overview" },
   { href: "/platform/tenants",   label: "Tenants",           icon: "Building2", labelKey: "nav.tenants" },
   { href: "/platform/tenants/new", label: "Create tenant",   icon: "Building2" },
+  { href: "/platform/whatsapp",  label: "WhatsApp",           icon: "MessageCircle" },
+  { href: "/platform/email",     label: "Email",              icon: "Mail" },
   { href: "/platform/ai",        label: "AI providers",      icon: "Bot", labelKey: "nav.ai" },
   { href: "/platform/features",  label: "Feature defaults",  icon: "ToggleLeft", labelKey: "nav.features" },
   { href: "/platform/audit",     label: "Audit log",         icon: "FileText", labelKey: "nav.audit" },

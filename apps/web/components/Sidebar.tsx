@@ -16,6 +16,7 @@ import {
   LifeBuoy,
   LogOut,
   MessageCircle,
+  Mail,
   MessageSquare,
   Phone,
   QrCode,
@@ -26,7 +27,8 @@ import {
   ToggleLeft,
   UserCog,
   Users,
-  X,
+    X,
+  Mail,
 } from "lucide-react";
 import { TENANT_NAV, ADMIN_NAV, type NavItem } from "../lib/nav";
 import { LANGUAGES, useTranslation, setLang } from "../lib/i18n";
@@ -46,6 +48,7 @@ const ICONS: Record<string, any> = {
   LifeBuoy,
   LogOut,
   MessageCircle,
+  Mail,
   MessageSquare,
   Phone,
   QrCode,
