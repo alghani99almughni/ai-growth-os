@@ -979,8 +979,11 @@ async def platform_provision_tenant(payload:TenantProvisionRequest,user=Depends(
             raise HTTPException(409,"Business slug already exists")
         chosen_slug = _unique_slug(db, chosen_slug)
     if db.scalar(select(User).where(User.email==payload.owner_email.lower())): raise HTTPException(409,"Owner email already registered")
-    t=create_tenant(db,payload.business_name,chosen_slug,payload.industry)
-    t.phone=payload.phone; t.whatsapp_number=payload.whatsapp_number; t.address=payload.address
+        t=create_tenant(db,payload.business_name,chosen_slug,payload.industry)
+    t.phone=payload.phone
+    t.whatsapp_number=payload.whatsapp_number
+    t.address=payload.address
+    t.website=payload.website
     db.commit(); db.refresh(t)
     owner=create_owner(db,payload.owner_name,payload.owner_email,payload.owner_password,t)
     provision_defaults(db,t,payload.template or payload.industry,business_hours=payload.business_hours)

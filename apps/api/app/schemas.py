@@ -243,6 +243,7 @@ class TenantProvisionRequest(BaseModel):
     phone: Optional[str] = Field(default=None, max_length=32)
     whatsapp_number: Optional[str] = Field(default=None, max_length=32)
     address: Optional[str] = None
+    website: Optional[str] = Field(default=None, max_length=500)
     template: Optional[str] = None
     business_hours: Optional[list[BusinessHourInput]] = None
 
