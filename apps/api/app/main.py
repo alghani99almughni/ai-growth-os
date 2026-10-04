@@ -2490,7 +2490,6 @@ def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
 class PublicCallbackRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=300)
 
-
 @app.post("/api/v1/public/business/{slug}/call/{call_id}/callback", status_code=201)
 def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, db: Session = Depends(get_db)):
     """Last rung of the call ladder: nobody could take the call, so raise a callback
