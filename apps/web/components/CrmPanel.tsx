@@ -125,14 +125,16 @@ export default function CrmPanel({
           </div>
         )}
 
-        {visible.map((c) => {
+                {visible.map((c) => {
           const tags = parseTags(c.tags);
           return (
             <article
               key={c.id}
               className="card"
-              style={{ marginBottom: 10, padding: 14, background: "#fff" }}
+              onClick={() => (window.location.href = `/dashboard/crm/${c.id}`)}
+              style={{ marginBottom: 10, padding: 14, background: "#fff", cursor: "pointer" }}
             >
+            
               <div
                 style={{
                   display: "flex",
