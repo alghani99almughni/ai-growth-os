@@ -50,10 +50,29 @@ def knowledge_context(db: Session, tenant_id: str) -> str:
     for x in products: lines.append(f"Product: {x.name}; description={x.description or ''}; price={x.price} {x.currency}; stock={x.stock_quantity if x.stock_quantity is not None else 'unknown'}")
     return "\n".join(lines)
 
+# A customer asking for a person must win over every booking/FAQ state.
+# Word boundaries matter: "personal training", "dog owner", "executive health check" must NOT trigger this.
+_HUMAN_BARE = (
+    r"manager|supervisor|superior|human|real person|live agent|customer care|customer support|"
+    r"operator|representative|someone else|somebody else"
+)
+_HUMAN_TARGET = r"person|someone|somebody|staff|team|agent|operator|human|manager|supervisor|superior|owner|boss|executive"
+_HUMAN_REQUEST_RE = re.compile(
+    r"\b(?:" + _HUMAN_BARE + r")\b"
+    r"|\b(?:talk|speak|connect|transfer|put me|get me|give me|call me|let me)\b.{0,30}\b(?:" + _HUMAN_TARGET + r")\b",
+    re.I,
+)
+
+def is_human_request(message: str) -> bool:
+    return bool(_HUMAN_REQUEST_RE.search(message or ""))
+
+
 def local_intent(message:str)->str:
     m=message.casefold()
     compact=re.sub(r"[^a-z0-9\s]"," ",m)
     compact=re.sub(r"\s+"," ",compact).strip()
+    if is_human_request(message):
+        return "human_handoff"
 
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
@@ -87,14 +106,14 @@ def local_intent(message:str)->str:
         "awaaz badal","awaz badal","gender badal","voice badal"
     )) or any(x in m for x in ("जेंडर चेंज","आवाज़ बदल","आवाज बदल","ವಾಯ್ಸ್ ಬದಲಾಗಿದೆ","వాయిస్ మారింది")):
         return "voice_feedback"
-    if any(x in compact for x in ("call me","human","person","staff","agent","let me speak","speak to someone","talk to someone","connect me")) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
+    if re.search(r"\b(?:call me|human|let me speak|speak to someone|talk to someone|connect me)\b", compact) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
         return "human_handoff"
 
     if (any(x in compact for x in (
         "which doctor","who is the doctor","may i know the doctor","doctor name","doctor's name",
         "provider","physician","doctor peru","doctor hesaru","doctorinte peru","doctoranche naav"
     )) or any(x in m for x in (
-        "डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருவுర్ పేరు","ಡಾಕ್ಟರ್ ಹೆಸರು","ഡോക്ടറിന്റെ പേര്",
+        "डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருத்துவர் பெயர்","ಡಾಕ್ಟರ್ ಹೆಸರು","ഡോക്ടറിന്റെ പേര്",
         "डॉक्टरांचं नाव","ডাক্তারের নাম","ડોક્ટરનું નામ","ਡਾਕਟਰ ਦਾ ਨਾਮ","ڈاکٹر کا نام"
     ))) and not any(x in compact for x in ("available","availability","slot","appointment")):
         return "doctor_information"
@@ -720,7 +739,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
     knowledge_hit = False
-    handoff_required = False
+    handoff_required = (intent == "human_handoff")
     retrieval_stage="structured"
     if direct:
         reply=direct; provider="deterministic"

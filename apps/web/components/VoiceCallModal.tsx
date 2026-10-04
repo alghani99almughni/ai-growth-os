@@ -10,7 +10,15 @@
  *  Layer 4  Callback ticket    POST /call/{id}/callback -> shows up in the dashboard's service requests.
  *
  * Every layer falls through to the next one on error or timeout, so the customer never hits a dead end.
- * Props follow the architecture doc: slug, businessName, existingCustomerId, onClose.
+ * Props follow the architecture doc: slug, businessName, existingCustomerId, onCustomerIdentified, onClose.
+ *
+ * v2 changes:
+ *  - speech fragments are merged (1.3 s of silence) before they reach the brain ("may I know" + "the timings")
+ *  - "connect me to a manager / human" goes straight to Layer 3, even in the middle of a booking
+ *  - identical consecutive brain replies are treated as a loop and escalate
+ *  - Layer 2 must actually speak within 15 s, otherwise we fall through to Layer 3
+ *  - NEXT_PUBLIC_SPECIALIST_AI=off skips Layer 2 (brain -> human -> callback)
+ *  - the specialist can ask for a human itself ("handoff_required" frame from /ws/escalate)
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -18,9 +26,9 @@ import { useEffect, useRef, useState } from "react";
 type Props = {
   slug: string;
   businessName: string;
-  existingCustomerId?: string;
+  existingCustomerId?: string | null;
   agentGender?: "male" | "female";
-  onCustomerIdentified?: (id: string) => void;
+  onCustomerIdentified?: (customerId: string) => void;
   onClose: () => void;
 };
 
@@ -41,6 +49,20 @@ type AgentState = "listening" | "thinking" | "speaking";
 const api = () => String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 const wsBase = () => api().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+const SPECIALIST_ON = process.env.NEXT_PUBLIC_SPECIALIST_AI !== "off";
+const SR_DEBOUNCE_MS = 1300;      // merge speech fragments spoken within this gap
+const SPECIALIST_FIRST_SPEECH_MS = 15000;
+
+// A customer asking for a person must never be answered by the booking flow.
+const HUMAN_REQUEST = new RegExp(
+  [
+    String.raw`\b(manager|supervisor|superior|boss|owner|human|real person|live agent|executive|representative|customer (care|support)|someone else|somebody else)\b`,
+    String.raw`\b(talk|speak|connect|transfer|put me|get me|give me)\b.{0,30}\b(person|someone|somebody|staff|team|agent|operator)\b`,
+    "मैनेजर|अधिकारी|इंसान|किसी से बात|మేనేజర్|மேலாளர்",
+  ].join("|"),
+  "i",
+);
 
 const LANG_TAG: Record<string, string> = {
   en: "en-IN", hi: "hi-IN", te: "te-IN", ta: "ta-IN", kn: "kn-IN", ml: "ml-IN",
@@ -204,6 +226,11 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   const lastLineRef = useRef<{ role: Role; at: number }>({ role: "system", at: 0 });
   const autoStartedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const linesRef = useRef<Line[]>([]);
+  const pendingRef = useRef("");
+  const debounceRef = useRef<number | null>(null);
+  const lastReplyRef = useRef("");
+  const repeatRef = useRef(0);
 
   const go = (p: Phase) => { phaseRef.current = p; setPhase(p); };
 
@@ -219,14 +246,36 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     const canMerge = merge && lastLineRef.current.role === role && now - lastLineRef.current.at < 2500;
     lastLineRef.current = { role, at: now };
     setLines((prev) => {
+      let next: Line[];
       if (canMerge && prev.length && prev[prev.length - 1].role === role) {
-        const copy = prev.slice();
-        const last = copy[copy.length - 1];
-        copy[copy.length - 1] = { ...last, text: (last.text + raw).replace(/\s+/g, " ").trim() };
-        return copy;
+        next = prev.slice();
+        const last = next[next.length - 1];
+        next[next.length - 1] = { ...last, text: (last.text + raw).replace(/\s+/g, " ").trim() };
+      } else {
+        next = [...prev, { id: ++lineId.current, role, text: clean }];
       }
-      return [...prev, { id: ++lineId.current, role, text: clean }];
+      linesRef.current = next;
+      return next;
     });
+  };
+
+  /* ---------- speech fragments -> one utterance ---------- */
+  const clearPending = () => {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = null;
+    pendingRef.current = "";
+  };
+  const queueUtterance = (text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    pendingRef.current = (pendingRef.current + " " + t).trim();
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => {
+      const said = pendingRef.current;
+      pendingRef.current = "";
+      debounceRef.current = null;
+      void handleUtterance(said);
+    }, SR_DEBOUNCE_MS);
   };
 
   /* ---------- speech out (browser) ---------- */
@@ -289,7 +338,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       rec.onresult = (ev: any) => {
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
           const r = ev.results[i];
-          if (r.isFinal) void handleUtterance(String(r[0]?.transcript || ""));
+          if (r.isFinal) queueUtterance(String(r[0]?.transcript || ""));
         }
       };
       rec.onend = () => { window.setTimeout(startListening, 250); };
@@ -340,9 +389,18 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     busyRef.current = true;
     idleStrikesRef.current = 0;
     clearIdle();
+    clearPending();
     stopListening();
-    setAgentState("thinking");
     pushLine("customer", said);
+
+    // Asking for a person always wins over whatever the booking flow is waiting for.
+    if (HUMAN_REQUEST.test(said)) {
+      busyRef.current = false;
+      await humanHandoff();
+      return;
+    }
+
+    setAgentState("thinking");
     try {
       const res = await fetch(`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/voice/turn`, {
         method: "POST",
@@ -360,13 +418,29 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       convRef.current = data.conversation_id || convRef.current;
       if (data.language) langRef.current = String(data.language);
       const reply = String(data.reply || "").trim();
-      if (reply) pushLine("ai", reply);
+
+      // The brain's "we'll call you back" text is not shown: the ladder decides what happens next.
       if (data.handoff_required) {
         busyRef.current = false;
         await escalate();
         return;
       }
-      if (reply) await speak(reply, langRef.current);
+
+      // Same answer twice in a row means the brain is stuck in a loop.
+      const norm = reply.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
+      repeatRef.current = norm && norm === lastReplyRef.current ? repeatRef.current + 1 : 0;
+      lastReplyRef.current = norm;
+      if (repeatRef.current >= 1) {
+        repeatRef.current = 0;
+        busyRef.current = false;
+        await escalate();
+        return;
+      }
+
+      if (reply) {
+        pushLine("ai", reply);
+        await speak(reply, langRef.current);
+      }
     } catch {
       failsRef.current += 1;
       if (failsRef.current >= 2) {
@@ -482,23 +556,33 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       if (!callId) { reject(new Error("No call")); return; }
       const ws = new WebSocket(`${wsBase()}/ws/escalate/${encodeURIComponent(callId)}`);
       escWsRef.current = ws;
-      let started = false;
+      let spoke = false;     // the specialist has actually produced speech or text
+      let settled = false;   // the promise below has been resolved or rejected
       let finished = false;
 
-      const startTimer = window.setTimeout(() => { if (!started) fail("Specialist did not respond in time."); }, 12000);
-      const markStarted = () => { if (started) return; started = true; window.clearTimeout(startTimer); resolve(); };
+      const settleOk = () => { if (!settled) { settled = true; resolve(); } };
       const fail = (why: string) => {
         if (finished) return;
         finished = true;
-        window.clearTimeout(startTimer);
+        window.clearTimeout(firstSpeechTimer);
         closeSpecialist();
-        if (!started) reject(new Error(why));
+        if (!settled) { settled = true; reject(new Error(why)); }
         else if (activeRef.current) void humanHandoff();
+      };
+      const firstSpeechTimer = window.setTimeout(() => {
+        if (!spoke && activeRef.current) fail("Specialist did not answer in time.");
+      }, SPECIALIST_FIRST_SPEECH_MS);
+      const markSpoke = () => {
+        if (spoke) return;
+        spoke = true;
+        window.clearTimeout(firstSpeechTimer);
+        settleOk();
       };
 
       ws.onopen = async () => {
-        try { await startMicStream(ws); } catch { /* mic denied: specialist can still answer typed context */ }
-        const recent = lines.slice(-8).map((l) => `${l.role === "ai" ? "Assistant" : "Customer"}: ${l.text}`).join("\n");
+        try { await startMicStream(ws); } catch { /* mic denied: the specialist can still read the context */ }
+        const recent = linesRef.current.slice(-8)
+          .map((l) => `${l.role === "ai" ? "Assistant" : "Customer"}: ${l.text}`).join("\n");
         ws.send(JSON.stringify({
           type: "text",
           text: `The customer has been handed over to you. Customer name: ${nameRef.current}. Phone: ${phoneRef.current}.\nConversation so far:\n${recent}`,
@@ -508,31 +592,44 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
         try {
           const msg = JSON.parse(ev.data);
           if (msg.type === "status") {
-            if (msg.status === "connected") markStarted();
-            else if (msg.status === "ended") {
+            if (msg.status === "ended") {
+              // "ended" before the specialist ever spoke is a failure, not a finished call.
+              if (!spoke) { fail("Specialist ended before answering."); return; }
               finished = true;
-              window.clearTimeout(startTimer);
-              markStarted();
+              window.clearTimeout(firstSpeechTimer);
               endCall("ended");
             }
             return;
           }
           if (msg.type === "error") { fail(String(msg.message || "Specialist error.")); return; }
+          if (msg.type === "handoff_required") {
+            // The specialist asked for a human (request_human_handoff tool). Let its last sentence finish playing first.
+            if (finished) return;
+            finished = true;
+            window.clearTimeout(firstSpeechTimer);
+            const queued = (nextPlayRef.current - (audioCtxRef.current?.currentTime || 0)) * 1000;
+            window.setTimeout(() => {
+              closeSpecialist();
+              if (!settled) { settled = true; reject(new Error("Specialist asked for a human.")); }
+              else if (activeRef.current) void humanHandoff();
+            }, Math.min(8000, Math.max(0, queued) + 300));
+            return;
+          }
           if (msg.type === "interruption") { clearPlayback(); return; }
           if (msg.type === "transcript") {
-            markStarted();
             const isAi = ["ai", "assistant", "model"].includes(String(msg.role));
+            if (isAi) markSpoke();
             pushLine(isAi ? "ai" : "customer", String(msg.text || ""), true);
             return;
           }
           if (msg.type === "audio" && msg.data) {
-            markStarted();
+            markSpoke();
             playPcm(String(msg.data), Number(msg.sample_rate) || 24000);
             return;
           }
           const parts = msg?.serverContent?.modelTurn?.parts || [];
           for (const p of parts) {
-            if (p?.inlineData?.data) { markStarted(); playPcm(String(p.inlineData.data), 24000); }
+            if (p?.inlineData?.data) { markSpoke(); playPcm(String(p.inlineData.data), 24000); }
           }
         } catch {}
       };
@@ -542,10 +639,12 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
   const escalate = async () => {
     if (!activeRef.current || phaseRef.current !== "brain") return;
-    go("specialist");
     clearIdle();
+    clearPending();
     stopListening();
     setError("");
+    if (!SPECIALIST_ON) { await humanHandoff(); return; }
+    go("specialist");
     const hold = HOLD_LINE[langRef.current] || HOLD_LINE.en;
     pushLine("system", hold);
     await speak(hold, langRef.current);
@@ -674,6 +773,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   const endCall = (final: Phase = "ended") => {
     activeRef.current = false;
     clearIdle();
+    clearPending();
     stopListening();
     try { recRef.current = null; } catch {}
     try { window.speechSynthesis?.cancel(); } catch {}
@@ -715,6 +815,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(String(data.detail || "Unable to start the call."));
       callRef.current = { call_id: data.call_id, customer_id: data.customer_id };
+      if (data.customer_id) { try { onCustomerIdentified?.(String(data.customer_id)); } catch {} }
       try {
         if (data.customer_id) localStorage.setItem(`cust:${slug}:id`, data.customer_id);
         localStorage.setItem(`cust:${slug}:name`, nm.trim());
