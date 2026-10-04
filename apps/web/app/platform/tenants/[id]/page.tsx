@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 const API = String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 const FEATURE_KEYS = ["digital_menu","online_ordering","order_tracking","call_waiter","service_requests","games","auto_bill","online_payment","ai_chat","ai_voice","loyalty","referrals","feedback","google_review","bookings","queue"];
 
-const tok = () => (typeof window !== "undefined" ? localStorage.getItem("access_token") || "" : "");
+const tok = () => (typeof window !== "undefined" ? localStorage.getItem("ago_access_token") || "" : "");
 const hdr = () => ({ "Content-Type": "application/json", Authorization: `Bearer ${tok()}` });
 
 export default function TenantDetailPage() {

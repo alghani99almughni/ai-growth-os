@@ -77,6 +77,7 @@ voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRea
 
 from .routing import route_call, available_staff
 from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
+from .industry_templates import seed_industry_defaults
 from .integration_routes import router as integration_router
 from .social_routes import router as social_router
 import asyncio,json,base64,uuid
@@ -947,6 +948,7 @@ def provision_defaults(db, tenant, industry, business_hours=None):
         seed_hours(db, tenant.id, business_hours)
     else:
         ensure_default_hours(db, tenant.id)
+    seed_industry_defaults(db, tenant, industry)
 
 def _slugify(name: str) -> str:
     import re as _re
@@ -2448,7 +2450,7 @@ def public_handoff_start(slug:str, call_id:str, db:Session=Depends(get_db)):
     if not call: raise HTTPException(404,"Call not found")
     age=(datetime.utcnow()-call.started_at).total_seconds() if call.started_at else 999999
     if age>900: raise HTTPException(410,"Call session expired")
-    if call.status not in ("handoff_requested","handoff_accepted","connected"):
+    if call.status not in ("ringing","created","handoff_requested","handoff_accepted","connected"):
         raise HTTPException(409,"Call is not ready for human handoff")
     routed=route_call(db,t.id,call,call.intent or "human_handoff")
     if not routed.get("staff"):
@@ -2476,6 +2478,63 @@ def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
     if not call: raise HTTPException(404,"Call not found")
     staff=db.get(StaffMember,call.staff_id) if call.staff_id else None
     return {"call_id":call.id,"status":call.status,"room_id":call.room_id,"room_token":issue_call_room_token(call.id,"call-customer") if call.room_id and call.status in ("handoff_requested","handoff_accepted","connected") else None,"staff":{"id":staff.id,"name":staff.name} if staff else None}
+class PublicCallbackRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
+
+
+@app.post("/api/v1/public/business/{slug}/call/{call_id}/callback", status_code=201)
+def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, db: Session = Depends(get_db)):
+    """Last rung of the call ladder: nobody could take the call, so raise a callback
+    request that shows up in the dashboard's service requests (request_type="callback")."""
+    t = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
+    if not t:
+        raise HTTPException(404, "Business not found")
+    call = db.scalar(select(CallRecord).where(CallRecord.id == call_id, CallRecord.tenant_id == t.id))
+    if not call:
+        raise HTTPException(404, "Call not found")
+
+    # One callback per call: retries return the existing request instead of creating duplicates.
+    token = "callback:" + call.id
+    existing = db.scalar(select(ServiceRequest).where(
+        ServiceRequest.tenant_id == t.id,
+        ServiceRequest.context_token == token,
+        ServiceRequest.request_type == "callback",
+    ))
+    if existing:
+        return _request_out(existing, db)
+
+    customer = db.get(Customer, call.customer_id) if call.customer_id else None
+    who = customer.name if customer and customer.name else "Customer"
+    phone = customer.phone if customer and customer.phone else "no phone on file"
+    recent = (call.transcript or "").strip()[-700:]
+    message = (
+        f"Callback requested by {who} ({phone}).\n"
+        f"Reason: {payload.reason or 'No team member was available.'}\n"
+        f"Last words of the call:\n{recent}"
+    )[:2000]
+
+    r = ServiceRequest(
+        tenant_id=t.id,
+        customer_id=call.customer_id,
+        context_token=token,
+        request_type="callback",
+        message=message,
+        status="requested",
+        assigned_staff_id=None,
+    )
+    call.human_callback_requested = True
+    call.resolution = "human_callback"
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    publish_event_sync(t.id, "service_request.created", {
+        "request_id": r.id,
+        "request_type": r.request_type,
+        "message": r.message,
+        "status": r.status,
+        "assigned_staff_id": r.assigned_staff_id,
+    }, context_token=r.context_token)
+    return _request_out(r, db)
 
 @app.get("/api/v1/public/business/{slug}/voice/ice")
 async def public_voice_ice(slug: str, db: Session = Depends(get_db)):
