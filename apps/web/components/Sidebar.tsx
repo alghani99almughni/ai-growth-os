@@ -27,8 +27,7 @@ import {
   ToggleLeft,
   UserCog,
   Users,
-    X,
-  Mail,
+  X,
 } from "lucide-react";
 import { TENANT_NAV, ADMIN_NAV, type NavItem } from "../lib/nav";
 import { LANGUAGES, useTranslation, setLang } from "../lib/i18n";
