@@ -86,10 +86,11 @@ export default function Sidebar({
   const isAdmin = role === "platform_admin" || role === "super_admin";
   const items: NavItem[] = isAdmin ? ADMIN_NAV : TENANT_NAV;
 
-  const isActive = (item: NavItem) => {
-    if (item.exact) return pathname === item.href;
-    return pathname === item.href || pathname.startsWith(item.href + "/");
-  };
+    const tenantParam = (() => {
+    if (typeof window === "undefined") return "";
+    const t = new URLSearchParams(window.location.search).get("tenant");
+    return t ? `?tenant=${encodeURIComponent(t)}` : "";
+  })();
 
   return (
     <>
@@ -217,7 +218,7 @@ export default function Sidebar({
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={item.href + tenantParam}
                 onClick={onClose}
                 style={{
                   display: "flex",

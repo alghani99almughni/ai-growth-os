@@ -403,6 +403,8 @@ def _set_setting(db,tenant_id,key,value):
     return value
 
 def require_tenant(user:User,tenant_id:str):
+    if user.role in ("platform_admin","super_admin"):
+        return
     if user.tenant_id!=tenant_id: raise HTTPException(403,"Tenant access denied")
 def user_out(u): return UserOut(id=u.id,email=u.email,name=u.name,tenant_id=u.tenant_id,role=u.role)
 
