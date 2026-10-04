@@ -85,7 +85,11 @@ export default function Sidebar({
   const { t } = useTranslation();
   const isAdmin = role === "platform_admin" || role === "super_admin";
   const items: NavItem[] = isAdmin ? ADMIN_NAV : TENANT_NAV;
-
+  
+  const isActive = (item: NavItem) => {
+    if (item.exact) return pathname === item.href;
+    return pathname === item.href || pathname.startsWith(item.href + "/");
+  };
     const tenantParam = (() => {
     if (typeof window === "undefined") return "";
     const t = new URLSearchParams(window.location.search).get("tenant");
