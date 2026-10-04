@@ -34,7 +34,7 @@ export default function NewTenantPage() {
     if (!ownerName.trim() || !ownerEmail.trim() || ownerPassword.length < 8) return setErr("Owner name, email and password (8+) are required.");
     setBusy(true);
     try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("access_token") || "" : "";
+      const token = typeof window !== "undefined" ? localStorage.getItem("ago_access_token") || "" : "";
       const res = await fetch(`${API}/api/v1/platform/tenants/provision`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
