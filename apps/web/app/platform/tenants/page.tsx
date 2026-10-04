@@ -122,7 +122,7 @@ export default function TenantsPage() {
                     </td>
                     <td style={tdStyle}>
                       <a href={"/platform/tenants/" + t.id} style={{ color: "#5b5cf0", fontWeight: 600, textDecoration: "none", fontSize: 12, marginRight: 12 }}>Details</a>
-                      <a href={"/c/" + t.slug} target="_blank" rel="noreferrer" style={{ color: "#5b5cf0", fontWeight: 600, textDecoration: "none", fontSize: 12 }}>Open site ↗</a>
+                                            <a href={"/customer?business=" + t.slug} target="_blank" rel="noreferrer" style={{ color: "#5b5cf0", fontWeight: 600, textDecoration: "none", fontSize: 12 }}>Open site ↗</a>
                     </td>
                   </tr>
                 );

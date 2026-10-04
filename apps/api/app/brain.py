@@ -546,7 +546,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     current_entities=extract_booking_entities(message)
     has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested"))
     active_booking=c.state.startswith("booking")
-    if any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
+    if c.state == "new" and any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
     elif intent=="language_request":
         requested_language=language_request(message) or "en"
@@ -651,8 +651,23 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         else:
             booking=AVAILABILITY_PROMPTS.get(language,AVAILABILITY_PROMPTS["en"])
         c.state="booking_day"
-    elif active_booking:
-        booking, booking_data = booking_reply_from_state(db, tenant, c, message)
+        elif active_booking:
+        if intent=="human_handoff":
+            booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
+            c.state="handoff_requested"
+            booking_data={"day": None, "time": None, "complete": False}
+        elif intent=="closing":
+            booking="You're welcome. If you need anything else, I'm here to help."
+            c.state="closed"
+            c.cleared_at=datetime.utcnow()
+            booking_data={"day": None, "time": None, "complete": False}
+        elif intent=="language_request":
+            requested_language=language_request(message) or "en"
+            c.language=requested_language
+            booking=language_switch_confirmation(requested_language,agent_gender(db,tenant_id))
+            booking_data={"day": None, "time": None, "complete": False}
+        else:
+            booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif intent=="doctor_information":
         doctor_answer=knowledge_match(db,tenant_id,message)
         if doctor_answer:
