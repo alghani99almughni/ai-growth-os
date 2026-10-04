@@ -2005,6 +2005,38 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
     db.add(call); db.commit(); db.refresh(call)
     return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"room_token":issue_call_room_token(call.id,"call-customer")}
 
+@app.post("/api/v1/tenants/{tenant_id}/integrations/whatsapp/{provider}/enable")
+def tenant_whatsapp_enable(tenant_id, provider: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    if provider not in ("openwa", "meta"):
+        raise HTTPException(400, "provider must be openwa or meta")
+    from .whatsapp_channels import _row_for
+    row = _row_for(db, tenant_id, provider)
+    if not row:
+        raise HTTPException(404, "No configuration found for this channel")
+    row.status = "connected"
+    from datetime import datetime as _dt
+    row.updated_at = _dt.utcnow()
+    db.commit()
+    from .whatsapp_channels import all_channels
+    return all_channels(db, tenant_id)
+
+@app.post("/api/v1/tenants/{tenant_id}/integrations/whatsapp/{provider}/disable")
+def tenant_whatsapp_disable(tenant_id, provider: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    if provider not in ("openwa", "meta"):
+        raise HTTPException(400, "provider must be openwa or meta")
+    from .whatsapp_channels import _row_for
+    row = _row_for(db, tenant_id, provider)
+    if not row:
+        raise HTTPException(404, "No configuration found for this channel")
+    row.status = "paused"
+    from datetime import datetime as _dt
+    row.updated_at = _dt.utcnow()
+    db.commit()
+    from .whatsapp_channels import all_channels
+    return all_channels(db, tenant_id)
+
 @app.websocket("/ws/public/voice/{call_id}")
 async def public_voice(websocket:WebSocket,call_id:str):
     import logging
