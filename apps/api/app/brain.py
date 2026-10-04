@@ -94,7 +94,7 @@ def local_intent(message:str)->str:
         "which doctor","who is the doctor","may i know the doctor","doctor name","doctor's name",
         "provider","physician","doctor peru","doctor hesaru","doctorinte peru","doctoranche naav"
     )) or any(x in m for x in (
-        "डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருத்துவர் பெயர்","ಡಾಕ್ಟರ್ ಹೆಸರು","ഡോക്ടറിന്റെ പേര്",
+        "डॉक्टर का नाम","डॉक्टर कौन","డాక్టర్ పేరు","மருவுర్ పేరు","ಡಾಕ್ಟರ್ ಹೆಸರು","ഡോക്ടറിന്റെ പേര്",
         "डॉक्टरांचं नाव","ডাক্তারের নাম","ડોક્ટરનું નામ","ਡਾਕਟਰ ਦਾ ਨਾਮ","ڈاکٹر کا نام"
     ))) and not any(x in compact for x in ("available","availability","slot","appointment")):
         return "doctor_information"
@@ -651,7 +651,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         else:
             booking=AVAILABILITY_PROMPTS.get(language,AVAILABILITY_PROMPTS["en"])
         c.state="booking_day"
-        elif active_booking:
+    elif active_booking:
         if intent=="human_handoff":
             booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
             c.state="handoff_requested"
