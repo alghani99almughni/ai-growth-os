@@ -97,9 +97,15 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 _AUTH_BUCKETS: dict = defaultdict(list)
 _AUTH_LOCK = asyncio.Lock()
 
-AUTH_WINDOW_SECONDS = 15 * 60     # 15 minutes
-AUTH_MAX_PER_IP = 20              # 20 attempts per IP per window
-AUTH_MAX_PER_EMAIL = 10           # 10 attempts per email per window
+AUTH_WINDOW_SECONDS = 60          # 60-second rolling window
+AUTH_MAX_PER_IP = 100             # 100 attempts per IP per minute
+AUTH_MAX_PER_EMAIL = 100          # 100 attempts per email per minute
+
+# Emails that are NEVER rate-limited. Use for the platform admin so
+# a shared NAT / demo environment can never lock out the operator.
+AUTH_WHITELIST_EMAILS: set[str] = {
+    "superadmin@aigrowthos.com",
+}
 
 
 async def auth_rate_limit(request: Request, email: str | None = None) -> None:
@@ -111,6 +117,10 @@ async def auth_rate_limit(request: Request, email: str | None = None) -> None:
     client = request.client.host if request.client else "unknown"
     ip_key = ("ip", client)
     email_key = ("email", (email or "").lower().strip()) if email else None
+
+    # Never rate-limit whitelisted emails (platform admin, support, etc.)
+    if email and email.lower().strip() in AUTH_WHITELIST_EMAILS:
+        return
 
     async with _AUTH_LOCK:
         # prune old entries
@@ -125,14 +135,14 @@ async def auth_rate_limit(request: Request, email: str | None = None) -> None:
         ip_count = len(_AUTH_BUCKETS[ip_key])
         if ip_count >= AUTH_MAX_PER_IP:
             logger.warning("auth rate limit hit: ip=%s count=%d", client, ip_count)
-            raise HTTPException(429, "Too many attempts from this address. Try again in 15 minutes.")
+            raise HTTPException(429, "Too many attempts. Please wait a moment and try again.")
 
         if email_key:
             email_count = len(_AUTH_BUCKETS[email_key])
             if email_count >= AUTH_MAX_PER_EMAIL:
                 logger.warning("auth rate limit hit: email=%s count=%d",
                                email_key[1], email_count)
-                raise HTTPException(429, "Too many attempts for this account. Try again in 15 minutes.")
+                raise HTTPException(429, "Too many attempts for this account. Please wait a moment and try again.")
 
         # record this attempt
         _AUTH_BUCKETS[ip_key].append(now)
@@ -145,7 +155,14 @@ def auth_rate_limit_status() -> dict:
     now = time.time()
     active = sum(1 for k, v in _AUTH_BUCKETS.items()
                  if any(t >= now - AUTH_WINDOW_SECONDS for t in v))
-    return {"active_buckets": active, "tracked_keys": len(_AUTH_BUCKETS)}
+    return {
+        "active_buckets": active,
+        "tracked_keys": len(_AUTH_BUCKETS),
+        "window_seconds": AUTH_WINDOW_SECONDS,
+        "max_per_ip": AUTH_MAX_PER_IP,
+        "max_per_email": AUTH_MAX_PER_EMAIL,
+        "whitelist": sorted(AUTH_WHITELIST_EMAILS),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -266,4 +283,3 @@ def install_signal_handlers(app) -> None:
             _sig.signal(sig, _shutdown)
         except Exception:
             pass
-
