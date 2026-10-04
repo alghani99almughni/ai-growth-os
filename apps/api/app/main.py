@@ -84,6 +84,7 @@ from .integration_routes import router as integration_router
 from .social_routes import router as social_router
 import asyncio,json,base64,uuid
 from datetime import datetime,date,time,timedelta
+from datetime import time as _t
 from zoneinfo import ZoneInfo
 import time
 import websockets
@@ -1331,7 +1332,7 @@ def set_business_hours(tenant_id,payload:HoursUpdate,user=Depends(get_current_us
     if len(payload.items)!=7: raise HTTPException(400,"Provide all 7 weekdays")
     existing={x.weekday:x for x in db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id)).all()}
     for item in payload.items:
-        try: op=time.fromisoformat(item.open_time); cl=time.fromisoformat(item.close_time)
+        try: op=_t.fromisoformat(item.open_time); cl=_t.fromisoformat(item.close_time)
         except ValueError: raise HTTPException(400,"Time must use HH:MM")
         if not item.is_closed and cl<=op: raise HTTPException(400,"Closing time must be after opening time")
         row=existing.get(item.weekday)
