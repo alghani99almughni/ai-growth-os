@@ -74,6 +74,17 @@ def local_intent(message:str)->str:
     if is_human_request(message):
         return "human_handoff"
 
+    # Voice-channel health checks are not requests for a human.
+    # Keep these deterministic so a simple "can you hear me?" never falls
+    # through to model generation and accidentally becomes a handoff.
+    voice_check_phrases = (
+        "can you hear me", "can you hear me clearly", "are you able to hear me",
+        "can you hear", "is my voice clear", "is anyone there", "are you there",
+        "can you listen to me",
+    )
+    if any(x in compact for x in voice_check_phrases):
+        return "voice_feedback"
+
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
         return "booking"
