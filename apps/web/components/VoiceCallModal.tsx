@@ -231,6 +231,10 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   const debounceRef = useRef<number | null>(null);
   const lastReplyRef = useRef("");
   const repeatRef = useRef(0);
+  const srGenerationRef = useRef(0);
+  const srRestartTimerRef = useRef<number | null>(null);
+  const srRunningRef = useRef(false);
+  const turnAbortRef = useRef<AbortController | null>(null);
 
   const go = (p: Phase) => { phaseRef.current = p; setPhase(p); };
 
@@ -247,8 +251,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     lastLineRef.current = { role, at: now };
     setLines((prev) => {
       let next: Line[];
-      if (canMerge && prev.length && prev[prev.length - 1].role === role) {
-        next = prev.slice();
+      if (canMerge && prev.length && prev[prev.length - 1].role === role) {        next = prev.slice();
         const last = next[next.length - 1];
         next[next.length - 1] = { ...last, text: (last.text + raw).replace(/\s+/g, " ").trim() };
       } else {
@@ -324,10 +327,18 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     });
 
   /* ---------- speech in (browser) ---------- */
-  const stopListening = () => { try { recRef.current?.stop(); } catch {} };
+  const stopListening = () => {
+    srGenerationRef.current += 1;
+    if (srRestartTimerRef.current) window.clearTimeout(srRestartTimerRef.current);
+    srRestartTimerRef.current = null;
+    srRunningRef.current = false;
+    try { recRef.current?.stop(); } catch {}
+  };
 
   const startListening = () => {
     if (!activeRef.current || phaseRef.current !== "brain" || speakingRef.current || busyRef.current || mutedRef.current) return;
+    if (srRunningRef.current) return;
+    const generation = ++srGenerationRef.current;
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { setMicOk(false); return; }
     if (!recRef.current) {
@@ -335,13 +346,22 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       rec.continuous = true;
       rec.interimResults = false;
       rec.maxAlternatives = 1;
+      rec.onstart = () => { srRunningRef.current = true; };
       rec.onresult = (ev: any) => {
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
           const r = ev.results[i];
           if (r.isFinal) queueUtterance(String(r[0]?.transcript || ""));
         }
       };
-      rec.onend = () => { window.setTimeout(startListening, 250); };
+      rec.onend = () => {
+        srRunningRef.current = false;
+        if (!activeRef.current || phaseRef.current !== "brain" || mutedRef.current || generation !== srGenerationRef.current) return;
+        if (srRestartTimerRef.current) window.clearTimeout(srRestartTimerRef.current);
+        srRestartTimerRef.current = window.setTimeout(() => {
+          srRestartTimerRef.current = null;
+          if (generation === srGenerationRef.current) startListening();
+        }, 250);
+      };
       rec.onerror = (ev: any) => {
         if (ev?.error === "not-allowed" || ev?.error === "service-not-allowed") {
           setMicOk(false);
@@ -402,6 +422,9 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
     setAgentState("thinking");
     try {
+      const controller = new AbortController();
+      turnAbortRef.current = controller;
+      const turnTimeout = window.setTimeout(() => controller.abort(), 20000);
       const res = await fetch(`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/voice/turn`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -411,7 +434,10 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
           conversation_id: convRef.current,
           channel: "voice",
         }),
+        signal: controller.signal,
       });
+      window.clearTimeout(turnTimeout);
+      if (turnAbortRef.current === controller) turnAbortRef.current = null;
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || "Voice answer failed.");
       failsRef.current = 0;
@@ -442,6 +468,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
         await speak(reply, langRef.current);
       }
     } catch {
+      if (turnAbortRef.current) turnAbortRef.current = null;
       failsRef.current += 1;
       if (failsRef.current >= 2) {
         busyRef.current = false;
@@ -497,8 +524,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     const ch = buf.getChannelData(0);
     for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
     const src = ctx.createBufferSource();
-    src.buffer = buf;
-    src.connect(ctx.destination);
+    src.buffer = buf;    src.connect(ctx.destination);
     src.onended = () => playingRef.current.delete(src);
     playingRef.current.add(src);
     nextPlayRef.current = Math.max(nextPlayRef.current, ctx.currentTime);
@@ -669,7 +695,8 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     go("human_wait");
     setError("");
     pushLine("system", "Connecting you to our team…");
-    void speak("Connecting you to our team. Please hold.", langRef.current);
+    await speak("Connecting you to our team. Please hold.", langRef.current);
+    if (!activeRef.current) return;
 
     const callId = callRef.current?.call_id;
     if (!callId) { await requestCallback("No active call."); return; }
@@ -747,8 +774,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
   const saveCallback = async (reason: string) => {
     const callId = callRef.current?.call_id;
-    let saved = false;
-    if (callId) {
+    let saved = false;    if (callId) {
       try {
         const r = await fetch(`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/call/${encodeURIComponent(callId)}/callback`, {
           method: "POST",
@@ -772,6 +798,12 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   /* ---------- start / end ---------- */
   const endCall = (final: Phase = "ended") => {
     activeRef.current = false;
+    srGenerationRef.current += 1;
+    if (srRestartTimerRef.current) window.clearTimeout(srRestartTimerRef.current);
+    srRestartTimerRef.current = null;
+    srRunningRef.current = false;
+    try { turnAbortRef.current?.abort(); } catch {}
+    turnAbortRef.current = null;
     clearIdle();
     clearPending();
     stopListening();
@@ -800,6 +832,8 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     convRef.current = null;
     failsRef.current = 0;
     idleStrikesRef.current = 0;
+    lastReplyRef.current = "";
+    repeatRef.current = 0;
     setLines([]);
     setMicOk(true);
     go("starting");
