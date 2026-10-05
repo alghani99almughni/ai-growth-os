@@ -17,7 +17,7 @@ const P=new URLSearchParams(location.search);
 const SLUG=P.get("slug")||"ss-nutritions";
 const BUSINESS=P.get("business")||"SS Nutritions";
 const CUSTOMER=P.get("customer")||"";
-const state={phase:"idle",min:false,muted:false,seconds:0,callId:"",ws:null,stream:null,ctx:null,processor:null,source:null,startedAt:0,lastSpeechAt:0,retries:0,audioBusy:false,trans:[],name:localStorage.getItem("cust:"+SLUG+":name")||"",phone:localStorage.getItem("cust:"+SLUG+":phone")||"",error:""};
+const state={phase:"idle",min:false,muted:false,seconds:0,callId:"",ws:null,stream:null,ctx:null,processor:null,source:null,startedAt:0,lastSpeechAt:0,retries:0,audioBusy:false,inputReady:false,trans:[],name:localStorage.getItem("cust:"+SLUG+":name")||"",phone:localStorage.getItem("cust:"+SLUG+":phone")||"",error:""};
 let timer=null,audioQueueTime=0;
 const mount=document.getElementById("mount"),result=document.getElementById("result");
 const safe=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -57,7 +57,7 @@ async function openMediaAndSocket(){
  if(state.ctx.state==="suspended")await state.ctx.resume();
  state.source=state.ctx.createMediaStreamSource(state.stream);
  state.processor=state.ctx.createScriptProcessor(4096,1,1);
- state.processor.onaudioprocess=e=>{if(state.muted||state.phase!=="connected")return;const input=e.inputBuffer.getChannelData(0);let sum=0;for(let i=0;i<input.length;i++)sum+=input[i]*input[i];const rms=Math.sqrt(sum/input.length);if(rms>0.018)state.lastSpeechAt=Date.now();const pcm=resample(input,state.ctx.sampleRate,16000);send({type:"audio",data:toB64(pcm)});};
+ state.processor.onaudioprocess=e=>{if(state.muted||state.phase!=="connected"||!state.inputReady)return;const input=e.inputBuffer.getChannelData(0);let sum=0;for(let i=0;i<input.length;i++)sum+=input[i]*input[i];const rms=Math.sqrt(sum/input.length);if(rms>0.018)state.lastSpeechAt=Date.now();const pcm=resample(input,state.ctx.sampleRate,16000);send({type:"audio",data:toB64(pcm)});};
  state.source.connect(state.processor);state.processor.connect(state.ctx.destination);
  await connectSocket();
 }
