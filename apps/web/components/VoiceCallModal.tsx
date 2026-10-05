@@ -838,6 +838,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
   const startCall = async (nm: string, ph: string, customerId?: string | null) => {
     setError("");
+    micPermissionRequestedRef.current = false;
     if (nm.trim().length < 1 || ph.replace(/\D/g, "").length < 5) {
       setError("Please enter your name and mobile number first.");
       return;
