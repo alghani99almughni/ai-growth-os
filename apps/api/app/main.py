@@ -1,4 +1,7 @@
 import logging
+# Keep request URLs out of INFO logs; provider credentials must never be logged.
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 from fastapi import FastAPI,Depends,HTTPException,Query,Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
@@ -2549,7 +2552,7 @@ def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest
     customer = db.get(Customer, call.customer_id) if call.customer_id else None
     who = customer.name if customer and customer.name else "Customer"
     phone = customer.phone if customer and customer.phone else "no phone on file"
-    recent = (call.transcript or "").strip()[-700:]
+    recent = (call.transcript or "").replace("\\n", "\n").strip()[-700:]
     message = (
         f"Callback requested by {who} ({phone}).\n"
         f"Reason: {payload.reason or 'No team member was available.'}\n"
