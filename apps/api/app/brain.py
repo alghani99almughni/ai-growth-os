@@ -218,7 +218,6 @@ _WEEKDAY_ALIASES = {
     "सोमवार":"monday","सोम":"monday","मंगलवार":"tuesday","मंगल":"tuesday","बुधवार":"wednesday","बुध":"wednesday","गुरुवार":"thursday","गुरु":"thursday","शुक्रवार":"friday","शुक्र":"friday","शनिवार":"saturday","शनि":"saturday","रविवार":"sunday","रवि":"sunday",
 }
 _RELATIVE_DAYS = ("today", "tomorrow", "day after tomorrow")
-
 def extract_booking_entities(text: str) -> dict:
     value = text.casefold().strip()
     day = None
@@ -243,41 +242,54 @@ def extract_booking_entities(text: str) -> dict:
     else:
         tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?|o['’]?clock|oclock)\b", value)
         if tm:
-            hour = int(tm.group(1)); minute = tm.group(2)
-            suffix=tm.group(3).replace(".","").casefold()
-            meridiem = "AM" if suffix.startswith("a") else "PM"
-            time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
+            hour = int(tm.group(1))
+            minute = tm.group(2)
+            suffix = tm.group(3).replace(".", "").casefold()
+            if suffix.startswith("o"):
+                time_value = f"{hour}:{minute}" if minute else str(hour)
+            else:
+                meridiem = "AM" if suffix.startswith("a") else "PM"
+                time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
-                hour24=int(tm24.group(1)); minute24=tm24.group(2)
-                hour12=hour24%12 or 12
+                hour24 = int(tm24.group(1)); minute24 = tm24.group(2)
+                hour12 = hour24 % 12 or 12
                 if hour24 >= 12:
-                    time_value=f"{hour12}:{minute24} PM"
+                    time_value = f"{hour12}:{minute24} PM"
                 elif hour24 == 0:
-                    time_value=f"12:{minute24} AM"
+                    time_value = f"12:{minute24} AM"
                 else:
-                    time_value=f"{hour12}:{minute24}"
+                    time_value = f"{hour12}:{minute24}"
             else:
-                number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
-                word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
-                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
-                hour=int(digit_hour.group(1)) if digit_hour else word_hour
+                number_words = {"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
+                cue = r"(?:at|by|around|about|for|make it|say|baje|vajje|vagye|gantlaki|manikku)"
+                not_a_time = r"(?!\s*(?:people|persons?|members?|guests?|days?|minutes?|mins?|hours?|sessions?|st\b|nd\b|rd\b|th\b|%))"
+                digit_hour = (
+                    re.search(rf"\b{cue}\s+(1[0-2]|0?[1-9])\b{not_a_time}", value)
+                    or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b", value)
+                    or re.fullmatch(r"\s*(?:ok(?:ay)?[ ,\s]+)?(?:at\s+)?(1[0-2]|0?[1-9])\s*[.!?]*\s*", value)
+                )
+                word_hour = None
+                for w, n in number_words.items():
+                    if re.search(rf"\b{cue}\s+{w}\b", value) or re.fullmatch(rf"\s*(?:ok(?:ay)?[ ,\s]+)?(?:at\s+)?{w}(?:\s+o['\u2019]?clock)?\s*[.!?]*\s*", value):
+                        word_hour = n
+                        break
+                hour = int(digit_hour.group(1)) if digit_hour else word_hour
                 if hour:
-                    if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b",value):
-                        meridiem="AM"
-                    elif re.search(r"\b(evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b",value):
-                        meridiem="PM"
+                    if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b", value):
+                        meridiem = "AM"
+                    elif re.search(r"\b(evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b", value):
+                        meridiem = "PM"
                     else:
-                        meridiem="PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value) else None
-                    time_value=f"{hour} {meridiem}" if meridiem else None
+                        meridiem = "PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b", value) else None
+                    time_value = f"{hour} {meridiem}" if meridiem else str(hour)
 
-    time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
+    time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b", value)), None)
     date_hint = None
-    dm=re.search(r"\b(?:date|day|on)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
+    dm = re.search(r"\b(?:date|day|on)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b", value)
     if dm:
-        date_hint=int(dm.group(1))
-
+        date_hint = int(dm.group(1))
     return {"day":day,"relative_day":relative_day,"time":time_value,"time_hint":time_hint,"date_hint":date_hint,"now_requested":now_requested}
 
 
@@ -305,6 +317,15 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
         for key in ctx:
             if extracted.get(key) is not None:
                 ctx[key] = extracted[key]
+    # Resolve a remembered bare hour only after the requested day is known.
+    if ctx["time"] and (ctx["day"] or ctx["relative_day"] or ctx["date_hint"]):
+        tenant_row = db.get(Tenant, c.tenant_id)
+        if tenant_row:
+            resolved_time, _question = resolve_bare_time(
+                db, tenant_row, ctx["time"], ctx["day"], ctx["relative_day"], ctx["date_hint"]
+            )
+            if resolved_time:
+                ctx["time"] = resolved_time
     return ctx
 
 
@@ -385,6 +406,39 @@ def booking_day_label(language,value):
         return {"today":"ఈ రోజు","tomorrow":"రేపు","day after tomorrow":"ఎల్లుండి"}.get(value,value or "ఆ రోజు")
     return value or "that day"
 
+
+def resolve_bare_time(db: Session, tenant: Tenant, time_value, day, relative_day, date_hint):
+    """Resolve a bare hour from the requested day's actual business hours."""
+    if not time_value or re.search(r"\b(?:AM|PM)\b", str(time_value), re.I):
+        return time_value, None
+    tm_bare = re.match(r"^(\d{1,2})(?::(\d{2}))?$", str(time_value).strip())
+    if not tm_bare:
+        return time_value, None
+    hour = int(tm_bare.group(1)); minute = int(tm_bare.group(2) or 0)
+    if hour == 12:
+        return (f"12:{minute:02d} PM" if minute else "12 PM"), None
+    if not 1 <= hour <= 11:
+        return time_value, None
+    from datetime import time as _time
+    target_date = resolve_booking_date(tenant, day, relative_day, date_hint)
+    hours_row = db.scalar(select(BusinessHour).where(
+        BusinessHour.tenant_id == tenant.id,
+        BusinessHour.weekday == target_date.weekday()
+    )) if target_date else None
+    if not hours_row or hours_row.is_closed:
+        return time_value, None
+    from .booking import is_inside_hours
+    am_inside = is_inside_hours(hours_row.open_time, hours_row.close_time, _time(hour, minute))
+    pm_inside = is_inside_hours(hours_row.open_time, hours_row.close_time, _time(hour + 12, minute))
+    label = f"{hour}:{minute:02d}" if minute else str(hour)
+    if pm_inside and not am_inside:
+        return f"{label} PM", None
+    if am_inside and not pm_inside:
+        return f"{label} AM", None
+    if am_inside and pm_inside:
+        return time_value, f"Do you mean {label} AM or {label} PM?"
+    return time_value, None
+
 def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
     current = extract_booking_entities(message)
     logger.info(
@@ -404,41 +458,17 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
 
-    if time_value and day_label and not re.search(r"\b(?:AM|PM)\b", time_value, re.I):
-        tm_bare=re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
-        if tm_bare:
-            hour=int(tm_bare.group(1)); minute=int(tm_bare.group(2) or 0)
-            if 1 <= hour <= 11:
-                from datetime import time as _time
-                am_time=_time(hour,minute)
-                pm_time=_time(hour+12,minute)
-                target_date=resolve_booking_date(tenant, day, relative_day, date_hint)
-                hours_row=db.scalar(select(BusinessHour).where(
-                    BusinessHour.tenant_id==tenant.id,
-                    BusinessHour.weekday==target_date.weekday()
-                )) if target_date else None
-                if hours_row and not hours_row.is_closed:
-                    from .booking import is_inside_hours
-                    am_inside=is_inside_hours(hours_row.open_time, hours_row.close_time, am_time)
-                    pm_inside=is_inside_hours(hours_row.open_time, hours_row.close_time, pm_time)
-                    if pm_inside and not am_inside:
-                        time_value=f"{hour}:{minute:02d} PM" if minute else f"{hour} PM"
-                    elif am_inside and not pm_inside:
-                        time_value=f"{hour}:{minute:02d} AM" if minute else f"{hour} AM"
-                    elif am_inside and pm_inside:
-                        c.state="booking_time_clarification"
-                        return (
-                            f"Do you mean {hour}:{minute:02d} AM or {hour}:{minute:02d} PM?" if minute else
-                            f"Do you mean {hour} AM or {hour} PM?",
-                            {"day":day_label,"time":None,"complete":False}
-                        )
+    if time_value and day_label:
+        time_value, clarify = resolve_bare_time(db, tenant, time_value, day, relative_day, date_hint)
+        if clarify:
+            c.state="booking_time_clarification"
+            return clarify, {"day":day_label,"time":None,"complete":False}
 
     resolved_date=resolve_booking_date(tenant, day, relative_day, date_hint)
 
     if now_requested and resolved_date:
         service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
-        if service:
-            search_dates=[resolved_date]
+        if service:            search_dates=[resolved_date]
             search_dates.extend(resolved_date + timedelta(days=offset) for offset in range(1,8))
             selected=None
             today_had_no_slot=False
@@ -567,6 +597,19 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     active_booking=c.state.startswith("booking")
     if c.state == "new" and any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
+    elif intent=="acknowledgement" and not active_booking:
+        previous_assistant=db.scalar(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id==c.id,ConversationMessage.role=="assistant")
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        )
+        previous_text=(previous_assistant.content.casefold() if previous_assistant else "")
+        if "book an appointment" in previous_text or "would you like to book" in previous_text:
+            booking, booking_data=booking_reply_from_state(db,tenant,c,"book an appointment")
+        else:
+            booking="Alright. Is there anything else I can help you with?"
+            c.state="information"
     elif intent=="language_request":
         requested_language=language_request(message) or "en"
         previous_booking_state=c.state if active_booking else None
@@ -657,8 +700,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         if booking_date and service:
             slots=available_slots(db,tenant,service.id,booking_date)
             if slots:
-                times=[datetime.fromisoformat(x["start"]).strftime("%-I:%M %p") for x in slots[:4]]
-                booking=(f"{booking_date.strftime('%A, %B %-d')}, available times are {', '.join(times)}. Which time would you like?"
+                times=[datetime.fromisoformat(x["start"]).strftime("%-I:%M %p") for x in slots[:4]]                booking=(f"{booking_date.strftime('%A, %B %-d')}, available times are {', '.join(times)}. Which time would you like?"
                          if language=="en" else
                          f"{booking_date.strftime('%A, %B %-d')} को उपलब्ध समय {', '.join(times)} हैं। इनमें से कौन सा समय चाहिए?"
                          if language=="hi" else
