@@ -17,7 +17,7 @@ const P=new URLSearchParams(location.search);
 const SLUG=P.get("slug")||"ss-nutritions";
 const BUSINESS=P.get("business")||"SS Nutritions";
 const CUSTOMER=P.get("customer")||"";
-const state={phase:"idle",min:false,muted:false,seconds:0,callId:"",ws:null,stream:null,ctx:null,processor:null,source:null,startedAt:0,lastSpeechAt:0,retries:0,audioBusy:false,trans:[],name:localStorage.getItem("cust:"+SLUG+":name")||"",phone:localStorage.getItem("cust:"+SLUG+":phone")||"",error:""};
+const state={phase:"idle",min:false,muted:false,seconds:0,callId:"",ws:null,stream:null,ctx:null,processor:null,source:null,startedAt:0,lastSpeechAt:0,retries:0,audioBusy:false,inputReady:false,trans:[],name:localStorage.getItem("cust:"+SLUG+":name")||"",phone:localStorage.getItem("cust:"+SLUG+":phone")||"",error:""};
 let timer=null,audioQueueTime=0;
 const mount=document.getElementById("mount"),result=document.getElementById("result");
 const safe=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -42,7 +42,7 @@ async function beginCall(){
  const nm=document.getElementById("nm")?.value.trim()||state.name.trim(),ph=document.getElementById("ph")?.value.trim()||state.phone.trim();
  if(!nm||!ph){state.error="Please enter your name and mobile number first.";render();return}
  state.name=nm;state.phone=ph;localStorage.setItem("cust:"+SLUG+":name",nm);localStorage.setItem("cust:"+SLUG+":phone",ph);
- state.phase="starting";state.error="";state.trans=[];render();
+ state.phase="starting";state.error="";state.trans=[];state.inputReady=false;render();
  try{
   const res=await fetch(API+"/api/v1/public/business/"+encodeURIComponent(SLUG)+"/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:nm,phone:ph})});
   const data=await res.json();if(!res.ok)throw Error(data.detail||"Unable to start the call.");
@@ -57,7 +57,7 @@ async function openMediaAndSocket(){
  if(state.ctx.state==="suspended")await state.ctx.resume();
  state.source=state.ctx.createMediaStreamSource(state.stream);
  state.processor=state.ctx.createScriptProcessor(4096,1,1);
- state.processor.onaudioprocess=e=>{if(state.muted||state.phase!=="connected")return;const input=e.inputBuffer.getChannelData(0);let sum=0;for(let i=0;i<input.length;i++)sum+=input[i]*input[i];const rms=Math.sqrt(sum/input.length);if(rms>0.018)state.lastSpeechAt=Date.now();const pcm=resample(input,state.ctx.sampleRate,16000);send({type:"audio",data:toB64(pcm)});};
+ state.processor.onaudioprocess=e=>{if(state.muted||state.phase!=="connected"||!state.inputReady)return;const input=e.inputBuffer.getChannelData(0);let sum=0;for(let i=0;i<input.length;i++)sum+=input[i]*input[i];const rms=Math.sqrt(sum/input.length);if(rms>0.018)state.lastSpeechAt=Date.now();const pcm=resample(input,state.ctx.sampleRate,16000);send({type:"audio",data:toB64(pcm)});};
  state.source.connect(state.processor);state.processor.connect(state.ctx.destination);
  await connectSocket();
 }
@@ -76,15 +76,15 @@ async function connectSocket(){
  const url=API.replace(/^http:/,"ws:").replace(/^https:/,"wss:")+"/ws/public/voice/"+encodeURIComponent(state.callId);
  return await new Promise((resolve,reject)=>{
   const ws=new WebSocket(url);state.ws=ws;let opened=false;
-  ws.onopen=()=>{opened=true;state.phase="connected";state.startedAt=Date.now();state.lastSpeechAt=Date.now();state.retries=0;add("SYSTEM","AI voice session connected.");render();startTimer();resolve()};
+  ws.onopen=()=>{opened=true;state.phase="connected";state.startedAt=Date.now();state.lastSpeechAt=Date.now();state.retries=0;state.inputReady=false;add("SYSTEM","Secure AI channel connected. Starting the assistant…");render();startTimer();resolve()};
   ws.onerror=()=>{if(!opened)reject(Error("Unable to connect to the production AI voice service."));};
   ws.onclose=()=>{if(state.phase==="ending"||state.phase==="ended")return;if(state.retries<3){state.retries++;state.phase="reconnect";render();setTimeout(()=>connectSocket().catch(()=>{state.phase="error";state.error="AI voice connection could not be recovered.";render()}),Math.min(1500*state.retries,5000));}else{state.phase="error";state.error="AI voice connection could not be recovered.";render()}};
-  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==="status"){if(m.status==="ai_connected")add("SYSTEM","AI provider connected.");if(m.status==="ai_reconnected")add("SYSTEM","AI provider connection recovered.");}else if(m.type==="transcript"){add(m.role==="customer"?"YOU":"AI",m.text)}else if(m.type==="interruption"){audioQueueTime=state.ctx?.currentTime||0}else if(m.type==="error"){state.error=m.message||"AI voice error";add("SYSTEM",state.error);render()}else if(m.type==="audio"){playPcm(m.data,m.mimeType)}else{const sc=m.serverContent||{},parts=(sc.modelTurn||{}).parts||[];for(const p of parts){if(p.inlineData?.data)playPcm(p.inlineData.data,p.inlineData.mimeType)}if(sc.inputTranscription?.text)add("YOU",sc.inputTranscription.text);if(sc.outputTranscription?.text)add("AI",sc.outputTranscription.text)}};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}if(m.type==="status"){if(m.status==="ai_connected"){state.inputReady=false;add("SYSTEM","AI provider connected.");}if(m.status==="ai_reconnected"){state.inputReady=false;add("SYSTEM","AI provider connection recovered.");}}else if(m.type==="turn_complete"){state.inputReady=true;add("SYSTEM","AI is listening.");}else if(m.type==="input_ready"){state.inputReady=true;}else if(m.type==="transcript"){add(m.role==="customer"?"YOU":"AI",m.text)}else if(m.type==="interruption"){audioQueueTime=state.ctx?.currentTime||0}else if(m.type==="error"){state.error=m.message||"AI voice error";add("SYSTEM",state.error);render()}else if(m.type==="audio"){playPcm(m.data,m.mimeType)}else{const sc=m.serverContent||{},parts=(sc.modelTurn||{}).parts||[];for(const p of parts){if(p.inlineData?.data)playPcm(p.inlineData.data,p.inlineData.mimeType)}if(sc.inputTranscription?.text)add("YOU",sc.inputTranscription.text);if(sc.outputTranscription?.text)add("AI",sc.outputTranscription.text)}};
  });
 }
 function startTimer(){clearInterval(timer);timer=setInterval(()=>{if(state.phase!=="connected")return;state.seconds=Math.floor((Date.now()-state.startedAt)/1000);const t=document.querySelector(".timer");if(t)t.textContent=fmt(state.seconds);if(Date.now()-state.lastSpeechAt>60000&&!state.audioBusy){add("SYSTEM","No customer speech detected for 60 seconds. Ending the call.");stop(false)}},1000)}
 function stop(silent){
- if(state.phase==="idle")return;state.phase="ending";render();clearInterval(timer);try{send({type:"stop"})}catch{}try{state.ws?.close()}catch{}state.ws=null;try{state.processor?.disconnect()}catch{}try{state.source?.disconnect()}catch{}try{state.stream?.getTracks().forEach(t=>t.stop())}catch{}try{state.ctx?.close()}catch{}state.processor=null;state.source=null;state.stream=null;state.ctx=null;
+ if(state.phase==="idle")return;state.inputReady=false;state.phase="ending";render();clearInterval(timer);try{send({type:"stop"})}catch{}try{state.ws?.close()}catch{}state.ws=null;try{state.processor?.disconnect()}catch{}try{state.source?.disconnect()}catch{}try{state.stream?.getTracks().forEach(t=>t.stop())}catch{}try{state.ctx?.close()}catch{}state.processor=null;state.source=null;state.stream=null;state.ctx=null;
  if(!silent){state.phase="ended";render();setTimeout(()=>{state.phase="idle";render();window.parent?.dispatchEvent(new Event("webcall-runtime-close"))},1200)}else{state.phase="idle";render();window.parent?.dispatchEvent(new Event("webcall-runtime-close"))}
 }
 document.getElementById("call").onclick=showForm;
