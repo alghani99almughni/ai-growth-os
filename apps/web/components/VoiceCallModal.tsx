@@ -50,7 +50,7 @@ const api = () => String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:80
 const wsBase = () => api().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-const SPECIALIST_ON = process.env.NEXT_PUBLIC_SPECIALIST_AI !== "off";
+const SPECIALIST_ON = process.env.NEXT_PUBLIC_SPECIALIST_AI === "on";
 const SR_DEBOUNCE_MS = 1300;      // merge speech fragments spoken within this gap
 const SPECIALIST_FIRST_SPEECH_MS = 15000;
 
