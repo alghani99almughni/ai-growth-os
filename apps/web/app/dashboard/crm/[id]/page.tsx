@@ -72,11 +72,18 @@ export default function CustomerDetailPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("ago_tenant");
-      const t = raw ? JSON.parse(raw) : null;
-      if (t?.id) setTenantId(t.id);
-    } catch {}
+    const urlTenant = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("tenant") || ""
+      : "";
+    if (urlTenant) {
+      setTenantId(urlTenant);
+    } else {
+      try {
+        const raw = localStorage.getItem("ago_tenant");
+        const t = raw ? JSON.parse(raw) : null;
+        if (t?.id) setTenantId(t.id);
+      } catch {}
+    }
     setToken(localStorage.getItem("ago_access_token") || "");
   }, []);
 
@@ -171,7 +178,7 @@ export default function CustomerDetailPage() {
 
   return (
     <div style={{ maxWidth: 1000 }}>
-      <button onClick={() => router.push("/dashboard/crm")} style={{ background: "transparent", border: 0, color: "#5b5cf0", fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 12 }}>
+      <button onClick={() => router.push("/dashboard/crm" + (tenantId ? `?tenant=${tenantId}` : ""))} style={{ background: "transparent", border: 0, color: "#5b5cf0", fontWeight: 600, cursor: "pointer", padding: 0, marginBottom: 12 }}>
         ← All customers
       </button>
 
