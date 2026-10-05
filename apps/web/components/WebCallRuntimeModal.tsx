@@ -2,7 +2,14 @@
 
 import {useEffect} from "react";
 
-type Props={onClose:()=>void};
+type Props={
+  onClose:()=>void;
+  slug?:string;
+  businessName?:string;
+  existingCustomerId?:string;
+  agentGender?:"male"|"female";
+  onCustomerIdentified?:(customerId:string)=>void;
+};
 
 export default function WebCallRuntimeModal({onClose}:Props){
   useEffect(()=>{
