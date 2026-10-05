@@ -247,7 +247,8 @@ def extract_booking_entities(text: str) -> dict:
             suffix = tm.group(3).replace(".", "").casefold()
             if suffix.startswith("o"):
                 time_value = f"{hour}:{minute}" if minute else str(hour)
-            else:                meridiem = "AM" if suffix.startswith("a") else "PM"
+            else:
+                meridiem = "AM" if suffix.startswith("a") else "PM"
                 time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
@@ -699,7 +700,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         if booking_date and service:
             slots=available_slots(db,tenant,service.id,booking_date)
             if slots:
-                times=[datetime.fromisoformat(x["start"]).strftime("%-I:%M %p") for x in slots[:4]]                booking=(f"{booking_date.strftime('%A, %B %-d')}, available times are {', '.join(times)}. Which time would you like?"
+                times=[datetime.fromisoformat(x["start"]).strftime("%-I:%M %p") for x in slots[:4]]
+                booking=(f"{booking_date.strftime('%A, %B %-d')}, available times are {', '.join(times)}. Which time would you like?"
                          if language=="en" else
                          f"{booking_date.strftime('%A, %B %-d')} को उपलब्ध समय {', '.join(times)} हैं। इनमें से कौन सा समय चाहिए?"
                          if language=="hi" else
@@ -746,7 +748,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         now_local=datetime.now(ZoneInfo(tenant.timezone))
         target=now_local.date()+timedelta(days=2 if "day after tomorrow" in m or "परसों" in m else 1)
         booking=f"{target.strftime('%A, %B %-d, %Y')}."
-        c.state="information"    elif intent=="clarification":
+        c.state="information"
+    elif intent=="clarification":
         booking=SPOKEN_CLARIFICATION.get(language, SPOKEN_CLARIFICATION["en"])
         c.state="information"
     elif intent=="booking" and not capability_enabled(policy,"bookings",True):
