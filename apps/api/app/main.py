@@ -2262,11 +2262,13 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                     state.interrupted=True
                     if turn_controller.interrupt():
                         await websocket.send_json({"type":"interruption"})
+                    await websocket.send_json({"type":"input_ready"})
                     continue
                 if gw.get("event")=="response_done":
                     trace=turn_controller.complete()
                     if trace:
                         await websocket.send_json({"type":"turn_metrics","voice_to_first_audio_ms":trace.voice_to_first_audio_ms,"interrupted":trace.interrupted_at is not None})
+                    await websocket.send_json({"type":"turn_complete"})
                     continue
                 logging.getLogger("uvicorn.error").info(
                     "PUBLIC_VOICE_PROVIDER_EVENT call_id=%s keys=%s serverContent_keys=%s",
