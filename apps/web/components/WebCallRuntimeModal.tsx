@@ -1,5 +1,7 @@
 "use client";
 
+import {useEffect} from "react";
+
 type Props={
   onClose:()=>void;
   slug?:string;
@@ -15,6 +17,12 @@ export default function WebCallRuntimeModal({
   businessName="SS Nutritions",
   existingCustomerId,
 }:Props){
+  useEffect(()=>{
+    const close=()=>onClose();
+    window.addEventListener("webcall-runtime-close",close);
+    return()=>window.removeEventListener("webcall-runtime-close",close);
+  },[onClose]);
+
   const params = new URLSearchParams();
   params.set("slug", slug);
   params.set("business", businessName);
@@ -22,13 +30,7 @@ export default function WebCallRuntimeModal({
 
   return (
     <div
-      style={{
-        position:"fixed",
-        inset:0,
-        zIndex:9999,
-        background:"rgba(3,10,22,.72)",
-        backdropFilter:"blur(12px)",
-      }}
+      style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(3,10,22,.72)",backdropFilter:"blur(12px)"}}
       role="dialog"
       aria-modal="true"
       aria-label={`AI call with ${businessName}`}
@@ -43,21 +45,7 @@ export default function WebCallRuntimeModal({
         type="button"
         onClick={onClose}
         aria-label="Close call runtime"
-        style={{
-          position:"fixed",
-          top:16,
-          right:16,
-          zIndex:10000,
-          width:42,
-          height:42,
-          border:0,
-          borderRadius:999,
-          background:"rgba(0,0,0,.55)",
-          color:"#fff",
-          fontSize:28,
-          lineHeight:1,
-          cursor:"pointer",
-        }}
+        style={{position:"fixed",top:16,right:16,zIndex:10000,width:42,height:42,border:0,borderRadius:999,background:"rgba(0,0,0,.55)",color:"#fff",fontSize:28,lineHeight:1,cursor:"pointer"}}
       >×</button>
     </div>
   );
