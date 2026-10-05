@@ -1,6 +1,7 @@
 "use client";
 import {useEffect,useMemo,useState} from "react";
 import VoiceCallModal from "../../components/VoiceCallModal";
+import WebCallRuntimeModal from "../../components/WebCallRuntimeModal";
 
 const api=()=>process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
 type Item={id:string;category_id?:string;name:string;description?:string;price:number;currency?:string};
@@ -165,8 +166,9 @@ export default function Customer(){
 
   {active==="feedback"&&<section className="card"><h2>⭐ How was your experience?</h2>{feedbackSent?<p>Thank you for your feedback.</p>:<><div style={{fontSize:32}}>{[1,2,3,4,5].map(n=><button key={n} onClick={()=>setFeedback(n)} aria-label={n+" stars"}>{n<=feedback?"★":"☆"}</button>)}</div><textarea placeholder="Tell us about your experience (optional)" value={comment} onChange={e=>setComment(e.target.value)}/><button onClick={submitFeedback}>Submit feedback</button><p>After feedback, we'll offer the configured Google review link.</p></>}</section>}
 
-  {callOpen&&business&&<VoiceCallModal
-    slug={business.slug}
+  {callOpen&&business&&(
+    business.slug==="ss-nutritions" ? <WebCallRuntimeModal
+      slug={business.slug}
     businessName={business.name}
     existingCustomerId={storedCustomerId||undefined}
     onCustomerIdentified={(id)=>{
@@ -175,7 +177,18 @@ export default function Customer(){
       try{localStorage.setItem("cust:last-business",business.slug);}catch{}
     }}
     onClose={()=>setCallOpen(false)}
-  />}
+    /> : <VoiceCallModal
+      slug={business.slug}
+    businessName={business.name}
+    existingCustomerId={storedCustomerId||undefined}
+    onCustomerIdentified={(id)=>{
+      setStoredCustomerId(id);
+      setCustomerId(id);
+      try{localStorage.setItem("cust:last-business",business.slug);}catch{}
+    }}
+    onClose={()=>setCallOpen(false)}
+    />
+  )}
 
   <p aria-live="polite">{status}</p>
  </main>;
