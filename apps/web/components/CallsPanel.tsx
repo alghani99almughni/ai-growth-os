@@ -51,7 +51,7 @@ function fmtWhen(iso: string | null): string {
 function transcriptLines(raw: string | null): string[] {
   if (!raw) return [];
   return raw
-    .replace(/\\\\n/g, "\n")
+    .replace(/\\n/g, "\n")
     .split(/\r?\n/)
     .map((x) => x.trim())
     .filter(Boolean)
