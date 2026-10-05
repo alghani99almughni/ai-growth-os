@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import VoiceCallModal from "../../../components/VoiceCallModal";
+import WebCallRuntimeModal from "../../../components/WebCallRuntimeModal";
 
 const API = String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 const PILOT_TENANT_ID = "1f11597e-602e-43a5-a550-4779aaa21ad6";
@@ -83,15 +83,7 @@ export default function WebCallPilotPage() {
         )}
       </section>
 
-      {open && (
-        <VoiceCallModal
-          slug={business.slug}
-          businessName={business.name}
-          agentGender={business.agent_gender === "male" ? "male" : "female"}
-          onCustomerIdentified={() => {}}
-          onClose={() => setOpen(false)}
-        />
-      )}
+      {open && <WebCallRuntimeModal onClose={() => setOpen(false)} />}
     </main>
   );
 }
