@@ -583,9 +583,17 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
         try { await startMicStream(ws); } catch { /* mic denied: the specialist can still read the context */ }
         const recent = linesRef.current.slice(-8)
           .map((l) => `${l.role === "ai" ? "Assistant" : "Customer"}: ${l.text}`).join("\n");
+        const latestCustomerRequest = [...linesRef.current].reverse().find((l) => l.role === "customer")?.text || "";
         ws.send(JSON.stringify({
           type: "text",
-          text: `The customer has been handed over to you. Customer name: ${nameRef.current}. Phone: ${phoneRef.current}.\nConversation so far:\n${recent}`,
+          text: `You are joining the CURRENT call only. Customer name: ${nameRef.current}. Phone: ${phoneRef.current}.
+Never say you are "taking over from the previous assistant" and never invent an unresolved booking.
+Treat the customer's latest request as authoritative. If it is unrelated to the previous booking discussion, answer the new request instead of continuing the old booking.
+Do not confirm or create a booking unless the customer explicitly confirms the exact date, time and service.
+If the latest request is unclear, ask one short clarification question rather than guessing or handing off.
+Latest customer request: ${latestCustomerRequest}
+Conversation in this call:
+${recent}`,
         }));
       };
       ws.onmessage = (ev) => {
@@ -790,6 +798,8 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
   const startCall = async (nm: string, ph: string, customerId?: string | null) => {
     setError("");
+    // Every new call starts with a clean conversation boundary.
+    convRef.current = null;
     if (nm.trim().length < 1 || ph.replace(/\D/g, "").length < 5) {
       setError("Please enter your name and mobile number first.");
       return;

@@ -20,6 +20,35 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
+VOICE_ACK_PHRASES = {
+    "ok", "okay", "alright", "all right", "fine", "sure", "yes", "yeah", "yep",
+    "confirm", "confirmed", "thanks", "thank you", "got it", "understood", "great", "perfect",
+    "haan", "han", "ji", "theek", "ठीक", "ठीक है", "हाँ", "हां", "సరే", "అవును",
+    "நன்றி", "சரி", "ಹೌದು", "ಸರಿ", "നന്ദി",
+}
+VOICE_FEEDBACK_PHRASES = (
+    "can you hear me", "can you hear me clearly", "can you hear", "are you able to hear me",
+    "are you hearing me", "is my voice clear", "is my audio clear", "can you listen to me",
+    "are you there", "is anyone there", "hello can you hear me", "cant hear you",
+    "can't hear you", "cannot hear you", "i can't hear you", "i cant hear you",
+    "i cannot hear you", "your voice is not clear", "audio is not clear", "voice is not clear",
+)
+
+def normalized_voice_text(message: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9\s']", " ", (message or "").casefold())).strip()
+
+def is_simple_acknowledgement(message: str) -> bool:
+    value = normalized_voice_text(message)
+    return value in VOICE_ACK_PHRASES or bool(re.fullmatch(
+        r"(yes|yeah|yep|sure|okay|ok|alright|fine|confirm|confirmed|thanks|thank you)"
+        r"( please| it| that| sir| maam| ma'am| ji| kijiye| karo| cheyyandi)?",
+        value,
+    ))
+
+def is_voice_feedback(message: str) -> bool:
+    value = " ".join((message or "").casefold().split())
+    return any(p in value for p in VOICE_FEEDBACK_PHRASES)
+
 def agent_gender(db: Session, tenant_id: str) -> str:
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="agent_voice"))
     if row:
@@ -73,6 +102,9 @@ def local_intent(message:str)->str:
     compact=re.sub(r"\s+"," ",compact).strip()
     if is_human_request(message):
         return "human_handoff"
+
+    if is_voice_feedback(message):
+        return "voice_feedback"
 
     booking_terms=("book","booking","appointment","schedule","reserve","reservation")
     if any(x in compact for x in booking_terms):
@@ -245,8 +277,15 @@ def extract_booking_entities(text: str) -> dict:
         if tm:
             hour = int(tm.group(1)); minute = tm.group(2)
             suffix=tm.group(3).replace(".","").casefold()
-            meridiem = "AM" if suffix.startswith("a") else "PM"
-            time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
+            if suffix.startswith("a"):
+                meridiem = "AM"
+            elif suffix.startswith("p"):
+                meridiem = "PM"
+            else:
+                meridiem = None
+            time_value = f"{hour}:{minute} {meridiem}" if meridiem else (
+                f"{hour}:{minute}" if minute else f"{hour}"
+            )
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
@@ -270,7 +309,7 @@ def extract_booking_entities(text: str) -> dict:
                         meridiem="PM"
                     else:
                         meridiem="PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value) else None
-                    time_value=f"{hour} {meridiem}" if meridiem else None
+                    time_value=f"{hour} {meridiem}" if meridiem else f"{hour}"
 
     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
     date_hint = None
@@ -579,9 +618,10 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         if any(x in m for x in ("bye","goodbye","leave it","cancel","that's all","thats all")):
             c.state="closed"
             c.cleared_at=datetime.utcnow()
-    elif intent=="voice_feedback" and not active_booking:
+    elif intent=="voice_feedback":
         booking=voice_feedback_reply(language,agent_gender(db,tenant_id))
-        c.state="information"
+        if not active_booking:
+            c.state="information"
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
@@ -675,6 +715,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
             c.state="handoff_requested"
             booking_data={"day": None, "time": None, "complete": False}
+        elif intent=="voice_feedback":
+            booking=voice_feedback_reply(language,agent_gender(db,tenant_id))
         elif intent=="closing":
             booking="You're welcome. If you need anything else, I'm here to help."
             c.state="closed"
@@ -685,6 +727,13 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             c.language=requested_language
             booking=language_switch_confirmation(requested_language,agent_gender(db,tenant_id))
             booking_data={"day": None, "time": None, "complete": False}
+        elif is_simple_acknowledgement(message) and c.state!="booking_confirmation":
+            booking={
+                "hi":"ठीक है। जब आप तैयार हों, मैं आपकी अपॉइंटमेंट बुकिंग जारी रख सकती हूँ.",
+                "te":"సరే. మీరు సిద్ధంగా ఉన్నప్పుడు అపాయింట్‌మెంట్ బుకింగ్ కొనసాగిద్దాం.",
+            }.get(language,"Okay. Whenever you're ready, we can continue the appointment booking.")
+        elif intent in {"business_hours","pricing","doctor_information","availability","product","date_information","information","clarification"} and not has_booking_entities:
+            c.state="information"
         else:
             booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif intent=="doctor_information":
@@ -820,6 +869,12 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             matched.usage_count=(matched.usage_count or 0)+1
             matched.last_used_at=__import__("datetime").datetime.utcnow()
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
+    logger.info(
+        "VOICE_BRAIN_DECISION conversation_id=%s state=%s intent=%s provider=%s retrieval=%s "
+        "knowledge_hit=%s generation_used=%s booking=%s handoff=%s",
+        c.id, c.state, intent, provider, retrieval_stage, knowledge_hit,
+        not knowledge_hit, json.dumps(booking_data, ensure_ascii=False), handoff_required,
+    )
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
     db.commit()
     next_step = "escalate" if handoff_required else "reply"

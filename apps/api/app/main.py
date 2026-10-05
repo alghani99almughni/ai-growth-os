@@ -9,7 +9,7 @@ from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
 from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken,AIProviderUsage
-from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,RoleDefinition
+from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,RoleDefinition,InteractionEvent
 from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context
@@ -2441,6 +2441,51 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
             db.commit()
         finally: db.close()
 
+def _voice_conversation_for_call(db: Session, tenant_id: str, call_id: str|None, requested_conversation_id: str|None):
+    """Bind deterministic voice state to exactly one public call session."""
+    if not call_id:
+        return requested_conversation_id
+    call=db.scalar(select(CallRecord).where(
+        CallRecord.id==call_id, CallRecord.tenant_id==tenant_id, CallRecord.source=="pwa_voice"
+    ))
+    if not call:
+        raise HTTPException(404, "Call session not found")
+    mapping=db.scalar(select(InteractionEvent).where(
+        InteractionEvent.call_id==call_id,
+        InteractionEvent.tenant_id==tenant_id,
+        InteractionEvent.event_type=="voice_conversation_binding",
+    ).order_by(InteractionEvent.created_at.desc()).limit(1))
+    if mapping:
+        try:
+            bound_id=str((json.loads(mapping.payload_json or "{}")).get("conversation_id") or "").strip()
+            if bound_id:
+                if requested_conversation_id and requested_conversation_id != bound_id:
+                    logging.getLogger("uvicorn.error").warning(
+                        "VOICE_CONVERSATION_MISMATCH call_id=%s requested=%s bound=%s",
+                        call_id, requested_conversation_id, bound_id,
+                    )
+                return bound_id
+        except Exception:
+            pass
+    return None
+
+def _bind_voice_conversation(db: Session, tenant_id: str, call_id: str|None, conversation_id: str|None):
+    if not call_id or not conversation_id:
+        return
+    existing=db.scalar(select(InteractionEvent).where(
+        InteractionEvent.call_id==call_id,
+        InteractionEvent.tenant_id==tenant_id,
+        InteractionEvent.event_type=="voice_conversation_binding",
+    ))
+    if existing:
+        return
+    db.add(InteractionEvent(
+        tenant_id=tenant_id, customer_id=None, call_id=call_id, channel="voice",
+        event_type="voice_conversation_binding",
+        payload_json=json.dumps({"conversation_id":conversation_id}),
+    ))
+    db.commit()
+
 class PublicVoiceTurnRequest(BaseModel):
     transcript:str=Field(min_length=1,max_length=4000)
     conversation_id:str|None=None
@@ -2564,7 +2609,11 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
     if not _feature_config(db,t.id).get("ai_voice",True): raise HTTPException(403,"Voice calling is not available for this business")
-    result=await generate_reply(db,t.id,payload.transcript,payload.conversation_id,payload.channel)
+    bound_conversation_id=_voice_conversation_for_call(
+        db,t.id,payload.call_id,payload.conversation_id
+    )
+    result=await generate_reply(db,t.id,payload.transcript,bound_conversation_id,payload.channel)
+    _bind_voice_conversation(db,t.id,payload.call_id,result.get("conversation_id"))
 
     # Browser/PWA voice currently uses the deterministic /voice/turn path.
     # Execute confirmed appointments here; the realtime WebSocket has a
@@ -2760,6 +2809,12 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             call.language=result.get("language") or detect_language(payload.transcript)
             call.ai_turns=(call.ai_turns or 0)+1
             if result.get("knowledge_hit"): call.knowledge_hits=(call.knowledge_hits or 0)+1
+            call.summary=(
+                f"Brain: intent={result.get('intent')}; provider={result.get('provider')}; "
+                f"retrieval={result.get('retrieval_stage')}; knowledge_hit={result.get('knowledge_hit')}; "
+                f"generation_used={result.get('generation_used')}; booking_state={result.get('booking_state')}; "
+                f"handoff={result.get('handoff_required')}"
+            )
             if result.get("handoff_required"):
                 call.human_callback_requested=True; call.status="handoff_requested"; call.resolution="human_callback"
                 route_call(db,t.id,call,result.get("intent"))

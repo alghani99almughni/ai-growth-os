@@ -14,6 +14,7 @@ export default function Customer(){
  const [customerName,setCustomerName]=useState("");
  const [callOpen,setCallOpen]=useState(false);
  const [storedCustomerId,setStoredCustomerId]=useState<string>("");
+ const [callInstance,setCallInstance]=useState(0);
 
  useEffect(()=>{
   const p=new URLSearchParams(location.search);
@@ -100,6 +101,7 @@ export default function Customer(){
 
  async function startTeamCall(){
   if(!business)return;
+  setCallInstance(x=>x+1);
   setCallOpen(true);
  }
 
@@ -165,7 +167,7 @@ export default function Customer(){
 
   {active==="feedback"&&<section className="card"><h2>⭐ How was your experience?</h2>{feedbackSent?<p>Thank you for your feedback.</p>:<><div style={{fontSize:32}}>{[1,2,3,4,5].map(n=><button key={n} onClick={()=>setFeedback(n)} aria-label={n+" stars"}>{n<=feedback?"★":"☆"}</button>)}</div><textarea placeholder="Tell us about your experience (optional)" value={comment} onChange={e=>setComment(e.target.value)}/><button onClick={submitFeedback}>Submit feedback</button><p>After feedback, we'll offer the configured Google review link.</p></>}</section>}
 
-  {callOpen&&business&&<VoiceCallModal
+  {callOpen&&business&&<VoiceCallModal key={callInstance}
     slug={business.slug}
     businessName={business.name}
     existingCustomerId={storedCustomerId||undefined}
