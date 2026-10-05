@@ -7,29 +7,26 @@ export default function CallsPage() {
   const [token, setToken] = useState<string>("");
 
   useEffect(() => {
+    const urlTenant = new URLSearchParams(window.location.search).get("tenant") || "";
     const raw = localStorage.getItem("ago_tenant");
     let t: any = null;
     try { t = raw ? JSON.parse(raw) : null; } catch {}
-    if (t?.id) setTenantId(t.id);
+    setTenantId(urlTenant || t?.id || "");
     setToken(localStorage.getItem("ago_access_token") || "");
   }, []);
 
   if (!tenantId || !token) {
-    return (
-      <div style={{ padding: 60, textAlign: "center", color: "#75839a" }}>
-        Loading…
-      </div>
-    );
+    return <div style={{ padding: 60, textAlign: "center", color: "#75839a" }}>Loading…</div>;
   }
 
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>
-          Live calls
+          Calls & Transcripts
         </h1>
         <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>
-          Every call your voice agent has handled, with transcript and outcome.
+          Every AI/customer call for this tenant, with the complete conversation transcript, intent and outcome.
         </p>
       </div>
       <CallsPanel tenantId={tenantId} token={token} />
