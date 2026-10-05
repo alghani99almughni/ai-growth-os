@@ -1778,7 +1778,21 @@ def staff_release(tenant_id, call_id, user=Depends(get_current_user), db: Sessio
 def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
     rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id).order_by(CallRecord.created_at.desc())).all()
-    return {"items":[{"id":x.id,"customer_id":x.customer_id,"customer_name":(db.get(Customer,x.customer_id).name if x.customer_id and db.get(Customer,x.customer_id) else "Customer"),"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
+    items=[]
+    for x in rows:
+        customer=db.get(Customer,x.customer_id) if x.customer_id else None
+        items.append({
+            "id":x.id,"customer_id":x.customer_id,
+            "customer_name":customer.name if customer and customer.name else "Customer",
+            "customer_phone":customer.phone if customer else "",
+            "customer_email":customer.email if customer else None,
+            "customer_whatsapp_opt_in":bool(customer.whatsapp_opt_in) if customer else False,
+            "customer_created_at":customer.created_at if customer else None,
+            "source":x.source,"status":x.status,"department":x.department,
+            "staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,
+            "summary":x.summary,"transcript":x.transcript,"created_at":x.created_at
+        })
+    return {"items":items}
 
 class VoiceTurnRequest(BaseModel):
     transcript:str=Field(min_length=1,max_length=4000)
