@@ -247,8 +247,7 @@ def extract_booking_entities(text: str) -> dict:
             suffix = tm.group(3).replace(".", "").casefold()
             if suffix.startswith("o"):
                 time_value = f"{hour}:{minute}" if minute else str(hour)
-            else:
-                meridiem = "AM" if suffix.startswith("a") else "PM"
+            else:                meridiem = "AM" if suffix.startswith("a") else "PM"
                 time_value = f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}"
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
@@ -468,7 +467,8 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     if now_requested and resolved_date:
         service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
-        if service:            search_dates=[resolved_date]
+        if service:
+            search_dates=[resolved_date]
             search_dates.extend(resolved_date + timedelta(days=offset) for offset in range(1,8))
             selected=None
             today_had_no_slot=False
@@ -498,7 +498,6 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
                 c.state="booking_day"
                 return (booking_text(c.language,"unavailable",time="now",day=booking_day_label(c.language,"today")),
                         {"day":"today","time":None,"date":resolved_date.isoformat(),"now_requested":True,"complete":False})
-
     if day_label and time_value:
         calendar=booking_calendar_status(db,tenant,resolved_date,time_value)
         if calendar.get("available") is False:
@@ -747,8 +746,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         now_local=datetime.now(ZoneInfo(tenant.timezone))
         target=now_local.date()+timedelta(days=2 if "day after tomorrow" in m or "परसों" in m else 1)
         booking=f"{target.strftime('%A, %B %-d, %Y')}."
-        c.state="information"
-    elif intent=="clarification":
+        c.state="information"    elif intent=="clarification":
         booking=SPOKEN_CLARIFICATION.get(language, SPOKEN_CLARIFICATION["en"])
         c.state="information"
     elif intent=="booking" and not capability_enabled(policy,"bookings",True):
