@@ -117,6 +117,16 @@ def local_intent(message:str)->str:
         "awaaz badal","awaz badal","gender badal","voice badal"
     )) or any(x in m for x in ("जेंडर चेंज","आवाज़ बदल","आवाज बदल","ವಾಯ್ಸ್ ಬದಲಾಗಿದೆ","వాయిస్ మారింది")):
         return "voice_feedback"
+    if any(x in compact for x in (
+        "can you hear me", "can you hear me clearly", "are you able to hear me",
+        "can you hear", "is my voice clear", "is anyone there", "are you there",
+        "can you listen to me"
+    )) or any(x in m for x in (
+        "क्या आप मुझे सुन सकते हैं", "क्या आप मेरी आवाज़ सुन सकते हैं",
+        "మీరు నా మాట వినగలరా", "என் குரல் கேட்கிறதா", "ನನ್ನ ಮಾತು ಕೇಳಿಸುತ್ತಿದೆಯಾ",
+        "നിങ്ങൾക്ക് എന്നെ കേൾക്കാമോ", "तुम्हाला माझा आवाज ऐकू येतोय का"
+    )):
+        return "voice_feedback"
     if re.search(r"\b(?:call me|human|let me speak|speak to someone|talk to someone|connect me)\b", compact) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
         return "human_handoff"
 
