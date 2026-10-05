@@ -42,7 +42,7 @@ async function beginCall(){
  const nm=document.getElementById("nm")?.value.trim()||state.name.trim(),ph=document.getElementById("ph")?.value.trim()||state.phone.trim();
  if(!nm||!ph){state.error="Please enter your name and mobile number first.";render();return}
  state.name=nm;state.phone=ph;localStorage.setItem("cust:"+SLUG+":name",nm);localStorage.setItem("cust:"+SLUG+":phone",ph);
- state.phase="starting";state.error="";state.trans=[];render();
+ state.phase="starting";state.error="";state.trans=[];state.inputReady=false;render();
  try{
   const res=await fetch(API+"/api/v1/public/business/"+encodeURIComponent(SLUG)+"/call",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:nm,phone:ph})});
   const data=await res.json();if(!res.ok)throw Error(data.detail||"Unable to start the call.");
@@ -84,7 +84,7 @@ async function connectSocket(){
 }
 function startTimer(){clearInterval(timer);timer=setInterval(()=>{if(state.phase!=="connected")return;state.seconds=Math.floor((Date.now()-state.startedAt)/1000);const t=document.querySelector(".timer");if(t)t.textContent=fmt(state.seconds);if(Date.now()-state.lastSpeechAt>60000&&!state.audioBusy){add("SYSTEM","No customer speech detected for 60 seconds. Ending the call.");stop(false)}},1000)}
 function stop(silent){
- if(state.phase==="idle")return;state.phase="ending";render();clearInterval(timer);try{send({type:"stop"})}catch{}try{state.ws?.close()}catch{}state.ws=null;try{state.processor?.disconnect()}catch{}try{state.source?.disconnect()}catch{}try{state.stream?.getTracks().forEach(t=>t.stop())}catch{}try{state.ctx?.close()}catch{}state.processor=null;state.source=null;state.stream=null;state.ctx=null;
+ if(state.phase==="idle")return;state.inputReady=false;state.phase="ending";render();clearInterval(timer);try{send({type:"stop"})}catch{}try{state.ws?.close()}catch{}state.ws=null;try{state.processor?.disconnect()}catch{}try{state.source?.disconnect()}catch{}try{state.stream?.getTracks().forEach(t=>t.stop())}catch{}try{state.ctx?.close()}catch{}state.processor=null;state.source=null;state.stream=null;state.ctx=null;
  if(!silent){state.phase="ended";render();setTimeout(()=>{state.phase="idle";render();window.parent?.dispatchEvent(new Event("webcall-runtime-close"))},1200)}else{state.phase="idle";render();window.parent?.dispatchEvent(new Event("webcall-runtime-close"))}
 }
 document.getElementById("call").onclick=showForm;
