@@ -2,6 +2,7 @@
 import {useEffect,useMemo,useState} from "react";
 import VoiceCallModal from "../../components/VoiceCallModal";
 import WebCallRuntimeModal from "../../components/WebCallRuntimeModal";
+import SujathaStrongCallModal from "../../components/SujathaStrongCallModal";
 
 const api=()=>process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
 type Item={id:string;category_id?:string;name:string;description?:string;price:number;currency?:string};
@@ -169,24 +170,34 @@ export default function Customer(){
   {callOpen&&business&&(
     business.slug==="ss-nutritions" ? <WebCallRuntimeModal
       slug={business.slug}
-    businessName={business.name}
-    existingCustomerId={storedCustomerId||undefined}
-    onCustomerIdentified={(id)=>{
-      setStoredCustomerId(id);
-      setCustomerId(id);
-      try{localStorage.setItem("cust:last-business",business.slug);}catch{}
-    }}
-    onClose={()=>setCallOpen(false)}
+      businessName={business.name}
+      existingCustomerId={storedCustomerId||undefined}
+      onCustomerIdentified={(id)=>{
+        setStoredCustomerId(id);
+        setCustomerId(id);
+        try{localStorage.setItem("cust:last-business",business.slug);}catch{}
+      }}
+      onClose={()=>setCallOpen(false)}
+    /> : business.slug==="sujatha-school" ? <SujathaStrongCallModal
+      slug={business.slug}
+      businessName={business.name}
+      existingCustomerId={storedCustomerId||undefined}
+      onCustomerIdentified={(id)=>{
+        setStoredCustomerId(id);
+        setCustomerId(id);
+        try{localStorage.setItem("cust:last-business",business.slug);}catch{}
+      }}
+      onClose={()=>setCallOpen(false)}
     /> : <VoiceCallModal
       slug={business.slug}
-    businessName={business.name}
-    existingCustomerId={storedCustomerId||undefined}
-    onCustomerIdentified={(id)=>{
-      setStoredCustomerId(id);
-      setCustomerId(id);
-      try{localStorage.setItem("cust:last-business",business.slug);}catch{}
-    }}
-    onClose={()=>setCallOpen(false)}
+      businessName={business.name}
+      existingCustomerId={storedCustomerId||undefined}
+      onCustomerIdentified={(id)=>{
+        setStoredCustomerId(id);
+        setCustomerId(id);
+        try{localStorage.setItem("cust:last-business",business.slug);}catch{}
+      }}
+      onClose={()=>setCallOpen(false)}
     />
   )}
 
