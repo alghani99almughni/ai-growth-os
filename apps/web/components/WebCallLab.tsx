@@ -17,27 +17,13 @@ export default function WebCallLab({ slug }: { slug: string }) {
   const [running, setRunning] = useState(false);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const addLine = (role: Line["role"], text: string) => {
     if (!text?.trim()) return;
     setLines((x) => [...x, { role, text: text.trim() }]);
-  };
-
-  const waitForIce = async (pc: RTCPeerConnection) => {
-    if (pc.iceGatheringState === "complete") return;
-    await new Promise<void>((resolve) => {
-      const timeout = window.setTimeout(() => resolve(), 5000);
-      const check = () => {
-        if (pc.iceGatheringState === "complete") {
-          window.clearTimeout(timeout);
-          pc.removeEventListener("icegatheringstatechange", check);
-          resolve();
-        }
-      };
-      pc.addEventListener("icegatheringstatechange", check);
-    });
   };
 
   const cleanup = () => {
@@ -57,6 +43,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
     setLines([]);
     setMetrics([]);
     setStatus("starting");
+    pendingIceRef.current = [];
 
     try {
       if (!name.trim() || !phone.trim()) throw new Error("Enter name and mobile number first.");
@@ -90,35 +77,45 @@ export default function WebCallLab({ slug }: { slug: string }) {
           void audioRef.current.play().catch(() => {});
         }
       };
-      pc.onconnectionstatechange = () => setStatus(`webrtc:${pc.connectionState}`);
-      pc.oniceconnectionstatechange = () => setStatus(`ice:${pc.iceConnectionState}`);
+      pc.onconnectionstatechange = () => {
+        setStatus(`webrtc:${pc.connectionState}`);
+        setMetrics((x) => [...x, `pc=${pc.connectionState}`]);
+      };
+      pc.oniceconnectionstatechange = () => {
+        setStatus(`ice:${pc.iceConnectionState}`);
+        setMetrics((x) => [...x, `ice=${pc.iceConnectionState}`]);
+      };
 
       const ws = new WebSocket(
         `${wsBase()}/ws/public/webcall/${encodeURIComponent(startData.call_id)}?room_token=${encodeURIComponent(startData.room_token)}`
       );
       wsRef.current = ws;
 
-      pc.onicecandidate = (event) => {
-        if (event.candidate && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: "ice-candidate",
-            candidate: {
-              candidate: event.candidate.candidate,
-              sdpMid: event.candidate.sdpMid,
-              sdpMLineIndex: event.candidate.sdpMLineIndex,
-            },
-          }));
+      const sendIce = (candidate: RTCIceCandidateInit) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ice-candidate", candidate }));
+        } else {
+          pendingIceRef.current.push(candidate);
         }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (!event.candidate) return;
+        sendIce({
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+        });
       };
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      await waitForIce(pc);
 
       await new Promise<void>((resolve, reject) => {
         const timeout = window.setTimeout(() => reject(new Error("Web Call signaling timed out.")), 15000);
         ws.onopen = () => {
           window.clearTimeout(timeout);
+          for (const candidate of pendingIceRef.current.splice(0)) sendIce(candidate);
           resolve();
         };
         ws.onerror = () => {
