@@ -2260,7 +2260,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                         logging.getLogger("uvicorn.error").info(
                             "VOICE_TURN_CROSSCHECK call_id=%s turn=%s intent=%s confidence=%.2f "
                             "live_data_required=%s latency_ms=%.3f entities=%s",
-                            call.id, state.turn_index + 1, crosscheck.intent,
+                            call.id, state.turn_index, crosscheck.intent,
                             crosscheck.confidence, crosscheck.live_data_required,
                             crosscheck.latency_ms, crosscheck.entities,
                         )
@@ -2268,7 +2268,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                         # never expose internal routing instructions or business data.
                         await websocket.send_json({
                             "type": "voice_crosscheck",
-                            "turn": state.turn_index + 1,
+                            "turn": state.turn_index,
                             "intent": crosscheck.intent,
                             "confidence": crosscheck.confidence,
                             "live_data_required": crosscheck.live_data_required,
