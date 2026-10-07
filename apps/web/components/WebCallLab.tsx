@@ -61,7 +61,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
     try {
       if (!name.trim() || !phone.trim()) throw new Error("Enter name and mobile number first.");
 
-      const startRes = await fetch(\`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/call\`, {
+      const startRes = await fetch(`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/call`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: name.trim(), phone: phone.trim() }),
@@ -69,7 +69,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
       const startData = await startRes.json().catch(() => ({}));
       if (!startRes.ok) throw new Error(startData.detail || "Could not start call.");
 
-      const iceRes = await fetch(\`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/voice/ice\`, { cache: "no-store" });
+      const iceRes = await fetch(`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/voice/ice`, { cache: "no-store" });
       const iceData = await iceRes.json().catch(() => ({}));
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -90,11 +90,11 @@ export default function WebCallLab({ slug }: { slug: string }) {
           void audioRef.current.play().catch(() => {});
         }
       };
-      pc.onconnectionstatechange = () => setStatus(\`webrtc:${pc.connectionState}\`);
-      pc.oniceconnectionstatechange = () => setStatus(\`ice:${pc.iceConnectionState}\`);
+      pc.onconnectionstatechange = () => setStatus(`webrtc:${pc.connectionState}`);
+      pc.oniceconnectionstatechange = () => setStatus(`ice:${pc.iceConnectionState}`);
 
       const ws = new WebSocket(
-        \`${wsBase()}/ws/public/webcall/${encodeURIComponent(startData.call_id)}?room_token=${encodeURIComponent(startData.room_token)}\`
+        `${wsBase()}/ws/public/webcall/${encodeURIComponent(startData.call_id)}?room_token=${encodeURIComponent(startData.room_token)}`
       );
       wsRef.current = ws;
 
@@ -139,14 +139,14 @@ export default function WebCallLab({ slug }: { slug: string }) {
             if (msg.crosscheck) {
               setMetrics((x) => [
                 ...x,
-                \`${msg.crosscheck.intent} · ${msg.crosscheck.confidence} · ${msg.crosscheck.latency_ms}ms\`,
+                `${msg.crosscheck.intent} · ${msg.crosscheck.confidence} · ${msg.crosscheck.latency_ms}ms`,
               ]);
             }
           } else if (msg.type === "status") {
             setStatus(msg.status || "active");
-            if (msg.provider) setMetrics((x) => [...x, \`provider=${msg.provider}\`]);
+            if (msg.provider) setMetrics((x) => [...x, `provider=${msg.provider}`]);
           } else if (msg.type === "pc_state") {
-            setStatus(\`webrtc:${msg.state}\`);
+            setStatus(`webrtc:${msg.state}`);
           } else if (msg.type === "interruption") {
             setMetrics((x) => [...x, "barge-in: AI audio interrupted"]);
           } else if (msg.type === "timeout") {
