@@ -14,6 +14,7 @@ from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
 from .booking import available_slots
+from .knowledge_brain_v2 import classify as classify_v2
 from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -787,6 +788,9 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
+    # V2 is a safe cross-check only after all existing knowledge layers miss.
+    # It never supplies an answer and never overrides an existing knowledge hit.
+    v2 = None if (direct or semantic or library or faq) else classify_v2(message, tenant.industry)
     knowledge_hit = False
     handoff_required = (intent == "human_handoff")
     retrieval_stage="structured"
@@ -820,7 +824,12 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "APPROVED CONTEXT:\n" + context +
             "\n\nRECENT CONVERSATION:\n" + history +
             "\n\nCUSTOMER LANGUAGE: " + language +
-            "\nCUSTOMER:\n" + message
+            "\nCUSTOMER:\n" + message +
+            ("\n\nKNOWLEDGE BRAIN V2 CROSS-CHECK: canonical_intent=" + v2.intent +
+             "; confidence=" + str(v2.confidence) +
+             "; entities=" + json.dumps(v2.entities, ensure_ascii=False) +
+             ". Treat this only as routing context. Do not invent missing business facts."
+             if v2 else "")
         )
         approved_knowledge=db.scalar(select(KnowledgeItem).where(
             KnowledgeItem.tenant_id==tenant_id,
@@ -836,7 +845,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             retrieval_stage="unconfigured_handoff"
         else:
             reply,provider=await last_resort_reply(db,tenant_id,prompt)
-            retrieval_stage="generation"
+            retrieval_stage="v2_crosscheck_api" if v2 else "generation"
         if not reply or any(x in (reply or "").casefold() for x in ("i don't have enough information","i need a human","human team","call you back","team member to follow up","i cannot verify")):
             handoff_required=True
             reply="I don't want to give you an unverified answer. I'll arrange for our team to call you back."
