@@ -84,7 +84,7 @@ INTENT_ALIASES = {
     "GET_WHATSAPP": ("whatsapp number","whatsapp"),
     "SERVICE_PRICE": ("service price","service cost","service fee","how much is the service"),
     "PRODUCT_PRICE": ("product price","product cost","how much is the product"),
-    "CHECK_AVAILABILITY": ("check availability","available slot","any slot","free slot"),
+    "CHECK_AVAILABILITY": ("check availability","available slot","any slot","free slot","check a slot","check a slot tomorrow","do you have availability","is there a slot","do you have a slot","what slots are available"),
     "BOOK": ("book","booking","appointment","schedule","reserve","reservation"),
     "RESCHEDULE": ("reschedule","change my appointment time"),
     "CANCEL_BOOKING": ("cancel my booking","cancel appointment","cancel reservation"),
