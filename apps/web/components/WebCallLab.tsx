@@ -15,6 +15,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [metrics, setMetrics] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
+  const [forceRelay, setForceRelay] = useState(false);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
@@ -66,6 +67,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
 
       const pc = new RTCPeerConnection({
         iceServers: iceData.ice_servers || [{ urls: "stun:stun.l.google.com:19302" }],
+        ...(forceRelay ? { iceTransportPolicy: "relay" as RTCIceTransportPolicy } : {}),
       });
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -84,6 +86,9 @@ export default function WebCallLab({ slug }: { slug: string }) {
       pc.oniceconnectionstatechange = () => {
         setStatus(`ice:${pc.iceConnectionState}`);
         setMetrics((x) => [...x, `ice=${pc.iceConnectionState}`]);
+      };
+      pc.onicegatheringstatechange = () => {
+        setMetrics((x) => [...x, `ice_gathering=${pc.iceGatheringState}`]);
       };
 
       const ws = new WebSocket(
@@ -159,6 +164,11 @@ export default function WebCallLab({ slug }: { slug: string }) {
       };
 
       ws.send(JSON.stringify({
+        type: "diagnostic",
+        event: "client_ice_policy",
+        force_relay: forceRelay,
+      }));
+      ws.send(JSON.stringify({
         type: "offer",
         sdp: pc.localDescription?.sdp,
         sdp_type: pc.localDescription?.type || "offer",
@@ -180,6 +190,10 @@ export default function WebCallLab({ slug }: { slug: string }) {
       <div style={{ display: "grid", gap: 12, maxWidth: 520 }}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Customer name" />
         <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Mobile number" />
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="checkbox" checked={forceRelay} onChange={(e) => setForceRelay(e.target.checked)} disabled={running} />
+          Force TURN relay (diagnostic)
+        </label>
         {!running ? <button onClick={start}>Start Web Call Test</button> : <button onClick={cleanup}>End Call</button>}
         <strong>Status: {status}</strong>
         {error && <div style={{ color: "crimson" }}>{error}</div>}
