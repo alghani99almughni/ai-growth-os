@@ -73,6 +73,7 @@ from .voice_escalate import router as voice_escalate_router
 from .routes_onboarding import router as onboarding_router
 from .routes_platform_comms import router as platform_comms_router
 from .voice_runtime import VoiceTurnController
+from .voice_crosscheck import crosscheck_turn, crosscheck_payload
 from .agent_training import AGENT_TRAINING_CONTEXT
 
 voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRealtimeAdapter()})
@@ -2248,6 +2249,36 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                     state.customer_transcript.append(inp); state.turn_index+=1
                     call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+inp
                     call.language=detect_language(inp); call.ai_turns=(call.ai_turns or 0)+1
+
+                    # Fast per-turn Knowledge Brain V2 cross-check. This runs inside the
+                    # active voice session after every finalized customer utterance. It is
+                    # deliberately side-effect free and does not block or replace the
+                    # realtime provider. Dynamic facts still require the owned live tools.
+                    try:
+                        crosscheck = crosscheck_turn(inp, tenant.industry)
+                        state.metadata["last_voice_crosscheck"] = crosscheck_payload(crosscheck)
+                        logging.getLogger("uvicorn.error").info(
+                            "VOICE_TURN_CROSSCHECK call_id=%s turn=%s intent=%s confidence=%.2f "
+                            "live_data_required=%s latency_ms=%.3f entities=%s",
+                            call.id, state.turn_index, crosscheck.intent,
+                            crosscheck.confidence, crosscheck.live_data_required,
+                            crosscheck.latency_ms, crosscheck.entities,
+                        )
+                        # Diagnostics only: expose the classification to the caller UI,
+                        # never expose internal routing instructions or business data.
+                        await websocket.send_json({
+                            "type": "voice_crosscheck",
+                            "turn": state.turn_index,
+                            "intent": crosscheck.intent,
+                            "confidence": crosscheck.confidence,
+                            "live_data_required": crosscheck.live_data_required,
+                            "latency_ms": crosscheck.latency_ms,
+                        })
+                    except Exception:
+                        logging.getLogger("uvicorn.error").exception(
+                            "VOICE_TURN_CROSSCHECK_FAILED call_id=%s turn=%s",
+                            call.id, state.turn_index + 1,
+                        )
                     db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":inp})
                 if out:
                     turn_controller.output(chars=len(out))
