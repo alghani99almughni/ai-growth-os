@@ -284,9 +284,10 @@ def extract_booking_entities(text: str) -> dict:
                 meridiem = "PM"
             else:
                 meridiem = None
-            time_value = f"{hour}:{minute} {meridiem}" if meridiem else (
-                f"{hour}:{minute}" if minute else f"{hour}"
-            )
+            if minute:
+                time_value = f"{hour}:{minute} {meridiem}" if meridiem else f"{hour}:{minute}"
+            else:
+                time_value = f"{hour} {meridiem}" if meridiem else f"{hour}"
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
@@ -300,9 +301,11 @@ def extract_booking_entities(text: str) -> dict:
                     time_value=f"{hour12}:{minute24}"
             else:
                 number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
+                temporal_cue=bool(re.search(r"\b(?:at|by|around|about)\b", value))
                 word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
-                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
-                hour=int(digit_hour.group(1)) if digit_hour else word_hour
+                digit_hour=re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
+                has_meridiem=bool(re.search(r"\b(?:morning|subah|savere|am|a\.m\.|uday|sakal|evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b",value))
+                hour=int(digit_hour.group(1)) if digit_hour else (word_hour if temporal_cue and has_meridiem else None)
                 if hour:
                     if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b",value):
                         meridiem="AM"
