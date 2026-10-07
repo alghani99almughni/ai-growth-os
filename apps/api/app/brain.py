@@ -89,7 +89,7 @@ _HUMAN_BARE = (
 _HUMAN_TARGET = r"person|someone|somebody|staff|team|agent|operator|human|manager|supervisor|superior|owner|boss|executive"
 _HUMAN_REQUEST_RE = re.compile(
     r"\b(?:" + _HUMAN_BARE + r")\b"
-    r"|\b(?:talk|speak|connect|transfer|put me|get me|give me|call me|let me)\b.{0,30}\b(?:" + _HUMAN_TARGET + r")\b",
+    r"|\b(?:need|talk|speak|connect|transfer|put me|get me|give me|call me|let me)\b.{0,30}\b(?:" + _HUMAN_TARGET + r")\b",
     re.I,
 )
 
