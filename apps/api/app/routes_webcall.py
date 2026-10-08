@@ -153,13 +153,27 @@ async def public_webcall(websocket: WebSocket, call_id: str, room_token: str | N
             await websocket.close(code=1011)
             return
 
+        tenant_name = tenant.name
+        customer_name = customer.name if customer else "there"
+        system_instruction = _system_prompt(
+            tenant,
+            customer,
+            knowledge_context(db, tenant.id),
+            tenant_policy(db, tenant.id),
+        )
+
         runtime = WebCallRuntime(
             websocket,
             call_id,
             providers,
-            _system_prompt(tenant, customer, knowledge_context(db, tenant.id), tenant_policy(db, tenant.id)),
+            system_instruction,
         )
         runtime.gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRealtimeAdapter()})
+
+        # Do not keep a SQLAlchemy session/connection checked out for the lifetime
+        # of a WebRTC call. Long-lived calls must not exhaust the DB pool under
+        # concurrent WebCall load.
+        db.close()
 
         await websocket.send_json({"type": "status", "status": "signaling_ready"})
         first = await websocket.receive_json()
@@ -179,12 +193,16 @@ async def public_webcall(websocket: WebSocket, call_id: str, room_token: str | N
         runtime.provider_task = asyncio.create_task(runtime.provider_loop())
         asyncio.create_task(wait_for_ice_timeout(runtime, 60.0))
 
-        call.status = "connected"
-        call.answered_at = datetime.utcnow()
-        db.commit()
+        db = SessionLocal()
+        call = db.get(CallRecord, call_id)
+        if call:
+            call.status = "connected"
+            call.answered_at = datetime.utcnow()
+            db.commit()
+        db.close()
         await websocket.send_json({"type": "status", "status": "ai_connected", "provider": provider.name})
 
-        greeting = f"Say this greeting naturally and then listen: Hello {customer.name if customer else 'there'}, welcome to {tenant.name}. How can I help you today?"
+        greeting = f"Say this greeting naturally and then listen: Hello {customer_name}, welcome to {tenant_name}. How can I help you today?"
         await runtime.gateway.adapter_for(provider).send_text(session, greeting)
 
         while not runtime.closed:
@@ -214,12 +232,14 @@ async def public_webcall(websocket: WebSocket, call_id: str, room_token: str | N
     finally:
         if runtime:
             await runtime.close()
+        final_db = SessionLocal()
         try:
-            call = db.get(CallRecord, call_id)
+            call = final_db.get(CallRecord, call_id)
             if call and call.status not in ("completed", "ended"):
                 call.status = "failed" if call_failed else "completed"
                 call.ended_at = datetime.utcnow()
-                db.commit()
+                final_db.commit()
         except Exception:
-            db.rollback()
-        db.close()
+            final_db.rollback()
+        finally:
+            final_db.close()
