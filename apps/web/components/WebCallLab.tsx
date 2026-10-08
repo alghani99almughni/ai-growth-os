@@ -133,8 +133,10 @@ export default function WebCallLab({ slug }: { slug: string }) {
       );
       wsRef.current = ws;
 
+      // ICE candidates must never go out before the SDP offer.
+      let offerSent = false;
       const sendIce = (candidate: RTCIceCandidateInit) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (offerSent && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: "ice-candidate", candidate }));
         } else {
           pendingIceRef.current.push(candidate);
@@ -150,16 +152,12 @@ export default function WebCallLab({ slug }: { slug: string }) {
         });
       };
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      await new Promise<void>((resolve, reject) => {
+      // Register socket handlers immediately so fast localhost opens/messages
+      // cannot race ahead of the handlers being installed.
+      const opened = new Promise<void>((resolve, reject) => {
         const timeout = window.setTimeout(() => reject(new Error("Web Call signaling timed out.")), 15000);
         ws.onopen = () => {
           window.clearTimeout(timeout);
-          // The server requires the SDP offer to be the first client message.
-          // ICE candidates may have been gathered before the WebSocket opened,
-          // so keep them queued until immediately after the offer is sent.
           resolve();
         };
         ws.onerror = () => {
@@ -167,6 +165,10 @@ export default function WebCallLab({ slug }: { slug: string }) {
           reject(new Error("Web Call signaling failed."));
         };
       });
+
+      ws.onclose = (e) => {
+        setMetrics((x) => [...x, `ws_close code=${e.code} reason=${e.reason || "-"}`]);
+      };
 
       ws.onmessage = async (event) => {
         try {
@@ -202,20 +204,28 @@ export default function WebCallLab({ slug }: { slug: string }) {
         }
       };
 
-      // The server requires the SDP offer to be the first client message.
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await opened;
+
+      // Offer must be the first client message.
       ws.send(JSON.stringify({
         type: "offer",
         sdp: pc.localDescription?.sdp,
         sdp_type: pc.localDescription?.type || "offer",
       }));
+      offerSent = true;
+
+      // Only after the offer is on the wire may queued ICE candidates be sent.
+      for (const candidate of pendingIceRef.current.splice(0)) {
+        sendIce(candidate);
+      }
+
       ws.send(JSON.stringify({
         type: "diagnostic",
         event: "client_ice_policy",
         force_relay: forceRelay,
       }));
-      // Now that the required first message (offer) is on the wire, flush
-      // any ICE candidates gathered while the WebSocket was opening.
-      for (const candidate of pendingIceRef.current.splice(0)) sendIce(candidate);
       addLine("system", "WebRTC media session started.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Web Call failed.");
