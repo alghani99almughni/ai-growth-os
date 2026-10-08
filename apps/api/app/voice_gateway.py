@@ -160,65 +160,231 @@ class GeminiLiveAdapter:
         except Exception: pass
 
 class OpenAIRealtimeAdapter:
-    """OpenAI Realtime adapter. Messages are normalized into the gateway contract."""
+    """OpenAI Realtime GA WebSocket adapter.
+
+    The Realtime Beta wire protocol was retired. This adapter intentionally
+    speaks the current GA session/event shapes and never sends the legacy
+    OpenAI-Beta header.
+    """
     name = "openai"
+
+    @staticmethod
+    def _session_update(system_instruction: str, tools: list[dict[str, Any]], model: str) -> dict[str, Any]:
+        session: dict[str, Any] = {
+            "type": "session.update",
+            "session": {
+                "type": "realtime",
+                "model": model,
+                "output_modalities": ["audio"],
+                "instructions": system_instruction,
+                "audio": {
+                    "input": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "turn_detection": {
+                            "type": "server_vad",
+                            "interrupt_response": True,
+                            "create_response": True,
+                        },
+                        "transcription": {"model": "gpt-4o-mini-transcribe"},
+                    },
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": 24000},
+                        "voice": "marin",
+                    },
+                },
+            },
+        }
+        if tools:
+            session["session"]["tools"] = [
+                {
+                    "type": "function",
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("parameters", {"type": "object", "properties": {}}),
+                }
+                for t in tools
+            ]
+            session["session"]["tool_choice"] = "auto"
+        return session
+
     async def connect(self, provider, *, system_instruction, tools, state):
         import websockets
-        url="wss://api.openai.com/v1/realtime?model="+provider.model
-        ws=await websockets.connect(url, additional_headers={"Authorization":"Bearer "+provider.api_key,
-            "OpenAI-Beta":"realtime=v1"}, max_size=8*1024*1024, ping_interval=20, ping_timeout=20)
-        session={"type":"session.update","session":{
-            "modalities":["text","audio"],"instructions":system_instruction,
-            "input_audio_format":"pcm16","output_audio_format":"pcm16",
-            "turn_detection":{"type":"server_vad","interrupt_response":True,"create_response":True},
-            "input_audio_transcription":{"model":"gpt-4o-mini-transcribe"},
-            "tools":[{"type":"function","name":t["name"],"description":t.get("description",""),
-                     "parameters":t.get("parameters",{"type":"object","properties":{}})} for t in tools],
-            "tool_choice":"auto"}}
-        await ws.send(json.dumps(session))
-        if state.customer_transcript or state.assistant_transcript:
-            await ws.send(json.dumps({"type":"conversation.item.create","item":{
-                "type":"message","role":"user","content":[{"type":"input_text","text":
-                "Resume this call context. Customer said: "+ " | ".join(state.customer_transcript[-8:])+
-                ". Assistant previously said: "+ " | ".join(state.assistant_transcript[-8:])} ]}}))
-        return ws
+
+        model = provider.model
+        url = "wss://api.openai.com/v1/realtime?model=" + model
+        # GA Realtime: do NOT send OpenAI-Beta: realtime=v1.
+        ws = await websockets.connect(
+            url,
+            additional_headers={"Authorization": "Bearer " + provider.api_key},
+            max_size=8 * 1024 * 1024,
+            ping_interval=20,
+            ping_timeout=20,
+        )
+
+        try:
+            # Wait for the GA session to be created before updating it.
+            first = await asyncio.wait_for(ws.recv(), timeout=10)
+            if isinstance(first, bytes):
+                first = first.decode()
+            created = json.loads(first)
+            if created.get("type") == "error":
+                raise RuntimeError(created.get("error", {}).get("message", "Realtime session error"))
+            if created.get("type") != "session.created":
+                raise RuntimeError("Unexpected OpenAI realtime event: " + str(created.get("type")))
+
+            await ws.send(json.dumps(self._session_update(system_instruction, tools, model)))
+
+            updated = await asyncio.wait_for(ws.recv(), timeout=10)
+            if isinstance(updated, bytes):
+                updated = updated.decode()
+            update_event = json.loads(updated)
+            if update_event.get("type") == "error":
+                raise RuntimeError(update_event.get("error", {}).get("message", "Realtime session update error"))
+            if update_event.get("type") != "session.updated":
+                raise RuntimeError("Unexpected OpenAI realtime event after session.update: " + str(update_event.get("type")))
+
+            if state.customer_transcript or state.assistant_transcript:
+                await ws.send(json.dumps({
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{
+                            "type": "input_text",
+                            "text":
+                                "Resume this call context. Customer said: "
+                                + " | ".join(state.customer_transcript[-8:])
+                                + ". Assistant previously said: "
+                                + " | ".join(state.assistant_transcript[-8:]),
+                        }],
+                    },
+                }))
+            return ws
+        except Exception:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            raise
+
     async def send_audio(self, session, pcm16_b64):
-        await session.send(json.dumps({"type":"input_audio_buffer.append","audio":pcm16_b64}))
+        await session.send(json.dumps({
+            "type": "input_audio_buffer.append",
+            "audio": pcm16_b64,
+        }))
+
     async def interrupt(self, session):
-        try: await session.send(json.dumps({"type":"response.cancel"}))
-        except Exception: pass
+        try:
+            await session.send(json.dumps({"type": "response.cancel"}))
+            await session.send(json.dumps({"type": "output_audio_buffer.clear"}))
+        except Exception:
+            pass
+
     async def recv(self, session):
-        raw=await session.recv()
-        if isinstance(raw,bytes): raw=raw.decode()
-        msg=json.loads(raw); typ=msg.get("type","")
-        if typ=="response.audio.delta":
-            return {"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":msg.get("delta","")}}]}}}
-        if typ in ("conversation.item.input_audio_transcription.completed","input_audio_transcription.completed"):
-            return {"serverContent":{"inputTranscription":{"text":msg.get("transcript","")}}}
-        if typ=="response.audio_transcript.delta":
-            return {"serverContent":{"outputTranscription":{"text":msg.get("delta","")}}}
-        if typ=="response.function_call_arguments.done":
-            try: args=json.loads(msg.get("arguments") or "{}")
-            except Exception: args={}
-            return {"toolCall":{"functionCalls":[{"id":msg.get("call_id"),"name":msg.get("name"),"args":args}]}}
-        if typ=="response.done":
-            return {"_gateway":{"event":"response_done"}}
-        if typ=="input_audio_buffer.speech_started":
-            return {"_gateway":{"event":"interruption"}}
-        if typ=="error":
-            raise RuntimeError(msg.get("error",{}).get("message","Realtime provider error"))
-        return {"_gateway":{"event":"ignored","type":typ}}
+        raw = await session.recv()
+        if isinstance(raw, bytes):
+            raw = raw.decode()
+        msg = json.loads(raw)
+        typ = msg.get("type", "")
+
+        if typ == "response.output_audio.delta":
+            return {
+                "serverContent": {
+                    "modelTurn": {
+                        "parts": [{
+                            "inlineData": {
+                                "mimeType": "audio/pcm;rate=24000",
+                                "data": msg.get("delta", ""),
+                            }
+                        }]
+                    }
+                }
+            }
+
+        if typ in (
+            "conversation.item.input_audio_transcription.completed",
+            "input_audio_transcription.completed",
+        ):
+            return {
+                "serverContent": {
+                    "inputTranscription": {"text": msg.get("transcript", "")}
+                }
+            }
+
+        if typ == "response.output_audio_transcript.delta":
+            return {
+                "serverContent": {
+                    "outputTranscription": {"text": msg.get("delta", "")}
+                }
+            }
+
+        if typ == "response.output_audio_transcript.done":
+            return {
+                "serverContent": {
+                    "outputTranscription": {"text": msg.get("transcript", "")}
+                }
+            }
+
+        if typ == "response.function_call_arguments.done":
+            try:
+                args = json.loads(msg.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            return {
+                "toolCall": {
+                    "functionCalls": [{
+                        "id": msg.get("call_id"),
+                        "name": msg.get("name"),
+                        "args": args,
+                    }]
+                }
+            }
+
+        if typ == "response.done":
+            return {"_gateway": {"event": "response_done"}}
+
+        if typ == "input_audio_buffer.speech_started":
+            return {"_gateway": {"event": "interruption"}}
+
+        if typ == "error":
+            raise RuntimeError(msg.get("error", {}).get("message", "Realtime provider error"))
+
+        return {"_gateway": {"event": "ignored", "type": typ}}
+
     async def send_text(self, session, text):
-        await session.send(json.dumps({"type":"conversation.item.create","item":{"type":"message","role":"user","content":[{"type":"input_text","text":text}]}}))
-        await session.send(json.dumps({"type":"response.create","response":{"modalities":["audio","text"]}}))
+        await session.send(json.dumps({
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+            },
+        }))
+        await session.send(json.dumps({
+            "type": "response.create",
+            "response": {"output_modalities": ["audio"]},
+        }))
+
     async def send_tool_response(self, session, responses):
         for r in responses:
-            await session.send(json.dumps({"type":"conversation.item.create","item":{
-                "type":"function_call_output","call_id":r.get("id"),"output":json.dumps(r.get("response",{}))}}))
-        await session.send(json.dumps({"type":"response.create","response":{"modalities":["audio","text"]}}))
+            await session.send(json.dumps({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "function_call_output",
+                    "call_id": r.get("id"),
+                    "output": json.dumps(r.get("response", {})),
+                },
+            }))
+        await session.send(json.dumps({
+            "type": "response.create",
+            "response": {"output_modalities": ["audio"]},
+        }))
+
     async def close(self, session):
-        try: await session.close()
-        except Exception: pass
+        try:
+            await session.close()
+        except Exception:
+            pass
 
 class VoiceGateway:
     def __init__(self, adapters: dict[str, VoiceProviderAdapter]):
