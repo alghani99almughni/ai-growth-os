@@ -18,3 +18,22 @@ def test_pcm_framer_emits_multiple_frames():
     assert len(out) == 2
     assert all(len(x) == frame_bytes for x in out)
     assert len(framer.buffer) == 7
+
+
+from app.language_policy import language_persona_policy, language_policy_prompt
+
+
+def test_hindi_female_persona_is_explicit_and_customer_gender_can_be_unknown():
+    policy = language_persona_policy(language="hi-IN", agent_gender="female")
+    prompt = language_policy_prompt(policy)
+    assert policy["locale"] == "hi-IN"
+    assert policy["agent_gender"] == "female"
+    assert policy["customer_gender"] == "unknown"
+    assert "feminine first-person forms" in prompt
+    assert "Do not infer customer gender from a name" in prompt
+
+
+def test_unknown_language_falls_back_to_indian_english():
+    policy = language_persona_policy(language="xx-XX", agent_gender="bad-value")
+    assert policy["locale"] == "en-IN"
+    assert policy["agent_gender"] == "neutral"
