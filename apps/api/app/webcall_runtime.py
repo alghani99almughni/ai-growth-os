@@ -132,7 +132,13 @@ class WebCallRuntime:
         self.state = VoiceSessionState(call_id=call_id, provider_name="")
         self.closed = False
         self.last_customer_activity = time.monotonic()
-        self._resampler = AudioResampler(format="s16", layout="mono", rate=16000)
+        # Provider-native input rates: Gemini Live expects 16 kHz PCM; OpenAI
+        # Realtime GA expects 24 kHz PCM for audio/pcm. Keep separate resamplers
+        # so provider failover does not reuse state from a different sample rate.
+        self._resamplers = {
+            "gemini": AudioResampler(format="s16", layout="mono", rate=16000),
+            "openai": AudioResampler(format="s16", layout="mono", rate=24000),
+        }
         self._last_stats_signature = ""
 
     async def send(self, payload: dict[str, Any]) -> None:
@@ -275,7 +281,9 @@ class WebCallRuntime:
         while not self.closed:
             try:
                 frame = await track.recv()
-                frames = self._resampler.resample(frame)
+                provider_name = self.provider.name if self.provider else "gemini"
+                resampler = self._resamplers.get(provider_name, self._resamplers["gemini"])
+                frames = resampler.resample(frame)
                 for resampled in frames:
                     pcm = bytes(resampled.planes[0])
                     if self.provider and self.session:
