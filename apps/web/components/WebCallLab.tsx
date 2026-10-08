@@ -157,7 +157,9 @@ export default function WebCallLab({ slug }: { slug: string }) {
         const timeout = window.setTimeout(() => reject(new Error("Web Call signaling timed out.")), 15000);
         ws.onopen = () => {
           window.clearTimeout(timeout);
-          for (const candidate of pendingIceRef.current.splice(0)) sendIce(candidate);
+          // The server requires the SDP offer to be the first client message.
+          // ICE candidates may have been gathered before the WebSocket opened,
+          // so keep them queued until immediately after the offer is sent.
           resolve();
         };
         ws.onerror = () => {
@@ -211,6 +213,9 @@ export default function WebCallLab({ slug }: { slug: string }) {
         event: "client_ice_policy",
         force_relay: forceRelay,
       }));
+      // Now that the required first message (offer) is on the wire, flush
+      // any ICE candidates gathered while the WebSocket was opening.
+      for (const candidate of pendingIceRef.current.splice(0)) sendIce(candidate);
       addLine("system", "WebRTC media session started.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Web Call failed.");
