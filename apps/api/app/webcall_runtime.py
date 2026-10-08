@@ -99,49 +99,6 @@ class OutgoingAudioTrack(MediaStreamTrack):
             except asyncio.QueueEmpty:
                 break
 
-    @staticmethod
-    def _has_speech_energy(pcm: bytes, threshold: int = 500) -> bool:
-        """Reject continuous microphone silence/noise from resetting inactivity timeout."""
-        if len(pcm) < 4:
-            return False
-        samples = memoryview(pcm).cast("h")
-        if not samples:
-            return False
-        mean_abs = sum(abs(int(x)) for x in samples) / len(samples)
-        return mean_abs >= threshold
-
-    async def _stats_loop(self) -> None:
-        while not self.closed:
-            try:
-                stats = await self.pc.getStats()
-                for item in stats.values():
-                    if item.type != "candidate-pair" or getattr(item, "state", "") != "succeeded":
-                        continue
-                    local_id = getattr(item, "localCandidateId", None)
-                    remote_id = getattr(item, "remoteCandidateId", None)
-                    local_candidate = stats.get(local_id) if local_id else None
-                    remote_candidate = stats.get(remote_id) if remote_id else None
-                    local_type = getattr(local_candidate, "candidateType", "unknown") if local_candidate else "unknown"
-                    remote_type = getattr(remote_candidate, "candidateType", "unknown") if remote_candidate else "unknown"
-                    signature = "|".join(str(getattr(item, k, "")) for k in ("localCandidateId", "remoteCandidateId", "currentRoundTripTime", "bytesSent", "bytesReceived")) + f"|{local_type}|{remote_type}"
-                    if signature != self._last_stats_signature:
-                        self._last_stats_signature = signature
-                        await self.send({
-                            "type": "diagnostic",
-                            "event": "ice_candidate_pair",
-                            "local_candidate_id": local_id,
-                            "remote_candidate_id": remote_id,
-                            "local_candidate_type": local_type,
-                            "remote_candidate_type": remote_type,
-                            "path": "relay" if "relay" in {local_type, remote_type} else ("srflx" if "srflx" in {local_type, remote_type} else "host"),
-                            "rtt_ms": round(float(getattr(item, "currentRoundTripTime", 0) or 0) * 1000, 2),
-                            "bytes_sent": getattr(item, "bytesSent", 0),
-                            "bytes_received": getattr(item, "bytesReceived", 0),
-                        })
-            except Exception as exc:
-                if not self.closed:
-                    logger.debug("WEB_CALL_STATS_FAILED call_id=%s error=%s", self.call_id, str(exc)[:160])
-            await asyncio.sleep(2)
     async def close(self) -> None:
         self.closed = True
         self.clear()
@@ -181,6 +138,93 @@ class WebCallRuntime:
     async def send(self, payload: dict[str, Any]) -> None:
         if self.websocket.application_state == WebSocketState.CONNECTED:
             await self.websocket.send_json(payload)
+
+    @staticmethod
+    def _has_speech_energy(pcm: bytes, threshold: int = 500) -> bool:
+        """Reject continuous microphone silence/noise from resetting inactivity timeout."""
+        if len(pcm) < 4:
+            return False
+        samples = memoryview(pcm).cast("h")
+        if not samples:
+            return False
+        mean_abs = sum(abs(int(x)) for x in samples) / len(samples)
+        return mean_abs >= threshold
+
+    async def _stats_loop(self) -> None:
+        while not self.closed:
+            try:
+                stats = await self.pc.getStats()
+                for item in stats.values():
+                    if item.type != "candidate-pair" or getattr(item, "state", "") != "succeeded":
+                        continue
+
+                    local_id = getattr(item, "localCandidateId", None)
+                    remote_id = getattr(item, "remoteCandidateId", None)
+                    local_candidate = stats.get(local_id) if local_id else None
+                    remote_candidate = stats.get(remote_id) if remote_id else None
+
+                    local_type = (
+                        getattr(local_candidate, "candidateType", "unknown")
+                        if local_candidate else "unknown"
+                    )
+                    remote_type = (
+                        getattr(remote_candidate, "candidateType", "unknown")
+                        if remote_candidate else "unknown"
+                    )
+
+                    signature = (
+                        "|".join(
+                            str(getattr(item, k, ""))
+                            for k in (
+                                "localCandidateId",
+                                "remoteCandidateId",
+                                "currentRoundTripTime",
+                                "bytesSent",
+                                "bytesReceived",
+                            )
+                        )
+                        + f"|{local_type}|{remote_type}"
+                    )
+
+                    if signature != self._last_stats_signature:
+                        self._last_stats_signature = signature
+
+                        if "relay" in {local_type, remote_type}:
+                            path = "relay"
+                        elif "srflx" in {local_type, remote_type}:
+                            path = "srflx"
+                        else:
+                            path = "host"
+
+                        await self.send({
+                            "type": "diagnostic",
+                            "event": "ice_candidate_pair",
+                            "local_candidate_id": local_id,
+                            "remote_candidate_id": remote_id,
+                            "local_candidate_type": local_type,
+                            "remote_candidate_type": remote_type,
+                            "path": path,
+                            "rtt_ms": round(
+                                float(
+                                    getattr(item, "currentRoundTripTime", 0) or 0
+                                ) * 1000,
+                                2,
+                            ),
+                            "bytes_sent": getattr(item, "bytesSent", 0),
+                            "bytes_received": getattr(item, "bytesReceived", 0),
+                        })
+
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                if not self.closed:
+                    logger.debug(
+                        "WEB_CALL_STATS_FAILED call_id=%s error=%s",
+                        self.call_id,
+                        str(exc)[:160],
+                    )
+
+            await asyncio.sleep(2)
 
     async def setup_peer(self, offer: dict[str, Any]) -> None:
         self.pc.addTrack(self.outgoing)
