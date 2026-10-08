@@ -37,3 +37,17 @@ def test_unknown_language_falls_back_to_indian_english():
     policy = language_persona_policy(language="xx-XX", agent_gender="bad-value")
     assert policy["locale"] == "en-IN"
     assert policy["agent_gender"] == "neutral"
+
+
+from app.webcall_runtime import WebCallRuntime
+
+
+def test_runtime_owns_stats_and_speech_helpers():
+    assert hasattr(WebCallRuntime, "_stats_loop")
+    assert hasattr(WebCallRuntime, "_has_speech_energy")
+    assert not hasattr(PcmAudioTrack, "_stats_loop")
+
+
+def test_runtime_inactivity_threshold_is_strictly_speech_based():
+    assert WebCallRuntime._has_speech_energy(b"\x00\x00" * 480) is False
+    assert WebCallRuntime._has_speech_energy((1000).to_bytes(2, "little", signed=True) * 480) is True
