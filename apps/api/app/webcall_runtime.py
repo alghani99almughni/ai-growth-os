@@ -117,14 +117,23 @@ class OutgoingAudioTrack(MediaStreamTrack):
                 for item in stats.values():
                     if item.type != "candidate-pair" or getattr(item, "state", "") != "succeeded":
                         continue
-                    signature = "|".join(str(getattr(item, k, "")) for k in ("localCandidateId", "remoteCandidateId", "currentRoundTripTime", "bytesSent", "bytesReceived"))
+                    local_id = getattr(item, "localCandidateId", None)
+                    remote_id = getattr(item, "remoteCandidateId", None)
+                    local_candidate = stats.get(local_id) if local_id else None
+                    remote_candidate = stats.get(remote_id) if remote_id else None
+                    local_type = getattr(local_candidate, "candidateType", "unknown") if local_candidate else "unknown"
+                    remote_type = getattr(remote_candidate, "candidateType", "unknown") if remote_candidate else "unknown"
+                    signature = "|".join(str(getattr(item, k, "")) for k in ("localCandidateId", "remoteCandidateId", "currentRoundTripTime", "bytesSent", "bytesReceived")) + f"|{local_type}|{remote_type}"
                     if signature != self._last_stats_signature:
                         self._last_stats_signature = signature
                         await self.send({
                             "type": "diagnostic",
                             "event": "ice_candidate_pair",
-                            "local_candidate_id": getattr(item, "localCandidateId", None),
-                            "remote_candidate_id": getattr(item, "remoteCandidateId", None),
+                            "local_candidate_id": local_id,
+                            "remote_candidate_id": remote_id,
+                            "local_candidate_type": local_type,
+                            "remote_candidate_type": remote_type,
+                            "path": "relay" if "relay" in {local_type, remote_type} else ("srflx" if "srflx" in {local_type, remote_type} else "host"),
                             "rtt_ms": round(float(getattr(item, "currentRoundTripTime", 0) or 0) * 1000, 2),
                             "bytes_sent": getattr(item, "bytesSent", 0),
                             "bytes_received": getattr(item, "bytesReceived", 0),
