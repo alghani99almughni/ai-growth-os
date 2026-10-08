@@ -21,6 +21,7 @@ from .tenant_policy import tenant_policy, policy_context
 from .brain import knowledge_context
 from .agent_training import AGENT_TRAINING_CONTEXT
 from .voice_gateway import VoiceGateway, VoiceProvider, GeminiLiveAdapter, OpenAIRealtimeAdapter
+from .language_policy import language_persona_policy, language_policy_prompt
 from .webcall_runtime import WebCallRuntime, wait_for_ice_timeout
 
 router = APIRouter()
@@ -45,6 +46,15 @@ def _verify_room_token(token: str, call_id: str) -> bool:
 
 
 def _system_prompt(tenant, customer, context: str, policy: dict[str, Any]) -> str:
+    voice_cfg = policy.get("voice") if isinstance(policy.get("voice"), dict) else {}
+    language_cfg = policy.get("language") if isinstance(policy.get("language"), dict) else {}
+    voice_policy = language_persona_policy(
+        language=voice_cfg.get("locale") or voice_cfg.get("language") or language_cfg.get("locale") or policy.get("language"),
+        agent_gender=voice_cfg.get("agent_gender") or policy.get("agent_gender"),
+        customer_gender=getattr(customer, "gender", None),
+        formality=voice_cfg.get("formality") or policy.get("formality"),
+        region=voice_cfg.get("region") or policy.get("region"),
+    )
     return f"""You are the AI customer engagement voice agent for {tenant.name}.
 
 UNIVERSAL AGENT TRAINING:
@@ -52,6 +62,8 @@ UNIVERSAL AGENT TRAINING:
 
 TENANT POLICY:
 {policy_context(policy)}
+
+{language_policy_prompt(voice_policy)}
 
 APPROVED BUSINESS CONTEXT:
 {context}
