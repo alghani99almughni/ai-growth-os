@@ -21,6 +21,8 @@ export default function WebCallLab({ slug }: { slug: string }) {
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const iceRecoveryTimerRef = useRef<number | null>(null);
+  const iceRecoveryAttemptedRef = useRef(false);
 
   const addLine = (role: Line["role"], text: string) => {
     if (!text?.trim()) return;
@@ -35,6 +37,9 @@ export default function WebCallLab({ slug }: { slug: string }) {
     wsRef.current = null;
     pcRef.current = null;
     streamRef.current = null;
+    if (iceRecoveryTimerRef.current !== null) window.clearTimeout(iceRecoveryTimerRef.current);
+    iceRecoveryTimerRef.current = null;
+    iceRecoveryAttemptedRef.current = false;
     setRunning(false);
   };
 
@@ -72,6 +77,28 @@ export default function WebCallLab({ slug }: { slug: string }) {
       pcRef.current = pc;
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
+      const turnAvailable = (iceData.ice_servers || []).some((server: { urls?: string | string[] }) =>
+        (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => String(url || "").toLowerCase().startsWith("turn:") || String(url || "").toLowerCase().startsWith("turns:"))
+      );
+      const recoverIce = () => {
+        if (forceRelay || iceRecoveryAttemptedRef.current || !turnAvailable || pc.connectionState === "connected") return;
+        iceRecoveryAttemptedRef.current = true;
+        setMetrics((x) => [...x, "ice_recovery=forcing_turn_relay"]);
+        try {
+          pc.setConfiguration({ iceServers: iceData.ice_servers, iceTransportPolicy: "relay" });
+          pc.restartIce();
+        } catch {
+          setMetrics((x) => [...x, "ice_recovery=failed"]);
+        }
+      };
+      const scheduleIceRecovery = () => {
+        if (iceRecoveryTimerRef.current !== null || forceRelay || iceRecoveryAttemptedRef.current) return;
+        iceRecoveryTimerRef.current = window.setTimeout(() => {
+          iceRecoveryTimerRef.current = null;
+          recoverIce();
+        }, 5000);
+      };
+
       pc.ontrack = (event) => {
         const remote = event.streams[0] || new MediaStream([event.track]);
         if (audioRef.current) {
@@ -82,10 +109,20 @@ export default function WebCallLab({ slug }: { slug: string }) {
       pc.onconnectionstatechange = () => {
         setStatus(`webrtc:${pc.connectionState}`);
         setMetrics((x) => [...x, `pc=${pc.connectionState}`]);
+        if (pc.connectionState === "connected") {
+          if (iceRecoveryTimerRef.current !== null) window.clearTimeout(iceRecoveryTimerRef.current);
+          iceRecoveryTimerRef.current = null;
+        } else if (pc.connectionState === "checking" || pc.connectionState === "disconnected") {
+          scheduleIceRecovery();
+        } else if (pc.connectionState === "failed") {
+          recoverIce();
+        }
       };
       pc.oniceconnectionstatechange = () => {
         setStatus(`ice:${pc.iceConnectionState}`);
         setMetrics((x) => [...x, `ice=${pc.iceConnectionState}`]);
+        if (pc.iceConnectionState === "checking") scheduleIceRecovery();
+        if (pc.iceConnectionState === "failed") recoverIce();
       };
       pc.onicegatheringstatechange = () => {
         setMetrics((x) => [...x, `ice_gathering=${pc.iceGatheringState}`]);
