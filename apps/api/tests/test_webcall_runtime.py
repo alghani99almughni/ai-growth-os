@@ -51,3 +51,20 @@ def test_runtime_owns_stats_and_speech_helpers():
 def test_runtime_inactivity_threshold_is_strictly_speech_based():
     assert WebCallRuntime._has_speech_energy(b"\x00\x00" * 480) is False
     assert WebCallRuntime._has_speech_energy((1000).to_bytes(2, "little", signed=True) * 480) is True
+
+
+from app.voice_gateway import OpenAIRealtimeAdapter
+
+
+def test_openai_realtime_uses_ga_session_shape():
+    payload = OpenAIRealtimeAdapter._session_update("Be concise.", [], "gpt-realtime-2.1")
+    session = payload["session"]
+    assert payload["type"] == "session.update"
+    assert session["type"] == "realtime"
+    assert session["model"] == "gpt-realtime-2.1"
+    assert session["output_modalities"] == ["audio"]
+    assert session["audio"]["input"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert session["audio"]["output"]["format"] == {"type": "audio/pcm", "rate": 24000}
+    assert session["audio"]["output"]["voice"] == "marin"
+    assert "input_audio_format" not in session
+    assert "output_audio_format" not in session
