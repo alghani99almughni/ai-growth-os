@@ -112,7 +112,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
         if (pc.connectionState === "connected") {
           if (iceRecoveryTimerRef.current !== null) window.clearTimeout(iceRecoveryTimerRef.current);
           iceRecoveryTimerRef.current = null;
-        } else if (pc.connectionState === "checking" || pc.connectionState === "disconnected") {
+        } else if (pc.connectionState === "disconnected") {
           scheduleIceRecovery();
         } else if (pc.connectionState === "failed") {
           recoverIce();
@@ -200,15 +200,16 @@ export default function WebCallLab({ slug }: { slug: string }) {
         }
       };
 
-      ws.send(JSON.stringify({
-        type: "diagnostic",
-        event: "client_ice_policy",
-        force_relay: forceRelay,
-      }));
+      // The server requires the SDP offer to be the first client message.
       ws.send(JSON.stringify({
         type: "offer",
         sdp: pc.localDescription?.sdp,
         sdp_type: pc.localDescription?.type || "offer",
+      }));
+      ws.send(JSON.stringify({
+        type: "diagnostic",
+        event: "client_ice_policy",
+        force_relay: forceRelay,
       }));
       addLine("system", "WebRTC media session started.");
     } catch (e) {
