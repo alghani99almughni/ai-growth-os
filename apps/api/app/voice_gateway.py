@@ -185,7 +185,7 @@ class OpenAIRealtimeAdapter:
                             "interrupt_response": True,
                             "create_response": True,
                         },
-                        "transcription": {"model": "gpt-4o-mini-transcribe"},
+                        "transcription": {"model": "gpt-4o-transcribe"},
                     },
                     "output": {
                         "format": {"type": "audio/pcm", "rate": 24000},
