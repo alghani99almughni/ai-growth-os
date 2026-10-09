@@ -61,3 +61,21 @@ async def openrouter_webcall_turn(call_id: str, payload: OpenRouterTurnPayload):
         raise HTTPException(status_code=502, detail="OpenRouter could not generate a reply. Check server configuration and provider status.") from None
 
     return {"text": reply, "provider": "openrouter"}
+
+
+@router.post("/api/v1/public/webcall/{call_id}/end")
+async def end_openrouter_webcall(call_id: str, payload: OpenRouterTurnPayload):
+    if not _verify_room_token(payload.room_token, call_id):
+        raise HTTPException(status_code=403, detail="Invalid or expired call token")
+    db = SessionLocal()
+    try:
+        call = db.get(CallRecord, call_id)
+        if not call or call.source != "pwa_voice":
+            raise HTTPException(status_code=404, detail="Call not found")
+        if call.status not in ("completed", "ended", "failed"):
+            call.status = "completed"
+            call.ended_at = datetime.utcnow()
+            db.commit()
+        return {"status": call.status}
+    finally:
+        db.close()
