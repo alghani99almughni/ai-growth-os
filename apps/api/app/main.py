@@ -73,6 +73,7 @@ from .voice_escalate import router as voice_escalate_router
 from .routes_onboarding import router as onboarding_router
 from .routes_platform_comms import router as platform_comms_router
 from .routes_webcall import router as webcall_router
+from .routes_openrouter_webcall import router as openrouter_webcall_router
 from .voice_runtime import VoiceTurnController
 from .voice_crosscheck import crosscheck_turn, crosscheck_payload
 from .agent_training import AGENT_TRAINING_CONTEXT
@@ -106,6 +107,7 @@ app.include_router(voice_escalate_router)
 app.include_router(onboarding_router)
 app.include_router(platform_comms_router)
 app.include_router(webcall_router)
+app.include_router(openrouter_webcall_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in settings.allowed_origins.split(",") if x.strip()],
