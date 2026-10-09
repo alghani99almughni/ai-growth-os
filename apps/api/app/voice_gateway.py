@@ -82,7 +82,7 @@ class GeminiLiveAdapter:
         import websockets
         model = normalize_gemini_model(provider.model)
         url = ("wss://generativelanguage.googleapis.com/ws/"
-               "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+               "google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
                "?key=" + provider.api_key)
         ws = await websockets.connect(url, max_size=8*1024*1024, ping_interval=20, ping_timeout=20)
         setup = {"setup":{"model":"models/"+model,
