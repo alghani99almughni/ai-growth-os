@@ -16,6 +16,14 @@ export default function WebCallLab({ slug }: { slug: string }) {
   const [metrics, setMetrics] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [forceRelay, setForceRelay] = useState(false);
+  const [browserVoiceMode, setBrowserVoiceMode] = useState(false);
+  const browserRecognitionRef = useRef<any>(null);
+  const browserTokenRef = useRef("");
+  const browserCallIdRef = useRef("");
+  const browserStoppedRef = useRef(false);
+  const browserBusyRef = useRef(false);
+  const browserHistoryRef = useRef<{role: "user" | "assistant"; content: string}[]>([]);
+  const browserTimeoutRef = useRef<number | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pendingIceRef = useRef<RTCIceCandidateInit[]>([]);
@@ -41,6 +49,142 @@ export default function WebCallLab({ slug }: { slug: string }) {
     iceRecoveryTimerRef.current = null;
     iceRecoveryAttemptedRef.current = false;
     setRunning(false);
+  };
+
+  const stopBrowserVoice = async () => {
+    browserStoppedRef.current = true;
+    try { browserRecognitionRef.current?.stop(); } catch {}
+    browserRecognitionRef.current = null;
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    if (browserTimeoutRef.current !== null) window.clearTimeout(browserTimeoutRef.current);
+    browserTimeoutRef.current = null;
+    const callId = browserCallIdRef.current;
+    const token = browserTokenRef.current;
+    if (callId && token) {
+      try {
+        await fetch(`${api()}/api/v1/public/webcall/${encodeURIComponent(callId)}/end`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ room_token: token }),
+        });
+      } catch {}
+    }
+    setBrowserVoiceMode(false);
+    setRunning(false);
+    setStatus("ended");
+    addLine("system", "OpenRouter browser voice session ended.");
+  };
+
+  const startOpenRouterBrowserVoice = async () => {
+    if (running) return;
+    setError("");
+    setLines([]);
+    setMetrics([]);
+    setStatus("starting_openrouter_browser_voice");
+    browserStoppedRef.current = false;
+    browserBusyRef.current = false;
+    browserHistoryRef.current = [];
+    try {
+      if (!name.trim() || !phone.trim()) throw new Error("Enter name and mobile number first.");
+      const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SpeechRecognitionCtor || !window.speechSynthesis) {
+        throw new Error("Browser speech recognition/synthesis is unavailable. Use current Chrome or Edge.");
+      }
+      const startRes = await fetch(`${api()}/api/v1/public/business/${encodeURIComponent(slug)}/call`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), phone: phone.trim() }),
+      });
+      const startData = await startRes.json().catch(() => ({}));
+      if (!startRes.ok) throw new Error(startData.detail || "Could not start call.");
+      browserTokenRef.current = startData.room_token;
+      browserCallIdRef.current = startData.call_id;
+      setBrowserVoiceMode(true);
+      setRunning(true);
+      setStatus("openrouter_browser_voice_listening");
+      setMetrics(["voice_mode=browser_speech_recognition+openrouter+browser_speech_synthesis"]);
+      addLine("system", "OpenRouter browser voice session started. Allow microphone access and speak after the greeting.");
+      const greet = `Hello ${startData.business_name || "there"}, welcome. How can I help you today?`;
+      addLine("ai", greet);
+      const greeting = new SpeechSynthesisUtterance(greet);
+      greeting.lang = "en-IN";
+      window.speechSynthesis.speak(greeting);
+
+      const recognition = new SpeechRecognitionCtor();
+      browserRecognitionRef.current = recognition;
+      recognition.lang = "en-IN";
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      const armInactivityTimeout = () => {
+        if (browserTimeoutRef.current !== null) window.clearTimeout(browserTimeoutRef.current);
+        browserTimeoutRef.current = window.setTimeout(() => {
+          addLine("system", "No customer response for 60 seconds. Ending call.");
+          void stopBrowserVoice();
+        }, 60000);
+      };
+      armInactivityTimeout();
+      recognition.onresult = async (event: any) => {
+        const result = event.results?.[event.results.length - 1];
+        const text = String(result?.[0]?.transcript || "").trim();
+        if (!text || browserBusyRef.current || browserStoppedRef.current) return;
+        browserBusyRef.current = true;
+        armInactivityTimeout();
+        addLine("customer", text);
+        window.speechSynthesis.cancel();
+        recognition.stop();
+        try {
+          const response = await fetch(`${api()}/api/v1/public/webcall/${encodeURIComponent(browserCallIdRef.current)}/turn`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              room_token: browserTokenRef.current,
+              text,
+              history: browserHistoryRef.current.slice(-12),
+            }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "OpenRouter turn failed.");
+          const reply = String(data.text || "").trim();
+          if (!reply) throw new Error("OpenRouter returned an empty reply.");
+          browserHistoryRef.current.push({ role: "user", content: text }, { role: "assistant", content: reply });
+          browserHistoryRef.current = browserHistoryRef.current.slice(-12);
+          addLine("ai", reply);
+          setMetrics((x) => [...x, "provider=openrouter", "turn=completed"]);
+          const utterance = new SpeechSynthesisUtterance(reply);
+          utterance.lang = "en-IN";
+          utterance.onend = () => {
+            armInactivityTimeout();
+            if (!browserStoppedRef.current) {
+              try { recognition.start(); } catch {}
+            }
+          };
+          window.speechSynthesis.speak(utterance);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "OpenRouter turn failed.");
+          setMetrics((x) => [...x, "turn=failed"]);
+          if (!browserStoppedRef.current) {
+            try { recognition.start(); } catch {}
+          }
+        } finally {
+          browserBusyRef.current = false;
+        }
+      };
+      recognition.onerror = (event: any) => {
+        if (event.error && event.error !== "no-speech" && !browserStoppedRef.current) {
+          setError(`Browser speech recognition: ${event.error}`);
+        }
+      };
+      recognition.onend = () => {
+        if (!browserStoppedRef.current && !browserBusyRef.current && window.speechSynthesis.speaking === false) {
+          try { recognition.start(); } catch {}
+        }
+      };
+      recognition.start();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start OpenRouter browser voice.");
+      setStatus("error");
+      await stopBrowserVoice();
+    }
   };
 
   const start = async () => {
@@ -247,7 +391,16 @@ export default function WebCallLab({ slug }: { slug: string }) {
           <input type="checkbox" checked={forceRelay} onChange={(e) => setForceRelay(e.target.checked)} disabled={running} />
           Force TURN relay (diagnostic)
         </label>
-        {!running ? <button onClick={start}>Start Web Call Test</button> : <button onClick={cleanup}>End Call</button>}
+        {!running ? (
+          <>
+            <button onClick={start}>Start WebRTC Realtime Test</button>
+            <button onClick={startOpenRouterBrowserVoice}>Start OpenRouter Browser Voice Test</button>
+          </>
+        ) : browserVoiceMode ? (
+          <button onClick={() => void stopBrowserVoice()}>End OpenRouter Voice Test</button>
+        ) : (
+          <button onClick={cleanup}>End WebRTC Call</button>
+        )}
         <strong>Status: {status}</strong>
         {error && <div style={{ color: "crimson" }}>{error}</div>}
       </div>
