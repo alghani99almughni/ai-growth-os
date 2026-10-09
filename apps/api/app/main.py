@@ -95,8 +95,8 @@ import jwt,secrets,hashlib,hmac
 import asyncio
 configure_logging()
 validate_environment(exit_on_failure=False)
-# Keep the single FastAPI instance created at module import above.
-# Reassigning `app` here discards any routes registered before this point.
+# Keep one FastAPI application object throughout module initialization.
+# A second assignment can silently orphan any routes registered on the first object.
 app.add_middleware(RequestContextMiddleware)
 install_error_handlers(app)
 app.include_router(health_router)
