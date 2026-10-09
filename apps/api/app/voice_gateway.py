@@ -103,10 +103,17 @@ class GeminiLiveAdapter:
                 first = first.decode()
             if "setupComplete" not in json.loads(first):
                 raise RuntimeError("Gemini setup failed: " + first[:300])
-        except Exception:
-            try: await ws.close()
-            except Exception: pass
-            raise
+        except Exception as exc:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            # The Gemini API key is carried in the WebSocket URL query string.
+            # Do not let provider exceptions leak it into application logs.
+            safe_error = str(exc).replace(provider.api_key, "[REDACTED]")[:300]
+            raise RuntimeError(
+                f"Gemini Live connection/setup failed ({type(exc).__name__}): {safe_error}"
+            ) from None
         if state.customer_transcript or state.assistant_transcript:
             history = [{"role":"user","parts":[{"text":"Previous call context (resume):\nCustomer: "+c}]} for c in state.customer_transcript[-8:]]
             if state.assistant_transcript:
