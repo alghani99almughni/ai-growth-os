@@ -10,6 +10,7 @@ from app import routes_openrouter_webcall as route
 
 class FakeDB:
     def __init__(self, call, tenant, customer):
+        self.call = call
         self.rows = {"CallRecord": call, "Tenant": tenant, "Customer": customer}
         self.closed = False
 
