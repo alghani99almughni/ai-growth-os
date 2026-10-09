@@ -95,7 +95,8 @@ import jwt,secrets,hashlib,hmac
 import asyncio
 configure_logging()
 validate_environment(exit_on_failure=False)
-app=FastAPI(title="AI Growth OS API",version="1.0.0")
+# Keep the single FastAPI instance created at module import above.
+# Reassigning `app` here discards any routes registered before this point.
 app.add_middleware(RequestContextMiddleware)
 install_error_handlers(app)
 app.include_router(health_router)
