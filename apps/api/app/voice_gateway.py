@@ -10,12 +10,15 @@ import asyncio, json, time, logging
 
 _log = logging.getLogger("uvicorn.error")
 
-# Old/invalid Gemini Live model names -> currently valid model IDs.
-# This makes the fix work even if the old name is still set in an env var on Render.
+# Legacy Gemini Live IDs are normalized so stale .env / tenant settings do not
+# silently select an unavailable or retired model.
 GEMINI_MODEL_ALIASES = {
-    "gemini-live-2.5-flash-native-audio": "gemini-2.5-flash-native-audio-latest",
+    "gemini-live-2.5-flash-native-audio": "gemini-3.8-live",
+    "gemini-2.5-flash-native-audio-latest": "gemini-3.8-live",
+    "gemini-2.5-flash-native-audio-preview-12-2025": "gemini-3.8-live",
+    "gemini-2.0-flash-live-001": "gemini-3.8-live",
 }
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-native-audio-latest"
+GEMINI_DEFAULT_MODEL = "gemini-3.8-live"
 
 
 def normalize_gemini_model(name: str | None) -> str:
