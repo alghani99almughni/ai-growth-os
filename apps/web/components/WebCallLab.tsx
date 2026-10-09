@@ -65,7 +65,7 @@ export default function WebCallLab({ slug }: { slug: string }) {
         await fetch(`${api()}/api/v1/public/webcall/${encodeURIComponent(callId)}/end`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room_token: token }),
+          body: JSON.stringify({ room_token: token, text: "end", history: [] }),
         });
       } catch {}
     }
