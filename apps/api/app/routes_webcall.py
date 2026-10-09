@@ -243,8 +243,3 @@ async def public_webcall(websocket: WebSocket, call_id: str, room_token: str | N
             final_db.rollback()
         finally:
             final_db.close()
-
-
-# Keep the OpenRouter turn endpoint registered alongside the Web Call signaling route.
-from .routes_openrouter_webcall import router as openrouter_webcall_router
-router.include_router(openrouter_webcall_router)
