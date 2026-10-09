@@ -11,14 +11,27 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from pathlib import Path
 
 import websockets
 
-from app.config import settings
+from app.config import Settings
 from app.voice_gateway import normalize_gemini_model
 
 
+def load_settings() -> Settings:
+    """Load .env from the current directory, repo root, or apps/api."""
+    candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[1] / ".env",  # apps/api/.env
+        Path(__file__).resolve().parents[2] / ".env",  # repository root .env
+    ]
+    env_file = next((path for path in candidates if path.is_file()), None)
+    return Settings(_env_file=str(env_file) if env_file else None)
+
+
 async def main() -> int:
+    settings = load_settings()
     api_key = settings.gemini_api_key.strip()
     if not api_key:
         print("FAIL: GEMINI_API_KEY is not loaded. Check apps/api/.env (do not paste the key).")
