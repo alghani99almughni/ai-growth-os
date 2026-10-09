@@ -19,6 +19,9 @@ class FakeDB:
     def close(self):
         self.closed = True
 
+    def commit(self):
+        pass
+
 
 class FakeTurnService:
     def __init__(self):
@@ -72,3 +75,13 @@ async def test_openrouter_turn_rejects_inactive_call(monkeypatch):
     with pytest.raises(HTTPException) as error:
         await route.openrouter_webcall_turn("call-1", payload)
     assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_openrouter_end_marks_active_call_completed(monkeypatch):
+    db = setup_route(monkeypatch)
+    payload = route.OpenRouterTurnPayload(room_token="valid", text="end", history=[])
+    result = await route.end_openrouter_webcall("call-1", payload)
+    assert result == {"status": "completed"}
+    assert db.call.status == "completed"
+    assert db.call.ended_at is not None
