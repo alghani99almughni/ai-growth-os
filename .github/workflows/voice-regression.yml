@@ -5,16 +5,18 @@ on:
     paths:
       - "apps/api/app/**"
       - "apps/api/tests/**"
+      - "apps/api/requirements.txt"
       - ".github/workflows/voice-regression.yml"
   pull_request:
     paths:
       - "apps/api/app/**"
       - "apps/api/tests/**"
+      - "apps/api/requirements.txt"
       - ".github/workflows/voice-regression.yml"
   workflow_dispatch:
 
 jobs:
-  deterministic-voice-regression:
+  api-voice-regression:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -30,5 +32,5 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run deterministic voice regression
-        run: pytest -q tests/test_voice_agent_regression.py
+      - name: Run complete API test suite including async WebCall tests
+        run: pytest -q --asyncio-mode=auto
