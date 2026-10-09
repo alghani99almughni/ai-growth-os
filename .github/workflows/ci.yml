@@ -1,7 +1,7 @@
 name: CI
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "feat/webcall-runtime-dograh-media-engine"]
   pull_request:
     branches: ["main"]
 jobs:

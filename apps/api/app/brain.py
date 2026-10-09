@@ -14,6 +14,7 @@ from .semantic_knowledge import semantic_match
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
 from .booking import available_slots
+from .knowledge_brain_v2 import classify as classify_v2
 from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -88,7 +89,7 @@ _HUMAN_BARE = (
 _HUMAN_TARGET = r"person|someone|somebody|staff|team|agent|operator|human|manager|supervisor|superior|owner|boss|executive"
 _HUMAN_REQUEST_RE = re.compile(
     r"\b(?:" + _HUMAN_BARE + r")\b"
-    r"|\b(?:talk|speak|connect|transfer|put me|get me|give me|call me|let me)\b.{0,30}\b(?:" + _HUMAN_TARGET + r")\b",
+    r"|\b(?:need|talk|speak|connect|transfer|put me|get me|give me|call me|let me)\b.{0,30}\b(?:" + _HUMAN_TARGET + r")\b",
     re.I,
 )
 
@@ -283,9 +284,10 @@ def extract_booking_entities(text: str) -> dict:
                 meridiem = "PM"
             else:
                 meridiem = None
-            time_value = f"{hour}:{minute} {meridiem}" if meridiem else (
-                f"{hour}:{minute}" if minute else f"{hour}"
-            )
+            if minute:
+                time_value = f"{hour}:{minute} {meridiem}" if meridiem else f"{hour}:{minute}"
+            else:
+                time_value = f"{hour} {meridiem}" if meridiem else f"{hour}"
         else:
             tm24 = re.search(r"\b([01]?\d|2[0-3]):([0-5]\d)\b", value)
             if tm24:
@@ -299,9 +301,11 @@ def extract_booking_entities(text: str) -> dict:
                     time_value=f"{hour12}:{minute24}"
             else:
                 number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
+                temporal_cue=bool(re.search(r"\b(?:at|by|around|about)\b", value))
                 word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
-                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
-                hour=int(digit_hour.group(1)) if digit_hour else word_hour
+                digit_hour=re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
+                has_meridiem=bool(re.search(r"\b(?:morning|subah|savere|am|a\.m\.|uday|sakal|evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b",value))
+                hour=int(digit_hour.group(1)) if digit_hour else (word_hour if temporal_cue and has_meridiem else None)
                 if hour:
                     if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b",value):
                         meridiem="AM"
@@ -787,6 +791,9 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
+    # V2 is a safe cross-check only after all existing knowledge layers miss.
+    # It never supplies an answer and never overrides an existing knowledge hit.
+    v2 = None if (direct or semantic or library or faq) else classify_v2(message, tenant.industry)
     knowledge_hit = False
     handoff_required = (intent == "human_handoff")
     retrieval_stage="structured"
@@ -820,7 +827,12 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "APPROVED CONTEXT:\n" + context +
             "\n\nRECENT CONVERSATION:\n" + history +
             "\n\nCUSTOMER LANGUAGE: " + language +
-            "\nCUSTOMER:\n" + message
+            "\nCUSTOMER:\n" + message +
+            ("\n\nKNOWLEDGE BRAIN V2 CROSS-CHECK: canonical_intent=" + v2.intent +
+             "; confidence=" + str(v2.confidence) +
+             "; entities=" + json.dumps(v2.entities, ensure_ascii=False) +
+             ". Treat this only as routing context. Do not invent missing business facts."
+             if v2 else "")
         )
         approved_knowledge=db.scalar(select(KnowledgeItem).where(
             KnowledgeItem.tenant_id==tenant_id,
@@ -836,7 +848,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             retrieval_stage="unconfigured_handoff"
         else:
             reply,provider=await last_resort_reply(db,tenant_id,prompt)
-            retrieval_stage="generation"
+            retrieval_stage="v2_crosscheck_api" if v2 else "generation"
         if not reply or any(x in (reply or "").casefold() for x in ("i don't have enough information","i need a human","human team","call you back","team member to follow up","i cannot verify")):
             handoff_required=True
             reply="I don't want to give you an unverified answer. I'll arrange for our team to call you back."
