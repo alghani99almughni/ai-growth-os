@@ -53,7 +53,7 @@ async def openrouter_webcall_turn(call_id: str, payload: OpenRouterTurnPayload):
         db.close()
 
     try:
-        reply = await OpenRouterTurnService().respond(system_prompt, payload.history, payload.text)
+        reply = await OpenRouterTurnService().respond(system_prompt, payload.history, payload.text.strip())
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     except OpenRouterError:
