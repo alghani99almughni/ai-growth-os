@@ -83,11 +83,17 @@ jobs:
               d=turn(slug,cid,"possible for today",cv);cv=d.get("conversation_id")
               d=turn(slug,cid,"now",cv);cv=d.get("conversation_id");a=d["reply"]
               if re.search(r"what time would you prefer|what time do you prefer",a,re.I):raise RuntimeError("NOW repeated the time question")
-              if re.search(r"confirm|कन्फर्म|కన్ఫర్మ",a,re.I):
-                d=turn(slug,cid,"Yes, confirm it",cv);b=d.get("booking",{})
-                if not b.get("confirmed") or not b.get("booking_id"):raise RuntimeError("booking create missing booking_id")
-                bid=b["booking_id"];d=turn(slug,cid,"Cancel my appointment",cv);b=d.get("booking",{})
-                if not b.get("cancellation_confirmed") or b.get("booking_id")!=bid:raise RuntimeError("booking cancellation failed")
+              if not re.search(r"confirm|कन्फर्म|కన్ఫర్మ|shall i book|would you like me to book|should i book",a,re.I):
+                raise RuntimeError("booking flow did not reach an explicit confirmation prompt; refusing to skip booking assertions")
+              d=turn(slug,cid,"Yes, confirm it",cv);cv=d.get("conversation_id",cv);b=d.get("booking",{})
+              if not b.get("confirmed") or not b.get("booking_id"):raise RuntimeError("booking create missing confirmed=true or booking_id")
+              bid=b["booking_id"]
+              d=turn(slug,cid,"Cancel my appointment",cv);cv=d.get("conversation_id",cv);act=d.get("appointment_action",{})
+              if act.get("status")!="awaiting_confirmation" or str(act.get("appointment_id",bid))!=str(bid):
+                raise RuntimeError("cancellation did not enter awaiting_confirmation for the same appointment: "+json.dumps(act,ensure_ascii=False)[:300])
+              d=turn(slug,cid,"Yes, cancel it",cv);act=d.get("appointment_action",{})
+              if act.get("status")!="cancelled" or str(act.get("appointment_id",bid))!=str(bid):
+                raise RuntimeError("cancellation did not persist for the same appointment: "+json.dumps(act,ensure_ascii=False)[:300])
               ok+=1
             except Exception as e:bad+=1;err("booking",c,"appointment -> today -> now -> confirm -> cancel",e)
             try:
