@@ -2769,15 +2769,11 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 f"Appointment confirmed: {service.name} on "
                 f"{starts_at.isoformat()} (appointment_id={appointment.id})"
             )
-            appointment.notes = (
-                ((appointment.notes or "").strip() + "\\n")
-                if appointment.notes and f"call_id={call_for_booking.id}" not in appointment.notes
-                else (appointment.notes or "")
-            )
-            if f"call_id={call_for_booking.id}" not in (appointment.notes or ""):
+            existing_notes = (appointment.notes or "").strip()
+            if f"call_id={call_for_booking.id}" not in existing_notes:
                 appointment.notes = (
-                    (appointment.notes + " " if appointment.notes else "")
-                    + f"call_id={call_for_booking.id}"
+                    f"{existing_notes} | call_id={call_for_booking.id}"
+                    if existing_notes else f"call_id={call_for_booking.id}"
                 )
             if not already_confirmed:
                 db.add(InteractionEvent(
