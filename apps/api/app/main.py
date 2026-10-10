@@ -3474,6 +3474,7 @@ class PlatformCampaignContact(BaseModel):
 class PlatformCampaignRequest(BaseModel):
     name: str = Field(min_length=2, max_length=160)
     channel: str = Field(pattern="^(email|whatsapp)$")
+    template_name: str = Field(default="re_engagement", min_length=2, max_length=120)
     subject: str = Field(default="", max_length=300)
     body: str = Field(min_length=1, max_length=4000)
     contacts: list[PlatformCampaignContact] = Field(min_length=1, max_length=500)
@@ -3503,7 +3504,7 @@ def platform_communications_status(user: User = Depends(get_current_user), db: S
 @app.post("/api/v1/platform/communications/campaigns/send", status_code=201)
 async def platform_communications_send_campaign(payload: PlatformCampaignRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_platform_admin(user)
-    from .notifications import send_email, send_platform_whatsapp
+    from .notifications import send_email, _platform_whatsapp
     from .platform_settings import get_all
     from .config import settings as cfg
     settings_data = get_all(db)
@@ -3534,8 +3535,12 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
                 result = await send_email(address, payload.subject.strip() or payload.name, personalized)
                 sent = bool(result.get("sent"))
             else:
-                result = await send_platform_whatsapp(address, personalized)
-                sent = bool(result.get("sent"))
+                adapter = _platform_whatsapp()
+                if not adapter:
+                    result = {"sent": False, "status": "not_configured"}
+                else:
+                    result = await adapter.send_template(address, payload.template_name, {"customer_name": contact.name or "there", "business_name": str(settings_data.get("company_name") or "AI Growth OS"), "offer": personalized, "_lang": "en"})
+                    result = {"sent": True, "status": "sent", "provider_id": (result or {}).get("messages", [{}])[0].get("id") if isinstance(result, dict) else None}
             results.append({"recipient": address, "name": contact.name, "status": "sent" if sent else result.get("status", "failed"), "provider": result.get("provider_id")})
         except Exception as exc:
             results.append({"recipient": address, "name": contact.name, "status": "failed", "error": str(exc)[:300]})
