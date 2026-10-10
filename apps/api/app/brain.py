@@ -363,9 +363,9 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
         )
         if last_assistant:
             selected = re.search(
-                r"\\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\\s*,?\\s+"
-                r"([A-Za-z]+)\\s+(\\d{1,2}),\\s*(\\d{4})\\s+at\\s+"
-                r"(\\d{1,2})(?::([0-5]\\d))?\\s*(AM|PM)\\b",
+                r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s*,?\s+"
+                r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\s+at\s+"
+                r"(\d{1,2})(?::([0-5]\d))?\s*(AM|PM)\b",
                 last_assistant.content or "",
                 re.IGNORECASE,
             )
