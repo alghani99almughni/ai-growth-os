@@ -4100,3 +4100,84 @@ def monitoring_backups(limit: int = 100,
     } for r in rows]}
 
 # ============ END SESSION20A_MONITORING ============
+
+# ============ PLATFORM-OWNED WHATSAPP PROVIDER SETTINGS ============
+class PlatformWhatsAppProviderPayload(BaseModel):
+    provider: str = Field(pattern="^(openwa|meta)$")
+    base_url: str | None = Field(default=None, max_length=500)
+    api_key: str | None = Field(default=None, max_length=2000)
+    session_id: str | None = Field(default=None, max_length=200)
+    access_token: str | None = Field(default=None, max_length=4000)
+    phone_number_id: str | None = Field(default=None, max_length=200)
+    activate: bool = True
+
+
+def _platform_whatsapp_setting(db: Session, key: str, value=None):
+    row = db.scalar(select(PlatformSetting).where(PlatformSetting.key == key))
+    if row is None:
+        if value is None:
+            return None
+        row = PlatformSetting(id=str(uuid.uuid4()), key=key, value_json=json.dumps(value), updated_at=datetime.utcnow())
+        db.add(row)
+    else:
+        if value is None:
+            try:
+                return json.loads(row.value_json or "null")
+            except Exception:
+                return None
+        row.value_json = json.dumps(value)
+        row.updated_at = datetime.utcnow()
+    return row
+
+
+@app.get("/api/v1/platform/communications/whatsapp-provider")
+def get_platform_whatsapp_provider(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_platform_admin(user)
+    active = _platform_whatsapp_setting(db, "platform_whatsapp_active_provider")
+    configured = {}
+    for provider in ("openwa", "meta"):
+        row = _platform_whatsapp_setting(db, "platform_whatsapp_" + provider + "_encrypted")
+        configured[provider] = bool(row)
+    return {"active_provider": active or settings.notification_whatsapp_provider or settings.whatsapp_provider or "openwa", "configured": configured, "credentials_masked": True}
+
+
+@app.post("/api/v1/platform/communications/whatsapp-provider")
+async def save_platform_whatsapp_provider(payload: PlatformWhatsAppProviderPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_platform_admin(user)
+    provider = payload.provider
+    if provider == "openwa":
+        cfg = {"provider": "openwa", "base_url": (payload.base_url or "").strip(), "api_key": payload.api_key or "", "session_id": (payload.session_id or "").strip()}
+        if not all((cfg["base_url"], cfg["api_key"], cfg["session_id"])):
+            raise HTTPException(400, "OpenWA requires server URL, API key and session ID.")
+    else:
+        cfg = {"provider": "meta", "access_token": payload.access_token or "", "phone_number_id": (payload.phone_number_id or "").strip()}
+        if not all((cfg["access_token"], cfg["phone_number_id"])):
+            raise HTTPException(400, "Meta requires access token and phone number ID.")
+    key = settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key
+    if not key:
+        raise HTTPException(503, "Credential encryption is not configured. Set INTEGRATION_CREDENTIAL_ENCRYPTION_KEY or WHATSAPP_CREDENTIAL_ENCRYPTION_KEY in the API environment before saving provider credentials.")
+    # Verify the credentials before persisting them.
+    try:
+        if provider == "openwa":
+            async with httpx.AsyncClient(timeout=12) as client:
+                response = await client.get(cfg["base_url"].rstrip("/") + "/api/sessions/" + cfg["session_id"], headers={"X-API-Key": cfg["api_key"]})
+                response.raise_for_status()
+        else:
+            async with httpx.AsyncClient(timeout=12) as client:
+                response = await client.get("https://graph.facebook.com/" + settings.meta_graph_api_version + "/" + cfg["phone_number_id"], headers={"Authorization": "Bearer " + cfg["access_token"]})
+                response.raise_for_status()
+    except Exception:
+        raise HTTPException(400, "Provider validation failed. Check the URL, credentials, session/phone-number ID, and provider permissions.")
+    try:
+        encrypted = encrypt_channel_config(cfg, key)
+    except Exception:
+        raise HTTPException(503, "Could not encrypt provider credentials. Check the configured encryption key.")
+    _platform_whatsapp_setting(db, "platform_whatsapp_" + provider + "_encrypted", encrypted)
+    if payload.activate:
+        _platform_whatsapp_setting(db, "platform_whatsapp_active_provider", provider)
+    db.commit()
+    try:
+        audit(db, tenant_id=None, actor_id=user.id, action="platform.whatsapp_provider_saved", target_type="platform", target_id=provider, detail={"provider": provider, "activated": payload.activate})
+    except Exception:
+        pass
+    return {"saved": True, "provider": provider, "active_provider": provider if payload.activate else (_platform_whatsapp_setting(db, "platform_whatsapp_active_provider") or "openwa"), "credentials_masked": True}
