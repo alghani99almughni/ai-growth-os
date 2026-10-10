@@ -122,7 +122,7 @@ export default function PlatformCommunicationsPage() {
 function safeItems(d:any):any[] { return Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : []; }
 function parseDelimitedRows(raw:string, delimiter:string):string[][] {
   const rows:string[][]=[]; let row:string[]=[], cell="", quoted=false;
-  for(let i=0;i<raw.length;i++){const ch=raw[i];if(ch==='"'&&quoted&&raw[i+1]==='"'){cell+='"';i++;}else if(ch==='"'){quoted=!quoted;}else if(ch===delimiter&&!quoted){row.push(cell.trim());cell="";}else if((ch==="\\n"||ch==="\\r")&&!quoted){if(ch==="\\r"&&raw[i+1]==="\\n")i++;row.push(cell.trim());if(row.some(v=>v!==""))rows.push(row);row=[];cell="";}else cell+=ch;}
+  for(let i=0;i<raw.length;i++){const ch=raw[i];if(ch==='"'&&quoted&&raw[i+1]==='"'){cell+='"';i++;}else if(ch==='"'){quoted=!quoted;}else if(ch===delimiter&&!quoted){row.push(cell.trim());cell="";}else if((ch==="\n"||ch==="\r")&&!quoted){if(ch==="\r"&&raw[i+1]==="\n")i++;row.push(cell.trim());if(row.some(v=>v!==""))rows.push(row);row=[];cell="";}else cell+=ch;}
   row.push(cell.trim());if(row.some(v=>v!==""))rows.push(row);return rows;
 }
 function rowsToContacts(rows:string[][]):any[] {
