@@ -26,7 +26,7 @@ ACTIVE_STATUSES = ("requested", "confirmed", "checked_in", "serving")
 
 
 def _affirmative(text: str) -> bool:
-    value = " ".join((text or "").casefold().strip().split())
+    value = " ".join(re.sub(r"[^\\w\\s']+", "", (text or "").casefold()).strip().split())
     return value in {
         "yes", "yes please", "yeah", "yep", "sure", "confirm", "confirmed",
         "okay", "ok", "please do", "go ahead", "haan", "han", "ji", "theek hai",
