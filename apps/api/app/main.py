@@ -3491,10 +3491,10 @@ def platform_communications_status(user: User = Depends(get_current_user), db: S
         "support_email": s.get("support_email"),
         "email_configured": bool(cfg.resend_api_key and cfg.notification_from_email),
         "email_from": cfg.notification_from_email or "",
-        "whatsapp_configured": bool(
-            (cfg.notification_whatsapp_provider or cfg.whatsapp_provider) and
-            ((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) or
-             (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key))
+        "whatsapp_configured": (
+            bool((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
+            if (cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "").lower() == "meta"
+            else bool((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id))
         ),
         "whatsapp_provider": cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "not configured",
         "campaign_contact_limit": 500,
@@ -3521,12 +3521,14 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
         raise HTTPException(400, "No eligible recipients. Add valid contact details and explicit channel opt-in.")
     if payload.channel == "email" and not (cfg.resend_api_key and cfg.notification_from_email):
         raise HTTPException(503, "Platform email is not configured. Set RESEND_API_KEY and NOTIFICATION_FROM_EMAIL.")
-    if payload.channel == "whatsapp" and not (
-        (cfg.notification_whatsapp_provider or cfg.whatsapp_provider) and
-        ((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) or
-         (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key))
-    ):
-        raise HTTPException(503, "Platform WhatsApp is not configured. Configure the platform notification WhatsApp provider in the API environment.")
+    whatsapp_provider = (cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "").lower()
+    whatsapp_ready = (
+        bool((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
+        if whatsapp_provider == "meta"
+        else bool((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id))
+    )
+    if payload.channel == "whatsapp" and not whatsapp_ready:
+        raise HTTPException(503, "Platform WhatsApp is not configured. Configure the platform notification WhatsApp provider and all required credentials in the API environment.")
     results = []
     for contact, address in eligible:
         personalized = payload.body.replace("{{name}}", contact.name or "there").replace("{{company}}", str(settings_data.get("company_name") or "AI Growth OS"))
