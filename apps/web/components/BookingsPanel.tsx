@@ -205,7 +205,7 @@ export default function BookingsPanel({
               fontSize: 13,
             }}
           />
-          <button className="btn-ghost" onClick={loadAll} disabled={loading}>
+          <button className="btn-ghost" onClick={() => void loadAll()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
