@@ -2094,6 +2094,20 @@ async def public_voice(websocket:WebSocket,call_id:str):
     customer=db.get(Customer,call.customer_id) if call.customer_id else None
     context=knowledge_context(db,tenant.id)
     policy=tenant_policy(db,tenant.id)
+    identity_instructions = (
+        f"""CUSTOMER ALREADY VERIFIED:
+Name: {customer.name}
+Mobile: {customer.phone}
+
+The customer's name and mobile number are already saved and verified before this call.
+Do NOT ask for them again. Start with a warm greeting using their name."""
+        if customer and customer.name and customer.phone
+        else f"""CUSTOMER IDENTITY NEEDS CAPTURE:
+Known name: {customer.name if customer and customer.name else "not provided"}
+Known mobile: {customer.phone if customer and customer.phone else "not provided"}
+
+The customer's identity is NOT fully verified yet. Politely ask only for the missing name or mobile number. Once both are known, call save_customer_identity with both fields (reuse any already-known value). Do not claim identity is verified until the tool returns verified=true."""
+    )
     system = f"""You are the AI customer engagement voice agent for {tenant.name}.
 
 UNIVERSAL AGENT TRAINING:
@@ -2111,15 +2125,8 @@ Phone: {tenant.phone or "not configured"}
 Website: {tenant.website or "not configured"}
 Only state a location, address, phone number, or website when it is present in the business profile or approved business context. Never invent a location.
 
-CUSTOMER ALREADY VERIFIED:
-Name: {customer.name if customer else "Customer"}
-Mobile: {customer.phone if customer else "not provided"}
-
-This call has already collected and verified the customer's name and mobile number before the AI connection started.
-Do NOT ask the customer for their name or mobile number again.
-Start the call immediately with a warm spoken greeting such as:
-"Hello {customer.name if customer and customer.name else "there"}, welcome to {tenant.name}. How can I help you today?"
-Then listen for the customer's request.
+{identity_instructions}
+Start the call with a warm greeting. If identity is already verified, greet the customer by name; otherwise, collect the missing identity detail(s) naturally before proceeding with business requests.
 Do not invent business facts, prices, availability, policies, bookings or payment success.
 Today in the business timezone is {datetime.now(ZoneInfo(tenant.timezone)).date().isoformat()}. Resolve phrases such as "coming Tuesday", "next Tuesday", "this Friday", "tomorrow", and "the 29th" to an actual calendar date before discussing an appointment. Never ask the customer which date a weekday means when the calendar can resolve it.
 For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed").
@@ -2128,7 +2135,7 @@ If the caller pauses, gives an incomplete sentence, or the transcript appears ga
 If the caller says simple acknowledgement such as "okay", "alright", "fine", "thanks", or "thank you" after you have answered a question, do not hand off. Respond naturally and ask whether they need anything else; close the call politely if they are finished.
 For appointment booking, treat speech-recognition errors such as "bhukamp", "bukamp", "buking", or "boking" as possible booking words only when the surrounding request clearly contains appointment/day/time context; never hand off solely because recognition is imperfect.
 If booking details are missing, ask for exactly one missing detail at a time. If a requested time is unavailable or outside hours, offer another time instead of handing off.
-Use save_customer_identity only if the customer explicitly corrects or changes their name/number.
+When name/mobile identity is missing or inaccurate, use save_customer_identity as soon as both name and phone are known. This includes identity first supplied verbally during this call, not only corrections. Never send blank or guessed values.
 If a capability is disabled in TENANT POLICY, do not offer it or call a tool for it.
 For human requests or unresolved requests, use request_human_handoff. Do not announce a handoff before actually requesting it. Keep the customer informed in the customer's current language.
 LANGUAGE BEHAVIOR — CRITICAL:
