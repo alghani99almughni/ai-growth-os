@@ -2030,6 +2030,37 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
     db.add(call); db.commit(); db.refresh(call)
     return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"room_token":issue_call_room_token(call.id,"call-customer")}
 
+@app.post("/api/v1/public/business/{slug}/call/{call_id}/end")
+def end_public_call(slug: str, call_id: str, db: Session = Depends(get_db)):
+    """Persist the end of a customer PWA call so dashboard status and duration are accurate."""
+    tenant = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
+    if not tenant:
+        raise HTTPException(404, "Business not found")
+    call = db.scalar(select(CallRecord).where(
+        CallRecord.id == call_id,
+        CallRecord.tenant_id == tenant.id,
+        CallRecord.source == "pwa_voice",
+    ))
+    if not call:
+        raise HTTPException(404, "Call session not found")
+    if call.status not in ("completed", "ended", "failed", "missed"):
+        ended_at = datetime.utcnow()
+        call.ended_at = ended_at
+        call.duration_seconds = max(
+            0,
+            int((ended_at - (call.answered_at or call.started_at or ended_at)).total_seconds()),
+        )
+        call.status = "completed"
+        if not call.resolution:
+            call.resolution = "ai"
+        db.commit()
+    return {
+        "call_id": call.id,
+        "status": call.status,
+        "ended_at": call.ended_at.isoformat() if call.ended_at else None,
+        "duration_seconds": call.duration_seconds or 0,
+    }
+
 @app.websocket("/ws/public/voice/{call_id}")
 async def public_voice(websocket:WebSocket,call_id:str):
     import logging
@@ -2644,6 +2675,17 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     # Execute confirmed appointments here; the realtime WebSocket has a
     # separate provider-tool path and is not involved in these calls.
     booking=result.get("booking") or {}
+    if booking.get("confirmation_requested") and not payload.call_id:
+        # Never tell the caller a booking is confirmed if the request cannot be
+        # tied to the server-created call/customer identity and committed.
+        logging.getLogger("uvicorn.error").error(
+            "VOICE_PUBLIC_BOOKING_MISSING_CALL_ID tenant_id=%s conversation_id=%s",
+            t.id, result.get("conversation_id"),
+        )
+        result["reply"]="I couldn't securely save that appointment yet. Let's try confirming the booking once more."
+        result["booking"]={**booking,"confirmed":False,"error":"Missing call session ID"}
+        result["handoff_required"]=False
+
     if payload.call_id and booking.get("confirmation_requested"):
         call_for_booking=db.scalar(select(CallRecord).where(
             CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id
@@ -2848,6 +2890,8 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             else:
                 call.resolution="ai"
             if call.answered_at is None: call.answered_at=now
+            if call.status in ("ringing", "created"):
+                call.status="ongoing"
             db.commit()
     return {**result,"tenant_id":t.id,"call_id":payload.call_id}
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
