@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime, time as dt_time, timedelta
+from datetime import datetime, time as dt_time
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 
@@ -73,8 +74,10 @@ def _upcoming(db, tenant_id: str, customer_id: str):
     ).all()
 
 
-def _when(appointment: Appointment) -> str:
-    return appointment.starts_at.strftime("%A, %B %-d at %-I:%M %p")
+def _when(appointment: Appointment, tenant: Tenant) -> str:
+    # Appointment timestamps are stored as naive UTC; speak the tenant-local time.
+    local = appointment.starts_at.replace(tzinfo=ZoneInfo("UTC")).astimezone(ZoneInfo(tenant.timezone))
+    return local.strftime("%A, %B %-d at %-I:%M %p")
 
 
 def _event(db, tenant: Tenant, call: CallRecord, appointment: Appointment,
@@ -172,7 +175,7 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                 return {"reply": "No problem. I've left your appointment unchanged.",
                         "appointment_action": {"status": "unchanged", "appointment_id": appointment.id}}
             if not _affirmative(message):
-                return {"reply": f"Please say yes to cancel the appointment on {_when(appointment)}, or no to keep it.",
+                return {"reply": f"Please say yes to cancel the appointment on {_when(appointment, tenant)}, or no to keep it.",
                         "appointment_action": {"status": "awaiting_confirmation", "appointment_id": appointment.id}}
             before = {"status": appointment.status, "starts_at": appointment.starts_at.isoformat(),
                       "ends_at": appointment.ends_at.isoformat()}
@@ -192,8 +195,8 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                 conversation.state = "information"
             db.commit()
             _notify(tenant, call, appointment, "appointment.cancelled",
-                    f"Appointment cancelled: {_when(appointment)}")
-            return {"reply": f"Your appointment for {_when(appointment)} has been cancelled successfully.",
+                    f"Appointment cancelled: {_when(appointment, tenant)}")
+            return {"reply": f"Your appointment for {_when(appointment, tenant)} has been cancelled successfully.",
                     "appointment_action": {"status": "cancelled", "appointment_id": appointment.id}}
 
         if step == "reschedule_wait":
@@ -225,7 +228,7 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             if conversation:
                 conversation.state = f"voice_action:reschedule_confirm:{appointment.id}:{requested.isoformat()}"
-            return {"reply": f"I can move your appointment from {_when(appointment)} to {requested.strftime('%A, %B %-d at %-I:%M %p')}. Shall I confirm that change?",
+            return {"reply": f"I can move your appointment from {_when(appointment, tenant)} to {requested.strftime('%A, %B %-d at %-I:%M %p')}. Shall I confirm that change?",
                     "appointment_action": {"status": "awaiting_confirmation", "appointment_id": appointment.id,
                                            "requested_starts_at": requested.isoformat()}}
 
@@ -276,10 +279,50 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                 conversation.state = "information"
             db.commit()
             _notify(tenant, call, appointment, "appointment.rescheduled",
-                    f"Appointment rescheduled to {_when(appointment)}")
-            return {"reply": f"Your appointment has been rescheduled to {_when(appointment)}.",
+                    f"Appointment rescheduled to {_when(appointment, tenant)}")
+            return {"reply": f"Your appointment has been rescheduled to {_when(appointment, tenant)}.",
                     "appointment_action": {"status": "rescheduled", "appointment_id": appointment.id,
                                            "starts_at": appointment.starts_at.isoformat()}}
+
+    # If the customer is choosing among multiple appointments, resolve only an explicit choice.
+    choose_match = re.fullmatch(r"voice_action:choose:(cancel|reschedule):(.+)", state)
+    if choose_match:
+        choose_action, raw_ids = choose_match.groups()
+        ids = [x for x in raw_ids.split(",") if x]
+        choices = db.scalars(select(Appointment).where(
+            Appointment.id.in_(ids),
+            Appointment.tenant_id == tenant.id,
+            Appointment.customer_id == customer.id,
+            Appointment.status.in_(ACTIVE_STATUSES),
+        ).order_by(Appointment.starts_at.asc())).all()
+        value = " ".join((message or "").casefold().split())
+        chosen = None
+        number_match = re.search(r"\b(first|1|second|2|third|3|fourth|4)\b", value)
+        if number_match:
+            ordinal = {"first": 1, "1": 1, "second": 2, "2": 2, "third": 3, "3": 3, "fourth": 4, "4": 4}[number_match.group(1)]
+            if ordinal <= len(choices):
+                chosen = choices[ordinal - 1]
+        if not chosen:
+            for candidate in choices:
+                local_when = _when(candidate, tenant).casefold()
+                if local_when in value or all(token in value for token in local_when.replace(",", "").split() if token not in {"at", "on"}):
+                    chosen = candidate
+                    break
+        if not chosen:
+            return {"reply": "Please identify the appointment by its date and time, or say first, second, or third.",
+                    "appointment_action": {"status": "needs_clarification", "action": choose_action,
+                                           "appointment_ids": ids}}
+        if choose_action == "cancel":
+            if conversation:
+                conversation.state = f"voice_action:cancel_confirm:{chosen.id}"
+            return {"reply": f"I found your appointment for {_when(chosen, tenant)}. Do you want me to cancel this appointment?",
+                    "appointment_action": {"status": "awaiting_confirmation", "action": "cancel",
+                                           "appointment_id": chosen.id}}
+        if conversation:
+            conversation.state = f"voice_action:reschedule_wait:{chosen.id}"
+        return {"reply": f"I found your appointment for {_when(chosen, tenant)}. What new date and time would you prefer? Please include AM or PM.",
+                "appointment_action": {"status": "awaiting_new_time", "action": "reschedule",
+                                       "appointment_id": chosen.id}}
 
     # New cancellation/reschedule request: locate the customer's active appointments.
     intent = _action_intent(message)
@@ -301,12 +344,12 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
     if intent == "cancel":
         if conversation:
             conversation.state = f"voice_action:cancel_confirm:{appointment.id}"
-        return {"reply": f"I found your appointment for {_when(appointment)}. Do you want me to cancel this appointment?",
+        return {"reply": f"I found your appointment for {_when(appointment, tenant)}. Do you want me to cancel this appointment?",
                 "appointment_action": {"status": "awaiting_confirmation", "action": "cancel",
                                        "appointment_id": appointment.id}}
     if conversation:
         conversation.state = f"voice_action:reschedule_wait:{appointment.id}"
-    return {"reply": f"I found your appointment for {_when(appointment)}. What new date and time would you prefer? Please include AM or PM.",
+    return {"reply": f"I found your appointment for {_when(appointment, tenant)}. What new date and time would you prefer? Please include AM or PM.",
             "appointment_action": {"status": "awaiting_new_time", "action": "reschedule",
                                    "appointment_id": appointment.id}
 }
