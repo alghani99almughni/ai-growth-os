@@ -50,11 +50,8 @@ function fmtWhen(iso: string | null): string {
 
 function transcriptLines(raw: string | null): string[] {
   if (!raw) return [];
-  return raw.replace(/\\n/g, "
-").split(/?
-/).map(x => x.trim()).filter(Boolean).reverse();
+  return raw.replace(/\\n/g, "\n").split(/\r?\n/).map(x => x.trim()).filter(Boolean).reverse();
 }
-
 function esc(v: unknown): string {
   return String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
