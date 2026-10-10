@@ -14,6 +14,7 @@ const DEFAULT_ROWS: DayRow[] = DAYS.map((_, i) => ({
 }));
 
 type Industry = { key: string; label: string };
+type CatalogEntry = { id: string; category: string; business_type: string; roles: string[]; is_active: boolean; sort_order: number };
 
 export default function OnboardingPage() {
   const router = useRouter();
@@ -21,6 +22,8 @@ export default function OnboardingPage() {
   const [step, setStep] = useState(1);
   const [industries, setIndustries] = useState<Industry[]>([]);
   const [industry, setIndustry] = useState("cafe");
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [catalogEntryId, setCatalogEntryId] = useState("");
 
   const [businessName, setBusinessName] = useState("");
   const [ownerName, setOwnerName] = useState("");
@@ -50,7 +53,19 @@ export default function OnboardingPage() {
         { key: "real-estate", label: "Real Estate" },
         { key: "education", label: "Education" },
       ]));
+    fetch(API + "/api/v1/public/industry-catalog")
+      .then((r) => r.json())
+      .then((x) => {
+        const entries: CatalogEntry[] = x.items || [];
+        setCatalog(entries);
+        if (entries.length) setCatalogEntryId(entries[0].id);
+      })
+      .catch(() => setCatalog([]));
   }, []);
+
+  const catalogCategories = Array.from(new Set(catalog.map((x) => x.category)));
+  const selectedCatalogEntry = catalog.find((x) => x.id === catalogEntryId) || null;
+  const businessTypes = catalog.filter((x) => x.category === selectedCatalogEntry?.category);
 
   function upd(i: number, patch: Partial<DayRow>) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -59,7 +74,8 @@ export default function OnboardingPage() {
   function next() {
     setErr("");
     if (step === 1) {
-      if (!industry) return setErr("Please pick an industry.");
+      if (!industry) return setErr("Please pick an AI starter template.");
+      if (catalog.length && !catalogEntryId) return setErr("Please choose an industry category and business type.");
       setStep(2);
     } else if (step === 2) {
       if (!businessName.trim()) return setErr("Business name is required.");
@@ -85,6 +101,7 @@ export default function OnboardingPage() {
         body: JSON.stringify({
           business_name: businessName.trim(),
           industry,
+          catalog_entry_id: catalogEntryId || null,
           owner_name: ownerName.trim(),
           owner_email: ownerEmail.trim(),
           owner_password: ownerPassword,
@@ -148,8 +165,27 @@ export default function OnboardingPage() {
             <>
               <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>What kind of business?</h2>
               <p style={{ margin: "6px 0 20px", color: "#75839a", fontSize: 13 }}>
-                We&apos;ll set up the right defaults for you.
+                Choose the global industry category and business type used by your tenant. Then choose an AI starter template.
               </p>
+              {catalog.length > 0 && <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12, marginBottom: 22 }}>
+                  <Field label="Industry category">
+                    <select value={selectedCatalogEntry?.category || ""} onChange={(e) => {
+                      const nextEntry = catalog.find((x) => x.category === e.target.value);
+                      setCatalogEntryId(nextEntry?.id || "");
+                    }} style={input}>
+                      {catalogCategories.map((category) => <option key={category} value={category}>{category}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Business type / subcategory">
+                    <select value={catalogEntryId} onChange={(e) => setCatalogEntryId(e.target.value)} style={input}>
+                      {businessTypes.map((entry) => <option key={entry.id} value={entry.id}>{entry.business_type}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                {selectedCatalogEntry && <p style={{ margin: "-10px 0 20px", color: "#75839a", fontSize: 12 }}>Suggested roles: {selectedCatalogEntry.roles.slice(0, 6).join(", ")}{selectedCatalogEntry.roles.length > 6 ? "…" : ""}</p>}
+              </>}
+              <h3 style={{ margin: "0 0 10px", color: "#17213a", fontSize: 13 }}>AI starter template</h3>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10 }}>
                 {industries.map((it) => (
                   <button
