@@ -1,4 +1,5 @@
 import logging
+import httpx
 from fastapi import FastAPI,Depends,HTTPException,Query,Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
@@ -3491,12 +3492,12 @@ def platform_communications_status(user: User = Depends(get_current_user), db: S
         "support_email": s.get("support_email"),
         "email_configured": bool(cfg.resend_api_key and cfg.notification_from_email),
         "email_from": cfg.notification_from_email or "",
-        "whatsapp_configured": (
-            bool((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
-            if (cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "").lower() == "meta"
-            else bool(_platform_whatsapp_setting(db, "platform_whatsapp_openwa_encrypted") or ((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id)))
+        "whatsapp_configured": bool(
+            _platform_whatsapp_setting(db, "platform_whatsapp_" + str(_platform_whatsapp_setting(db, "platform_whatsapp_active_provider") or cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "openwa") + "_encrypted")
+            or ((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
+            or ((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id))
         ),
-        "whatsapp_provider": cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "not configured",
+        "whatsapp_provider": _platform_whatsapp_setting(db, "platform_whatsapp_active_provider") or cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "not configured",
         "campaign_contact_limit": 500,
     }
 
@@ -3543,7 +3544,7 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
     if payload.channel == "email" and not (cfg.resend_api_key and cfg.notification_from_email):
         raise HTTPException(503, "Platform email is not configured. Set RESEND_API_KEY and NOTIFICATION_FROM_EMAIL.")
     whatsapp_provider = (_platform_whatsapp_setting(db, "platform_whatsapp_active_provider") or cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "openwa").lower()
-    whatsapp_ready = (
+    whatsapp_ready = bool(_platform_whatsapp_setting(db, "platform_whatsapp_" + whatsapp_provider + "_encrypted")) or (
         bool((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
         if whatsapp_provider == "meta"
         else bool((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id))
@@ -3564,6 +3565,7 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
                 else:
                     provider_response = await adapter.send_template(address, payload.template_name, {"customer_name": contact.name or "there", "business_name": str(settings_data.get("company_name") or "AI Growth OS"), "offer": personalized, "_lang": "en"})
                     result = {"sent": True, "status": "sent", "provider_id": (provider_response or {}).get("messages", [{}])[0].get("id") if isinstance(provider_response, dict) else None}
+                sent = bool(result.get("sent"))
             results.append({"recipient": address, "name": contact.name, "status": "sent" if sent else result.get("status", "failed"), "provider": result.get("provider_id")})
         except Exception as exc:
             results.append({"recipient": address, "name": contact.name, "status": "failed", "error": str(exc)[:300]})
