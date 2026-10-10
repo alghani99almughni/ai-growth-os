@@ -1,5 +1,6 @@
 from .db import Base,engine
 from . import models,models_growth,models_ai,models_integrations
+from . import industry_catalog
 from sqlalchemy import text
 
 def ensure_schema():
