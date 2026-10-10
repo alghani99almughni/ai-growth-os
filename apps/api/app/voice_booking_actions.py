@@ -271,6 +271,15 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             duration = appointment.ends_at - appointment.starts_at
             requested_end = requested + duration
+            hours = db.scalar(select(BusinessHour).where(
+                BusinessHour.tenant_id == tenant.id,
+                BusinessHour.weekday == requested.weekday(),
+            ))
+            if hours and (hours.is_closed or requested.time() < hours.open_time or requested_end.time() > hours.close_time):
+                if conversation:
+                    conversation.state = f"voice_action:reschedule_wait:{appointment.id}"
+                return {"reply": "That time is outside the business's available hours. Please choose another date and time.",
+                        "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             requested_utc = local_to_utc_naive(requested, tenant.timezone)
             requested_end_utc = local_to_utc_naive(requested_end, tenant.timezone)
             conflict_query = select(Appointment).where(
