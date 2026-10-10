@@ -3461,6 +3461,93 @@ def platform_message_read(message_id: str, user: User = Depends(get_current_user
         raise HTTPException(404, "Message not found")
     return r
 
+
+# ============ PLATFORM COMMUNICATIONS ============
+class PlatformCampaignContact(BaseModel):
+    name: str = Field(default="", max_length=160)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=32)
+    email_opt_in: bool = False
+    whatsapp_opt_in: bool = False
+
+
+class PlatformCampaignRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=160)
+    channel: str = Field(pattern="^(email|whatsapp)$")
+    subject: str = Field(default="", max_length=300)
+    body: str = Field(min_length=1, max_length=4000)
+    contacts: list[PlatformCampaignContact] = Field(min_length=1, max_length=500)
+
+
+@app.get("/api/v1/platform/communications/status")
+def platform_communications_status(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_platform_admin(user)
+    from .platform_settings import get_all
+    from .config import settings as cfg
+    s = get_all(db)
+    return {
+        "company_name": s.get("company_name"),
+        "support_email": s.get("support_email"),
+        "email_configured": bool(cfg.resend_api_key and cfg.notification_from_email),
+        "email_from": cfg.notification_from_email or "",
+        "whatsapp_configured": bool(
+            (cfg.notification_whatsapp_provider or cfg.whatsapp_provider) and
+            ((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) or
+             (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key))
+        ),
+        "whatsapp_provider": cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "not configured",
+        "campaign_contact_limit": 500,
+    }
+
+
+@app.post("/api/v1/platform/communications/campaigns/send", status_code=201)
+async def platform_communications_send_campaign(payload: PlatformCampaignRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_platform_admin(user)
+    from .notifications import send_email, send_platform_whatsapp
+    from .platform_settings import get_all
+    from .config import settings as cfg
+    settings_data = get_all(db)
+    eligible = []
+    skipped = 0
+    for contact in payload.contacts:
+        address = (contact.email or "").strip() if payload.channel == "email" else (contact.phone or "").strip()
+        consent = contact.email_opt_in if payload.channel == "email" else contact.whatsapp_opt_in
+        if address and consent:
+            eligible.append((contact, address))
+        else:
+            skipped += 1
+    if not eligible:
+        raise HTTPException(400, "No eligible recipients. Add valid contact details and explicit channel opt-in.")
+    if payload.channel == "email" and not (cfg.resend_api_key and cfg.notification_from_email):
+        raise HTTPException(503, "Platform email is not configured. Set RESEND_API_KEY and NOTIFICATION_FROM_EMAIL.")
+    if payload.channel == "whatsapp" and not (
+        (cfg.notification_whatsapp_provider or cfg.whatsapp_provider) and
+        ((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) or
+         (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key))
+    ):
+        raise HTTPException(503, "Platform WhatsApp is not configured. Configure the platform notification WhatsApp provider in the API environment.")
+    results = []
+    for contact, address in eligible:
+        personalized = payload.body.replace("{{name}}", contact.name or "there").replace("{{company}}", str(settings_data.get("company_name") or "AI Growth OS"))
+        try:
+            if payload.channel == "email":
+                result = await send_email(address, payload.subject.strip() or payload.name, personalized)
+                sent = bool(result.get("sent"))
+            else:
+                result = await send_platform_whatsapp(address, personalized)
+                sent = bool(result.get("sent"))
+            results.append({"recipient": address, "name": contact.name, "status": "sent" if sent else result.get("status", "failed"), "provider": result.get("provider_id")})
+        except Exception as exc:
+            results.append({"recipient": address, "name": contact.name, "status": "failed", "error": str(exc)[:300]})
+    sent_count = sum(1 for item in results if item["status"] == "sent")
+    try:
+        from .security import audit
+        audit(db, tenant_id=None, actor_id=user.id, action="platform.campaign_send", target_type="campaign", target_id=payload.name, detail={"channel": payload.channel, "attempted": len(results), "sent": sent_count, "skipped_no_consent_or_address": skipped})
+    except Exception:
+        pass
+    return {"campaign": payload.name, "channel": payload.channel, "attempted": len(results), "sent": sent_count, "failed": len(results) - sent_count, "skipped": skipped, "results": results}
+
+
 # ============ END SESSION17B_MESSAGES ============
 
 # ============ SESSION17B_CALENDAR ============
