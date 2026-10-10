@@ -367,6 +367,13 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
     intent = _action_intent(message)
     if not intent:
         return None
+    # Preserve the existing ability to stop an unfinished booking conversation.
+    # Only booking_confirmed means an appointment should be looked up for cancellation.
+    if intent == "cancel" and state.startswith("booking") and state != "booking_confirmed":
+        if conversation:
+            conversation.state = "information"
+        return {"reply": "Okay, I've stopped the appointment booking process. No appointment was created from this unfinished booking.",
+                "appointment_action": {"status": "booking_stopped", "action": "cancel"}}
     rows = _upcoming(db, tenant.id, customer.id)
     if not rows:
         return {"reply": "I couldn't find an active upcoming appointment for this mobile number. I haven't changed anything.",
