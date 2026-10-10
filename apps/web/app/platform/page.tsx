@@ -44,6 +44,7 @@ export default function PlatformOverview() {
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>Platform Overview</h1>
         <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>Last 30 days across the entire platform.</p>
+        <a href="/platform/industry-catalog" style={{ display: "inline-block", marginTop: 12, padding: "9px 12px", borderRadius: 9, background: "#efefff", color: "#5553d8", fontWeight: 700, fontSize: 12, textDecoration: "none" }}>Manage industry categories & subcategories →</a>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 24 }}>
         <Kpi label="Total tenants" value={data.total_tenants} accent="#5b5cf0" />
