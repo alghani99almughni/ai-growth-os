@@ -75,13 +75,13 @@ export default function CallsPanel({ tenantId, token }: { tenantId: string; toke
     return x;
   }
 
-  async function loadAll() {
-    setLoading(true); setError("");
+  async function loadAll(silent = false) {
+    if (!silent) { setLoading(true); setError(""); }
     try {
       const res = await jget(`/api/v1/tenants/${tenantId}/calls`);
       setItems(res.items || []);
     } catch (e: any) { setError(e.message || "Could not load calls"); }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 
   useEffect(() => {
@@ -89,7 +89,7 @@ export default function CallsPanel({ tenantId, token }: { tenantId: string; toke
     void loadAll();
     // Keep a dashboard opened in another tab in sync with calls happening in the PWA.
     const refresh = () => {
-      if (document.visibilityState === "visible") void loadAll();
+      if (document.visibilityState === "visible") void loadAll(true);
     };
     const timer = window.setInterval(refresh, 10000);
     window.addEventListener("focus", refresh);
