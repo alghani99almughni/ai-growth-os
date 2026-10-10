@@ -2062,6 +2062,26 @@ def end_public_call(slug: str, call_id: str, db: Session = Depends(get_db)):
         "duration_seconds": call.duration_seconds or 0,
     }
 
+def _voice_identity_instructions(customer) -> str:
+    """Tell the realtime agent accurately whether caller identity is already saved."""
+    if customer and customer.name and customer.phone:
+        return (
+            "CUSTOMER ALREADY VERIFIED:\\n"
+            f"Name: {customer.name}\\nMobile: {customer.phone}\\n"
+            "The customer's name and mobile number are already saved and verified. "
+            "Do NOT ask for them again. Start with a warm greeting using their name."
+        )
+    known_name = customer.name if customer and customer.name else "not provided"
+    known_phone = customer.phone if customer and customer.phone else "not provided"
+    return (
+        "CUSTOMER IDENTITY NEEDS CAPTURE:\\n"
+        f"Known name: {known_name}\\nKnown mobile: {known_phone}\\n"
+        "Identity is NOT fully verified. Politely ask only for missing name/mobile details. "
+        "Once both are known, call save_customer_identity with both fields, reusing any known "
+        "value. Do not claim verification until the tool returns verified=true."
+    )
+
+
 @app.websocket("/ws/public/voice/{call_id}")
 async def public_voice(websocket:WebSocket,call_id:str):
     import logging
@@ -2094,20 +2114,7 @@ async def public_voice(websocket:WebSocket,call_id:str):
     customer=db.get(Customer,call.customer_id) if call.customer_id else None
     context=knowledge_context(db,tenant.id)
     policy=tenant_policy(db,tenant.id)
-    identity_instructions = (
-        f"""CUSTOMER ALREADY VERIFIED:
-Name: {customer.name}
-Mobile: {customer.phone}
-
-The customer's name and mobile number are already saved and verified before this call.
-Do NOT ask for them again. Start with a warm greeting using their name."""
-        if customer and customer.name and customer.phone
-        else f"""CUSTOMER IDENTITY NEEDS CAPTURE:
-Known name: {customer.name if customer and customer.name else "not provided"}
-Known mobile: {customer.phone if customer and customer.phone else "not provided"}
-
-The customer's identity is NOT fully verified yet. Politely ask only for the missing name or mobile number. Once both are known, call save_customer_identity with both fields (reuse any already-known value). Do not claim identity is verified until the tool returns verified=true."""
-    )
+    identity_instructions = _voice_identity_instructions(customer)
     system = f"""You are the AI customer engagement voice agent for {tenant.name}.
 
 UNIVERSAL AGENT TRAINING:
