@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -84,6 +84,8 @@ export default function BookingsPanel({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState<string>("");
+  const [confirmationAlert, setConfirmationAlert] = useState("");
+  const previousStatuses = useRef<Record<string, string> | null>(null);
 
   const authHeaders = () => ({ Authorization: "Bearer " + token });
 
@@ -116,7 +118,14 @@ export default function BookingsPanel({
         jget(`/api/v1/tenants/${tenantId}/appointments?date=${date}`),
         jget(`/api/v1/tenants/${tenantId}/queue?date=${date}`).catch(() => ({ items: [] })),
       ]);
-      setItems(listRes.items || []);
+      const nextItems: Appointment[] = listRes.items || [];
+      const previous = previousStatuses.current;
+      if (silent && previous) {
+        const newlyConfirmed = nextItems.find((a) => a.status === "confirmed" && previous[a.id] !== "confirmed");
+        if (newlyConfirmed) setConfirmationAlert(`Appointment confirmed: ${newlyConfirmed.service_name || "Appointment"} · ${fmtRange(newlyConfirmed)}`);
+      }
+      previousStatuses.current = Object.fromEntries(nextItems.map((a) => [a.id, a.status]));
+      setItems(nextItems);
       setQueue(queueRes.items || []);
     } catch (e: any) {
       setError(e.message || "Could not load bookings");
@@ -212,6 +221,13 @@ export default function BookingsPanel({
       </div>
 
       {error && <p style={{ color: "#b00", marginTop: 12 }}>{error}</p>}
+      {confirmationAlert && (
+        <div role="alert" aria-live="assertive" style={{ marginTop: 12, padding: "12px 14px", borderRadius: 8, border: "1px solid #9ad6ad", background: "#effaf2", color: "#14532d", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <strong>✓ Appointment confirmed</strong>
+          <span>{confirmationAlert}</span>
+          <button className="btn-ghost" onClick={() => setConfirmationAlert("")} aria-label="Dismiss appointment confirmation alert">Dismiss</button>
+        </div>
+      )}
 
       {/* Appointments list */}
       <div style={{ marginTop: 24 }}>
