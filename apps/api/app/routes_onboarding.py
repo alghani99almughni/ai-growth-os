@@ -22,6 +22,8 @@ from .db import SessionLocal
 from .models import Tenant, User
 from .services import create_tenant, create_owner, hash_password
 from .industry_templates import seed_industry_defaults, available_industries
+from .industry_catalog import IndustryCatalogEntry
+from .models_growth import TenantSetting
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ class OnboardRequest(BaseModel):
     address: Optional[str] = None
     timezone: str = Field(default="Asia/Kolkata", max_length=60)
     business_hours: Optional[list[BusinessHourRow]] = None
+    catalog_entry_id: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +96,12 @@ def public_onboard(payload: OnboardRequest):
     """
     db: Session = SessionLocal()
     try:
+        catalog_entry = None
+        if payload.catalog_entry_id:
+            catalog_entry = db.get(IndustryCatalogEntry, payload.catalog_entry_id)
+            if not catalog_entry or not catalog_entry.is_active:
+                raise HTTPException(400, "Please select an active industry business type")
+
         if db.scalar(select(User).where(User.email == payload.owner_email.lower())):
             raise HTTPException(409, "Email already registered")
 
@@ -123,6 +132,19 @@ def public_onboard(payload: OnboardRequest):
 
         # Seed industry defaults (services, menu, knowledge)
         seed_industry_defaults(db, tenant, payload.industry)
+
+        if catalog_entry:
+            import json as _catalog_json
+            selection = {
+                "catalog_entry_id": catalog_entry.id,
+                "category": catalog_entry.category,
+                "business_type": catalog_entry.business_type,
+                "roles": _catalog_json.loads(catalog_entry.roles_json or "[]"),
+                "notes": None,
+            }
+            db.add(TenantSetting(id=str(uuid.uuid4()), tenant_id=tenant.id,
+                                 key="industry_selection", value_json=_catalog_json.dumps(selection)))
+            db.commit()
 
         # Minimal feature defaults — the tenant can tune later
         from .models_growth import TenantSetting
