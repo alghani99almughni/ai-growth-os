@@ -54,6 +54,7 @@ export default function PlatformCommunicationsPage() {
       <button onClick={() => void refresh()} disabled={loading} style={secondaryButton}>{loading ? "Refreshing…" : "Refresh data"}</button>
     </header>
     {error && <div role="alert" style={{ padding: 13, marginBottom: 14, color: "#a12b2b", background: "#fff1f0", border: "1px solid #ffd8d4", borderRadius: 10 }}>{error}</div>}
+    <ProviderSetup token={token} onError={setError} />
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 12, marginBottom: 20 }}>
       <Stat label="Tenant support tickets" value={tickets.length} detail="Across the platform" />
       <Stat label="Platform messages" value={messages.length} detail="Sent from Super Admin" />
@@ -84,6 +85,11 @@ export default function PlatformCommunicationsPage() {
       {channel === "whatsapp" && <label style={{ ...labelStyle, display:"block", marginTop:13 }}>WhatsApp approved template name<input value={templateName} onChange={e=>setTemplateName(e.target.value)} style={fieldStyle}/><small style={{ color:"#8793a5", fontWeight:400 }}>For Meta Cloud API, this must match an approved marketing template. Default: re_engagement.</small></label>}
       <label style={{ ...labelStyle, display:"block", marginTop:13 }}>Message<textarea value={body} onChange={e=>setBody(e.target.value)} rows={5} style={{ ...fieldStyle, resize:"vertical", lineHeight:1.5 }}/><small style={{ color:"#8793a5", fontWeight:400 }}>Personalisation: {"{{name}}"} and {"{{company}}"}</small></label>
       <label style={{ ...labelStyle, display:"block", marginTop:13 }}>Recipient list (JSON)<textarea value={contactsJson} onChange={e=>setContactsJson(e.target.value)} rows={10} spellCheck={false} style={{ ...fieldStyle, resize:"vertical", fontFamily:"monospace", fontSize:12, lineHeight:1.45 }}/></label>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+        <label style={{...secondaryButton,display:"inline-block"}}>Import CSV<input type="file" accept=".csv,.txt" style={{display:"none"}} onChange={async e=>{const file=e.target.files?.[0];if(!file)return;const text=await file.text();const lines=text.split(/\\r?\\n/).filter(Boolean);if(lines.length<2){setError("CSV needs a header row and at least one contact.");return;}const headers=lines[0].split(",").map(x=>x.trim().toLowerCase().replace(/^"|"$/g,""));const contacts=lines.slice(1).map(line=>{const vals=line.match(/(?:[^,"]|"[^"]*")+/g)?.map(x=>x.trim().replace(/^"|"$/g,"").replace(/""/g,'"'))||[];const row:any={};headers.forEach((h,i)=>row[h]=vals[i]||"");return {name:row.name||"",email:row.email||"",phone:row.phone||"",email_opt_in:["true","yes","1"].includes(String(row.email_opt_in).toLowerCase()),whatsapp_opt_in:["true","yes","1"].includes(String(row.whatsapp_opt_in).toLowerCase())};});setContactsJson(JSON.stringify(contacts,null,2));e.currentTarget.value="";}}> </label>
+        <button type="button" style={secondaryButton} onClick={()=>{const csv="name,email,phone,email_opt_in,whatsapp_opt_in\\nExample Contact,contact@example.com,+919876543210,false,false\\n";const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="ai-growth-os-campaign-contacts-template.csv";a.click();URL.revokeObjectURL(url);}}>Download CSV template</button>
+        <span style={{color:"#8793a5",fontSize:11}}>Columns: name, email, phone, email_opt_in, whatsapp_opt_in</span>
+      </div>
       <p style={{ color:"#7b8798", fontSize:12 }}>Maximum {status?.campaign_contact_limit || 500} contacts per send. Each contact must have the selected channel's explicit opt-in set to true.</p>
       <button onClick={() => void sendCampaign()} disabled={sending || !campaignName.trim() || !body.trim()} style={primaryButton}>{sending ? "Sending campaign…" : "Send campaign"}</button>
       {campaignResult && <div style={{ marginTop:18, padding:15, border:"1px solid #b9e5d3", background:"#f0fbf6", borderRadius:10 }}><strong>Campaign result: {campaignResult.campaign}</strong><div style={{ display:"flex", gap:18, flexWrap:"wrap", marginTop:8, fontSize:13 }}><span>Attempted: <b>{campaignResult.attempted}</b></span><span>Sent: <b>{campaignResult.sent}</b></span><span>Failed: <b>{campaignResult.failed}</b></span><span>Skipped: <b>{campaignResult.skipped}</b></span></div>{campaignResult.results?.length > 0 && <div style={{ marginTop:12, maxHeight:220, overflow:"auto" }}>{campaignResult.results.map((r:any,i:number)=><div key={i} style={{ fontSize:12, padding:"5px 0", borderTop:"1px solid #d8efe4" }}>{r.recipient} — {r.status}{r.error ? " · "+r.error : ""}</div>)}</div>}</div>}
@@ -112,3 +118,40 @@ const primaryButton:React.CSSProperties={border:0,borderRadius:9,background:"#17
 const secondaryButton:React.CSSProperties={border:"1px solid #d8e0ea",borderRadius:9,background:"#fff",color:"#344256",padding:"10px 13px",fontSize:12,fontWeight:700,cursor:"pointer"};
 const linkStyle:React.CSSProperties={display:"inline-block",marginTop:14,color:"#176b58",fontSize:13,fontWeight:700};
 function tabStyle(active:boolean):React.CSSProperties{return {border:0,borderBottom:active?"2px solid #176b58":"2px solid transparent",background:"transparent",color:active?"#176b58":"#7b8798",padding:"12px 15px",marginBottom:-1,fontSize:13,fontWeight:800,whiteSpace:"nowrap",cursor:"pointer"};}
+
+
+function ProviderSetup({token,onError}:{token:string;onError:(s:string)=>void}) {
+  const [provider,setProvider]=useState<"openwa"|"meta">("openwa");
+  const [baseUrl,setBaseUrl]=useState("");
+  const [apiKey,setApiKey]=useState("");
+  const [sessionId,setSessionId]=useState("");
+  const [accessToken,setAccessToken]=useState("");
+  const [phoneId,setPhoneId]=useState("");
+  const [activate,setActivate]=useState(true);
+  const [active,setActive]=useState("openwa");
+  const [configured,setConfigured]=useState<{openwa:boolean;meta:boolean}>({openwa:false,meta:false});
+  const [busy,setBusy]=useState(false);
+  const [notice,setNotice]=useState("");
+  async function load(){if(!token)return;try{const r=await fetch(API+"/api/v1/platform/communications/whatsapp-provider",{headers:{Authorization:"Bearer "+token},cache:"no-store"});if(r.ok){const d=await r.json();setActive(d.active_provider||"openwa");setConfigured(d.configured||{openwa:false,meta:false});}}catch{}}
+  useEffect(()=>{void load();},[token]);
+  async function save(){setBusy(true);setNotice("");onError("");try{const payload:any={provider,activate};if(provider==="openwa")Object.assign(payload,{base_url:baseUrl,api_key:apiKey,session_id:sessionId});else Object.assign(payload,{access_token:accessToken,phone_number_id:phoneId});const r=await fetch(API+"/api/v1/platform/communications/whatsapp-provider",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+token},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Provider setup failed");setNotice("Credentials validated and saved securely.");setApiKey("");setAccessToken("");await load();}catch(e:any){onError(e.message||"Provider setup failed");}finally{setBusy(false);}}
+  const label:React.CSSProperties={display:"block",fontSize:12,fontWeight:700,color:"#344256"};
+  const input:React.CSSProperties={display:"block",width:"100%",boxSizing:"border-box",marginTop:6,padding:"10px 11px",border:"1px solid #d8e0ea",borderRadius:9,fontSize:13};
+  return <section style={{...panel,marginBottom:20,borderColor:"#dce8e4"}}>
+    <div style={{display:"flex",justifyContent:"space-between",gap:12,flexWrap:"wrap",alignItems:"center"}}><div><h2 style={{margin:0,fontSize:17,color:"#17213a"}}>WhatsApp provider setup</h2><p style={{margin:"5px 0 0",fontSize:12,color:"#8793a5"}}>Add credentials, validate, then save. Keys are masked and encrypted on the API.</p></div><span style={pill}>Active: {active}</span></div>
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginTop:15}}>
+      <label style={label}>Provider<select value={provider} onChange={e=>setProvider(e.target.value as any)} style={input}><option value="openwa">OpenWA (primary)</option><option value="meta">Meta WhatsApp (alternative)</option></select></label>
+      <label style={{...label,display:"flex",alignItems:"center",gap:8,paddingTop:20}}><input type="checkbox" checked={activate} onChange={e=>setActivate(e.target.checked)}/> Make this the active provider</label>
+    </div>
+    {provider==="openwa"?<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginTop:12}}>
+      <label style={label}>OpenWA server URL<input value={baseUrl} onChange={e=>setBaseUrl(e.target.value)} placeholder="https://your-openwa-server" style={input}/></label>
+      <label style={label}>API key<input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)} autoComplete="new-password" style={input}/></label>
+      <label style={label}>Session ID<input value={sessionId} onChange={e=>setSessionId(e.target.value)} style={input}/></label>
+    </div>:<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginTop:12}}>
+      <label style={label}>Meta access token<input type="password" value={accessToken} onChange={e=>setAccessToken(e.target.value)} autoComplete="new-password" style={input}/></label>
+      <label style={label}>Phone number ID<input value={phoneId} onChange={e=>setPhoneId(e.target.value)} style={input}/></label>
+    </div>}
+    <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",marginTop:14}}><button onClick={()=>void save()} disabled={busy||!token||(provider==="openwa"?(!baseUrl||!apiKey||!sessionId):(!accessToken||!phoneId))} style={primaryButton}>{busy?"Validating…":"Apply & Save"}</button><span style={{fontSize:12,color:"#64748b"}}>OpenWA: {configured.openwa?"saved":"not saved"} · Meta: {configured.meta?"saved":"not saved"}</span></div>
+    {notice&&<p role="status" style={{color:"#147d5e",fontSize:12,marginBottom:0}}>{notice}</p>}
+  </section>;
+}
