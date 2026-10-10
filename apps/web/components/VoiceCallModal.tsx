@@ -806,6 +806,8 @@ ${recent}`,
   };
 
   const startCall = async (nm: string, ph: string, customerId?: string | null) => {
+    // Prevent rapid double-clicks or a second start while a call session is active.
+    if (phaseRef.current === "starting" || (activeRef.current && callRef.current?.call_id)) return;
     // A newly identified customer updates the parent prop. Mark the call as
     // already started before that callback can trigger the auto-start effect.
     // Otherwise the same modal can create a second call and reset booking state.
