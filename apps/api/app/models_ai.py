@@ -25,7 +25,7 @@ class Conversation(Base):
     customer_id: Mapped[str | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
     channel: Mapped[str] = mapped_column(String(30), default="pwa")
     language: Mapped[str] = mapped_column(String(16), default="en")
-    state: Mapped[str] = mapped_column(String(60), default="new")
+    state: Mapped[str] = mapped_column(String(255), default="new")
     intent: Mapped[str | None] = mapped_column(String(120), nullable=True)
     last_user_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_assistant_message: Mapped[str | None] = mapped_column(Text, nullable=True)

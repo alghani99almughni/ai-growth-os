@@ -318,6 +318,12 @@ async def startup():
         ensure_two_channel_whatsapp(engine)
     except Exception:
         pass
+    # Conversation workflow states may contain appointment UUIDs and reschedule context.
+    # Widen the existing PostgreSQL column before serving requests; model metadata alone
+    # does not alter an already-created production table.
+    from .conversation_state_migration import ensure_conversation_state_capacity
+    from .db import engine as _conversation_state_engine
+    ensure_conversation_state_capacity(_conversation_state_engine)
     if settings.environment == "production":
         warnings = []
         warnings.extend(check_secret("JWT_SECRET", settings.jwt_secret, 32))
