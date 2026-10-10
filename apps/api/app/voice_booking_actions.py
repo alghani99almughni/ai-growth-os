@@ -214,6 +214,9 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
             if not requested:
                 return {"reply": "What new date and time would you prefer? Please include AM or PM, for example Monday at 11 AM.",
                         "appointment_action": {"status": "awaiting_new_time", "appointment_id": appointment.id}}
+            if requested <= datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None):
+                return {"reply": "That time is in the past. Please choose a future date and time, including AM or PM.",
+                        "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             duration = appointment.ends_at - appointment.starts_at
             requested_end = requested + duration
             # Tenant-local hours must permit the requested slot.
@@ -258,6 +261,11 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                     conversation.state = "information"
                 return {"reply": "I couldn't verify the requested time. Your original appointment is unchanged.",
                         "appointment_action": {"status": "invalid_time", "appointment_id": appointment.id}}
+            if requested <= datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None):
+                if conversation:
+                    conversation.state = f"voice_action:reschedule_wait:{appointment.id}"
+                return {"reply": "That time has passed while we were confirming. Please choose a future date and time.",
+                        "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             duration = appointment.ends_at - appointment.starts_at
             requested_end = requested + duration
             requested_utc = local_to_utc_naive(requested, tenant.timezone)
