@@ -20,7 +20,7 @@ export default function PlatformCommunicationsPage() {
   const [campaignName, setCampaignName] = useState("New tenant outreach");
   const [subject, setSubject] = useState("Grow your business with AI Growth OS");
   const [templateName, setTemplateName] = useState("re_engagement");
-  const [body, setBody] = useState("Hi {{name}},\\n\\nDiscover how AI Growth OS can help {{company}} businesses capture leads, answer enquiries and manage bookings 24/7. Reply to learn more.");
+  const [body, setBody] = useState("Hi {{name}},\n\nDiscover how AI Growth OS can help {{company}} businesses capture leads, answer enquiries and manage bookings 24/7. Reply to learn more.");
   const [contactsJson, setContactsJson] = useState(JSON.stringify(sampleContacts, null, 2));
   const [sending, setSending] = useState(false);
   const [campaignResult, setCampaignResult] = useState<any>(null);
@@ -102,7 +102,7 @@ export default function PlatformCommunicationsPage() {
       <label style={{ ...labelStyle, display:"block", marginTop:13 }}>Recipient list (JSON)<textarea value={contactsJson} onChange={e=>setContactsJson(e.target.value)} rows={10} spellCheck={false} style={{ ...fieldStyle, resize:"vertical", fontFamily:"monospace", fontSize:12, lineHeight:1.45 }}/></label>
       <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
         <label style={{...secondaryButton,display:"inline-block"}}>Import Excel / CSV<input type="file" accept=".xlsx,.csv,.txt,.tsv" style={{display:"none"}} onChange={async (e)=>{const input=e.currentTarget;const file=input.files?.[0];if(!file)return;setError("");try{const rows=file.name.toLowerCase().endsWith(".xlsx")?await parseXlsxRows(file):parseDelimitedRows(await file.text(),file.name.toLowerCase().endsWith(".tsv")?"\t":",");const contacts=rowsToContacts(rows);if(!contacts.length)throw new Error("Spreadsheet needs a header row and at least one contact.");setContactsJson(JSON.stringify(contacts,null,2));}catch(err:any){setError(err?.message||"Could not read the contact file.");}finally{input.value="";}}} /></label>
-        <button type="button" style={secondaryButton} onClick={()=>{const csv="name,email,phone,email_opt_in,whatsapp_opt_in\\nExample Contact,contact@example.com,+919876543210,false,false\\n";const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="ai-growth-os-campaign-contacts-template.csv";a.click();URL.revokeObjectURL(url);}}>Download CSV template</button>
+        <button type="button" style={secondaryButton} onClick={()=>{const csv="name,email,phone,email_opt_in,whatsapp_opt_in\nExample Contact,contact@example.com,+919876543210,false,false\n";const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="ai-growth-os-campaign-contacts-template.csv";a.click();URL.revokeObjectURL(url);}}>Download CSV template</button>
         <span style={{color:"#8793a5",fontSize:11}}>Columns: name, email, phone, email_opt_in, whatsapp_opt_in</span>
       </div>
       <p style={{ color:"#7b8798", fontSize:12 }}>Maximum {status?.campaign_contact_limit || 500} contacts per send. Each contact must have the selected channel's explicit opt-in set to true.</p>
@@ -127,7 +127,7 @@ function parseDelimitedRows(raw:string, delimiter:string):string[][] {
 }
 function rowsToContacts(rows:string[][]):any[] {
   if(rows.length<2)return [];
-  const headers=rows[0].map(v=>v.trim().toLowerCase().replace(/^\\uFEFF/,""));
+  const headers=rows[0].map(v=>v.trim().toLowerCase().replace(/^\uFEFF/,""));
   return rows.slice(1).map(values=>{const r:Record<string,string>={};headers.forEach((h,i)=>r[h]=(values[i]||"").trim());const yes=(v:string)=>["true","yes","1","y","opted-in","opted in"].includes((v||"").toLowerCase());return {name:r.name||"",email:r.email||"",phone:r.phone||"",email_opt_in:yes(r.email_opt_in),whatsapp_opt_in:yes(r.whatsapp_opt_in)};}).filter(x=>x.name||x.email||x.phone);
 }
 async function parseXlsxRows(file:File):Promise<string[][]> {
