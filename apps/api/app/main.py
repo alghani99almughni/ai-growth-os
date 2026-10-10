@@ -2890,6 +2890,13 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 f"handoff={result.get('handoff_required')}"
             )
             appointment_action=result.get("appointment_action") or {}
+            if result.get("handoff_required"):
+                call.human_callback_requested=True; call.status="handoff_requested"; call.resolution="human_callback"
+                route_call(db,t.id,call,result.get("intent"))
+            elif result.get("knowledge_hit"):
+                call.resolution="knowledge"
+            else:
+                call.resolution="ai"
             if appointment_action.get("status") in ("cancelled", "rescheduled"):
                 action_name=appointment_action.get("status")
                 call.intent="appointment_cancellation" if action_name=="cancelled" else "appointment_rescheduling"
@@ -2898,13 +2905,6 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                     f"Appointment {action_name}: appointment_id={appointment_action.get('appointment_id')}; "
                     f"call_id={call.id}; transcript_retained=True"
                 )
-            if result.get("handoff_required"):
-                call.human_callback_requested=True; call.status="handoff_requested"; call.resolution="human_callback"
-                route_call(db,t.id,call,result.get("intent"))
-            elif result.get("knowledge_hit"):
-                call.resolution="knowledge"
-            else:
-                call.resolution="ai"
             if call.answered_at is None: call.answered_at=now
             if call.status in ("ringing", "created"):
                 call.status="ongoing"
