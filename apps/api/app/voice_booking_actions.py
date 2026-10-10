@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 
