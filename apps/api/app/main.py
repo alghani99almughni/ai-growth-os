@@ -2680,6 +2680,23 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
         )
         if action_result:
             result.update(action_result)
+            # generate_reply persists its own assistant turn; replace it with the
+            # exact deterministic response returned to speech so transcript matches audio.
+            action_conversation_id=result.get("conversation_id")
+            if action_conversation_id and action_result.get("reply"):
+                transcript_reply=db.scalar(
+                    select(ConversationMessage)
+                    .where(
+                        ConversationMessage.conversation_id==action_conversation_id,
+                        ConversationMessage.role=="assistant",
+                    )
+                    .order_by(ConversationMessage.created_at.desc())
+                    .limit(1)
+                )
+                if transcript_reply:
+                    transcript_reply.content=action_result["reply"]
+                    transcript_reply.intent=action_result.get("appointment_action",{}).get("action") or "appointment_action"
+                    db.commit()
     _bind_voice_conversation(db,t.id,payload.call_id,result.get("conversation_id"))
 
     # Browser/PWA voice currently uses the deterministic /voice/turn path.
