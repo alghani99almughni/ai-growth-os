@@ -19,6 +19,7 @@ export default function PlatformCommunicationsPage() {
   const [channel, setChannel] = useState<Channel>("whatsapp");
   const [campaignName, setCampaignName] = useState("New tenant outreach");
   const [subject, setSubject] = useState("Grow your business with AI Growth OS");
+  const [templateName, setTemplateName] = useState("re_engagement");
   const [body, setBody] = useState("Hi {{name}},\\n\\nDiscover how AI Growth OS can help {{company}} businesses capture leads, answer enquiries and manage bookings 24/7. Reply to learn more.");
   const [contactsJson, setContactsJson] = useState(JSON.stringify(sampleContacts, null, 2));
   const [sending, setSending] = useState(false);
@@ -43,7 +44,7 @@ export default function PlatformCommunicationsPage() {
     try {
       let contacts: any; try { contacts = JSON.parse(contactsJson); } catch { throw new Error("Contacts must be valid JSON. Use the sample format and add your opted-in contacts."); }
       if (!Array.isArray(contacts) || contacts.length === 0) throw new Error("Add at least one contact.");
-      const result = await request("/api/v1/platform/communications/campaigns/send", { method: "POST", body: JSON.stringify({ name: campaignName, channel, subject, body, contacts }) });
+      const result = await request("/api/v1/platform/communications/campaigns/send", { method: "POST", body: JSON.stringify({ name: campaignName, channel, subject, template_name: templateName, body, contacts }) });
       setCampaignResult(result);
     } catch (e: any) { setError(e.message || "Campaign send failed."); } finally { setSending(false); }
   }
@@ -80,6 +81,7 @@ export default function PlatformCommunicationsPage() {
         <label style={labelStyle}>Channel<select value={channel} onChange={e=>setChannel(e.target.value as Channel)} style={fieldStyle}><option value="whatsapp">WhatsApp</option><option value="email">Email</option></select></label>
       </div>
       {channel === "email" && <label style={{ ...labelStyle, display:"block", marginTop:13 }}>Email subject<input value={subject} onChange={e=>setSubject(e.target.value)} style={fieldStyle}/></label>}
+      {channel === "whatsapp" && <label style={{ ...labelStyle, display:"block", marginTop:13 }}>WhatsApp approved template name<input value={templateName} onChange={e=>setTemplateName(e.target.value)} style={fieldStyle}/><small style={{ color:"#8793a5", fontWeight:400 }}>For Meta Cloud API, this must match an approved marketing template. Default: re_engagement.</small></label>}
       <label style={{ ...labelStyle, display:"block", marginTop:13 }}>Message<textarea value={body} onChange={e=>setBody(e.target.value)} rows={5} style={{ ...fieldStyle, resize:"vertical", lineHeight:1.5 }}/><small style={{ color:"#8793a5", fontWeight:400 }}>Personalisation: {"{{name}}"} and {"{{company}}"}</small></label>
       <label style={{ ...labelStyle, display:"block", marginTop:13 }}>Recipient list (JSON)<textarea value={contactsJson} onChange={e=>setContactsJson(e.target.value)} rows={10} spellCheck={false} style={{ ...fieldStyle, resize:"vertical", fontFamily:"monospace", fontSize:12, lineHeight:1.45 }}/></label>
       <p style={{ color:"#7b8798", fontSize:12 }}>Maximum {status?.campaign_contact_limit || 500} contacts per send. Each contact must have the selected channel's explicit opt-in set to true.</p>
