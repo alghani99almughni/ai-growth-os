@@ -1,27 +1,19 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const API = String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 
-const INDUSTRIES = [
-  { key: "restaurant", label: "Restaurant" },
-  { key: "cafe", label: "Cafe" },
-  { key: "hotel", label: "Hotel" },
-  { key: "salon", label: "Salon" },
-  { key: "dental", label: "Dental Clinic" },
-  { key: "gym", label: "Gym / Fitness" },
-  { key: "health", label: "Health / Clinic" },
-  { key: "wellness", label: "Wellness" },
-  { key: "real-estate", label: "Real Estate" },
-  { key: "education", label: "Education" },
-];
+type CatalogEntry = { id: string; category: string; business_type: string; roles: string[]; is_active: boolean; sort_order: number };
 
 export default function NewTenantPage() {
   const router = useRouter();
 
   const [businessName, setBusinessName] = useState("");
-  const [industry, setIndustry] = useState("wellness");
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedEntryId, setSelectedEntryId] = useState("");
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");
@@ -30,11 +22,33 @@ export default function NewTenantPage() {
   const [website, setWebsite] = useState("");
   const [address, setAddress] = useState("");
 
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/api/v1/public/industry-catalog`, { cache: "no-store" })
+      .then((r) => { if (!r.ok) throw new Error("Industry catalogue unavailable"); return r.json(); })
+      .then((x) => {
+        if (!active) return;
+        const entries: CatalogEntry[] = (x.items || []).filter((e: CatalogEntry) => e.is_active);
+        setCatalog(entries);
+        const firstCategory = entries[0]?.category || "";
+        setSelectedCategory(firstCategory);
+        setSelectedEntryId(entries.find((e) => e.category === firstCategory)?.id || "");
+      })
+      .catch(() => { if (active) setErr("Could not load active industry categories. Refresh the page or check the API."); })
+      .finally(() => { if (active) setCatalogLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  const categories = useMemo(() => Array.from(new Set(catalog.map((e) => e.category))).sort((a, b) => a.localeCompare(b)), [catalog]);
+  const subcategories = useMemo(() => catalog.filter((e) => e.category === selectedCategory).sort((a, b) => a.sort_order - b.sort_order || a.business_type.localeCompare(b.business_type)), [catalog, selectedCategory]);
+  const selectedEntry = catalog.find((e) => e.id === selectedEntryId) || null;
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   const submit = async () => {
     setErr("");
+    if (!selectedEntry) return setErr("Select an active industry category and subcategory first.");
     if (!businessName.trim()) return setErr("Business name is required.");
     if (!ownerName.trim() || !ownerEmail.trim() || ownerPassword.length < 8)
       return setErr("Owner name, email, and password (8+ chars) are required.");
@@ -50,7 +64,8 @@ export default function NewTenantPage() {
         body: JSON.stringify({
           business_name: businessName.trim(),
           slug: null,
-          industry,
+          industry: selectedEntry?.business_type || selectedCategory,
+          catalog_entry_id: selectedEntry?.id || null,
           owner_name: ownerName.trim(),
           owner_email: ownerEmail.trim(),
           owner_password: ownerPassword,
@@ -80,11 +95,21 @@ export default function NewTenantPage() {
 
       <section style={{ display: "grid", gap: 12, marginBottom: 20 }}>
         <Field label="Business category">
-          <select value={industry} onChange={(e) => setIndustry(e.target.value)} style={inp}>
-            {INDUSTRIES.map((x) => (
-              <option key={x.key} value={x.key}>{x.label}</option>
-            ))}
+          <select value={selectedCategory} disabled={catalogLoading || categories.length === 0} onChange={(e) => {
+            const nextCategory = e.target.value;
+            setSelectedCategory(nextCategory);
+            setSelectedEntryId(catalog.find((entry) => entry.category === nextCategory)?.id || "");
+          }} style={inp}>
+            {catalogLoading && <option value="">Loading categories…</option>}
+            {!catalogLoading && categories.length === 0 && <option value="">No active categories found</option>}
+            {categories.map((category) => <option key={category} value={category}>{category}</option>)}
           </select>
+        </Field>
+        <Field label="Business subcategory">
+          <select value={selectedEntryId} disabled={catalogLoading || subcategories.length === 0} onChange={(e) => setSelectedEntryId(e.target.value)} style={inp}>
+            {subcategories.map((entry) => <option key={entry.id} value={entry.id}>{entry.business_type}</option>)}
+          </select>
+          {selectedEntry && selectedEntry.roles.length > 0 && <div style={{ fontSize: 11, color: "#75839a", marginTop: 4 }}>Suggested roles: {selectedEntry.roles.slice(0, 5).join(", ")}</div>}
         </Field>
 
         <Field label="Business name">
