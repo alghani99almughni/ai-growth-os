@@ -91,3 +91,24 @@ def test_public_voice_provider_failure_is_structured_not_http_500(monkeypatch):
             assert message["type"] == "error"
             assert message["code"] == "ai_provider_unavailable"
             assert message["recoverable"] is True
+
+
+
+def test_voice_identity_prompt_marks_existing_customer_verified():
+    instructions = main._voice_identity_instructions(FakeCustomer())
+    assert "CUSTOMER ALREADY VERIFIED" in instructions
+    assert "Test Customer" in instructions
+    assert "9000000000" in instructions
+    assert "Do NOT ask for them again" in instructions
+
+
+def test_voice_identity_prompt_requests_missing_identity_capture():
+    class IncompleteCustomer:
+        name = None
+        phone = ""
+
+    instructions = main._voice_identity_instructions(IncompleteCustomer())
+    assert "CUSTOMER IDENTITY NEEDS CAPTURE" in instructions
+    assert "ask only for missing" in instructions
+    assert "save_customer_identity" in instructions
+    assert "Do not claim verification until the tool returns verified=true" in instructions
