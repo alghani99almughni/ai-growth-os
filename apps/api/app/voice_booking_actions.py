@@ -351,7 +351,7 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
         return {"reply": "I couldn't find an active upcoming appointment for this mobile number. I haven't changed anything.",
                 "appointment_action": {"status": "not_found", "action": intent}}
     if len(rows) > 1:
-        options = "; ".join(f"{i + 1}: {_when(a)}" for i, a in enumerate(rows[:4]))
+        options = "; ".join(f"{i + 1}: {_when(a, tenant)}" for i, a in enumerate(rows[:4]))
         # Do not guess when there are multiple appointments. The next response must identify one.
         if conversation:
             conversation.state = f"voice_action:choose:{intent}:" + ",".join(a.id for a in rows[:4])
