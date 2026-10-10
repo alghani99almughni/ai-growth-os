@@ -122,7 +122,7 @@ export default function Overview() {
         <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>
           Here's what's happening today.
         </p>
-        <a href={"/dashboard/industry" + (viewingTenantId && (tenant?.role === "platform_admin" || tenant?.role === "super_admin") ? "?tenant=" + viewingTenantId : "")} style={{ display: "inline-block", marginTop: 12, padding: "9px 12px", borderRadius: 9, background: "#efefff", color: "#5553d8", fontWeight: 700, fontSize: 12, textDecoration: "none" }}>Industry & business type settings →</a>
+        <a href={"/dashboard/industry" + (viewingTenantId ? "?tenant=" + viewingTenantId : "")} style={{ display: "inline-block", marginTop: 12, padding: "9px 12px", borderRadius: 9, background: "#efefff", color: "#5553d8", fontWeight: 700, fontSize: 12, textDecoration: "none" }}>Industry & business type settings →</a>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 14, marginBottom: 24 }}>
