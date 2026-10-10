@@ -229,13 +229,16 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             requested_utc = local_to_utc_naive(requested, tenant.timezone)
             requested_end_utc = local_to_utc_naive(requested_end, tenant.timezone)
-            conflict = db.scalar(select(Appointment).where(
+            conflict_query = select(Appointment).where(
                 Appointment.tenant_id == tenant.id,
                 Appointment.id != appointment.id,
                 Appointment.starts_at < requested_end_utc,
                 Appointment.ends_at > requested_utc,
                 Appointment.status.in_(ACTIVE_STATUSES),
-            ).limit(1))
+            )
+            if appointment.staff_id:
+                conflict_query = conflict_query.where(Appointment.staff_id == appointment.staff_id)
+            conflict = db.scalar(conflict_query.limit(1))
             if conflict:
                 return {"reply": "That time is no longer available. Please choose another date and time.",
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
@@ -270,13 +273,16 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
             requested_end = requested + duration
             requested_utc = local_to_utc_naive(requested, tenant.timezone)
             requested_end_utc = local_to_utc_naive(requested_end, tenant.timezone)
-            conflict = db.scalar(select(Appointment).where(
+            conflict_query = select(Appointment).where(
                 Appointment.tenant_id == tenant.id,
                 Appointment.id != appointment.id,
                 Appointment.starts_at < requested_end_utc,
                 Appointment.ends_at > requested_utc,
                 Appointment.status.in_(ACTIVE_STATUSES),
-            ).limit(1))
+            )
+            if appointment.staff_id:
+                conflict_query = conflict_query.where(Appointment.staff_id == appointment.staff_id)
+            conflict = db.scalar(conflict_query.limit(1))
             if conflict:
                 if conversation:
                     conversation.state = f"voice_action:reschedule_wait:{appointment.id}"
