@@ -138,7 +138,7 @@ def local_intent(message:str)->str:
         "awaaz badal","awaz badal","gender badal","voice badal"
     )) or any(x in m for x in ("जेंडर चेंज","आवाज़ बदल","आवाज बदल","ವಾಯ್ಸ್ ಬದಲಾಗಿದೆ","వాయిస్ మారింది")):
         return "voice_feedback"
-    if re.search(r"\b(?:call me|human|let me speak|speak to someone|talk to someone|connect me)\b", compact) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
+    if re.search(r"\b(?:call me|human|let me speak|speak to someone|talk to someone|connect me|need an agent|i need an agent|agent please|staff member|staff person|speak to staff|talk to staff|need staff)\b", compact) or any(x in m for x in ("इंसान","व्यक्ति","వ్యక్తి","நபர்","ವ್ಯಕ್ತಿ","వ్యక్తితో")):
         return "human_handoff"
 
     if (any(x in compact for x in (
@@ -283,7 +283,7 @@ def extract_booking_entities(text: str) -> dict:
                 meridiem = "PM"
             else:
                 meridiem = None
-            time_value = f"{hour}:{minute} {meridiem}" if meridiem else (
+            time_value = (f"{hour}:{minute} {meridiem}" if minute else f"{hour} {meridiem}") if meridiem else (
                 f"{hour}:{minute}" if minute else f"{hour}"
             )
         else:
@@ -299,8 +299,10 @@ def extract_booking_entities(text: str) -> dict:
                     time_value=f"{hour12}:{minute24}"
             else:
                 number_words={"one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,"eight":8,"nine":9,"ten":10,"eleven":11,"twelve":12}
-                word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None)
-                digit_hour=re.search(r"\b(?:at|by|around|about|baje|vajje|vagye|gantlaki|manikku)\s+(1[0-2]|0?[1-9])\b",value) or re.search(r"\b(1[0-2]|0?[1-9])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
+                explicit_period = bool(re.search(r"\b(morning|afternoon|evening|night|subah|savere|am|a\.m\.|pm|p\.m\.|uday|sakal|shaam|sanje|saayantram|maalai)\b",value))
+                regional_clock = bool(re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value))
+                word_hour=next((n for w,n in number_words.items() if re.search(rf"\b{w}\b",value)),None) if (explicit_period or regional_clock) else None
+                digit_hour=re.search(r"\b([01]?\d|2[0-3])\s+(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value)
                 hour=int(digit_hour.group(1)) if digit_hour else word_hour
                 if hour:
                     if re.search(r"\b(morning|subah|savere|am|a\.m\.|uday|sakal)\b",value):
@@ -308,7 +310,7 @@ def extract_booking_entities(text: str) -> dict:
                     elif re.search(r"\b(evening|night|shaam|pm|p\.m\.|sanje|saayantram|maalai)\b",value):
                         meridiem="PM"
                     else:
-                        meridiem="PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value) else None
+                        meridiem="PM" if regional_clock else None
                     time_value=f"{hour} {meridiem}" if meridiem else f"{hour}"
 
     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)

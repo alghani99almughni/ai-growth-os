@@ -1773,8 +1773,33 @@ def staff_release(tenant_id, call_id, user=Depends(get_current_user), db: Sessio
 @app.get("/api/v1/tenants/{tenant_id}/calls")
 def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
     require_tenant(user, tenant_id)
-    rows=db.scalars(select(CallRecord).where(CallRecord.tenant_id==tenant_id).order_by(CallRecord.created_at.desc())).all()
-    return {"items":[{"id":x.id,"customer_id":x.customer_id,"customer_name":(db.get(Customer,x.customer_id).name if x.customer_id and db.get(Customer,x.customer_id) else "Customer"),"source":x.source,"status":x.status,"department":x.department,"staff_id":x.staff_id,"room_id":x.room_id,"intent":x.intent,"summary":x.summary,"transcript":x.transcript,"created_at":x.created_at} for x in rows]}
+    rows = db.scalars(
+        select(CallRecord)
+        .where(CallRecord.tenant_id == tenant_id)
+        .order_by(CallRecord.created_at.desc())
+    ).all()
+    items = []
+    for call in rows:
+        customer = db.get(Customer, call.customer_id) if call.customer_id else None
+        items.append({
+            "id": call.id,
+            "customer_id": call.customer_id,
+            "customer_name": (customer.name or "Customer") if customer else "Customer",
+            "customer_phone": customer.phone if customer else "",
+            "customer_email": customer.email if customer else None,
+            "customer_whatsapp_opt_in": customer.whatsapp_opt_in if customer else False,
+            "customer_created_at": customer.created_at if customer else None,
+            "source": call.source,
+            "status": call.status,
+            "department": call.department,
+            "staff_id": call.staff_id,
+            "room_id": call.room_id,
+            "intent": call.intent,
+            "summary": call.summary,
+            "transcript": call.transcript,
+            "created_at": call.created_at,
+        })
+    return {"items": items}
 
 class VoiceTurnRequest(BaseModel):
     transcript:str=Field(min_length=1,max_length=4000)
