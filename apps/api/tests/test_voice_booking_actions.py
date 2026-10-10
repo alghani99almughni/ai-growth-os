@@ -20,3 +20,7 @@ def test_explicit_confirmation_is_narrow():
     assert not _affirmative("yes, but maybe later")
     assert _negative("No thanks")
     assert not _negative("No, actually yes")
+
+def test_recognizes_natural_reschedule_phrasing():
+    assert _action_intent("Can I change the timing of my appointment?") == "reschedule"
+    assert _action_intent("Move it to Monday at 11 AM") == "reschedule"
