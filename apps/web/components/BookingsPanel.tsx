@@ -85,7 +85,8 @@ export default function BookingsPanel({
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState<string>("");
   const [confirmationAlert, setConfirmationAlert] = useState("");
-  const previousStatuses = useRef<Record<string, string> | null>(null);
+  const [appointmentAlertTitle, setAppointmentAlertTitle] = useState("Appointment update");
+  const previousStatuses = useRef<Record<string, { status: string; starts_at: string }> | null>(null);
 
   const authHeaders = () => ({ Authorization: "Bearer " + token });
 
@@ -121,10 +122,25 @@ export default function BookingsPanel({
       const nextItems: Appointment[] = listRes.items || [];
       const previous = previousStatuses.current;
       if (silent && previous) {
-        const newlyConfirmed = nextItems.find((a) => a.status === "confirmed" && previous[a.id] !== "confirmed");
-        if (newlyConfirmed) setConfirmationAlert(`Appointment confirmed: ${newlyConfirmed.service_name || "Appointment"} · ${fmtRange(newlyConfirmed)}`);
+        const newlyCancelled = nextItems.find((a) => a.status === "cancelled" && previous[a.id]?.status !== "cancelled");
+        const newlyConfirmed = nextItems.find((a) => a.status === "confirmed" && previous[a.id]?.status !== "confirmed");
+        const rescheduled = nextItems.find((a) => previous[a.id] && previous[a.id].starts_at !== a.starts_at && a.status !== "cancelled");
+        const disappeared = Object.keys(previous).find((id) => !nextItems.some((a) => a.id === id));
+        if (newlyCancelled) {
+          setAppointmentAlertTitle("Appointment cancelled");
+          setConfirmationAlert(`${newlyCancelled.service_name || "Appointment"} · ${fmtRange(newlyCancelled)}`);
+        } else if (rescheduled) {
+          setAppointmentAlertTitle("Appointment rescheduled");
+          setConfirmationAlert(`${rescheduled.service_name || "Appointment"} · new time ${fmtRange(rescheduled)}`);
+        } else if (newlyConfirmed) {
+          setAppointmentAlertTitle("Appointment confirmed");
+          setConfirmationAlert(`${newlyConfirmed.service_name || "Appointment"} · ${fmtRange(newlyConfirmed)}`);
+        } else if (disappeared) {
+          setAppointmentAlertTitle("Appointment moved or removed");
+          setConfirmationAlert("An appointment no longer appears on this date. Refresh or check the customer's new appointment date.");
+        }
       }
-      previousStatuses.current = Object.fromEntries(nextItems.map((a) => [a.id, a.status]));
+      previousStatuses.current = Object.fromEntries(nextItems.map((a) => [a.id, { status: a.status, starts_at: a.starts_at }]));
       setItems(nextItems);
       setQueue(queueRes.items || []);
     } catch (e: any) {
@@ -223,9 +239,9 @@ export default function BookingsPanel({
       {error && <p style={{ color: "#b00", marginTop: 12 }}>{error}</p>}
       {confirmationAlert && (
         <div role="alert" aria-live="assertive" style={{ marginTop: 12, padding: "12px 14px", borderRadius: 8, border: "1px solid #9ad6ad", background: "#effaf2", color: "#14532d", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <strong>✓ Appointment confirmed</strong>
+          <strong>✓ {appointmentAlertTitle}</strong>
           <span>{confirmationAlert}</span>
-          <button className="btn-ghost" onClick={() => setConfirmationAlert("")} aria-label="Dismiss appointment confirmation alert">Dismiss</button>
+          <button className="btn-ghost" onClick={() => setConfirmationAlert("")} aria-label="Dismiss appointment update alert">Dismiss</button>
         </div>
       )}
 
