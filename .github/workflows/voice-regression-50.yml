@@ -48,7 +48,7 @@ jobs:
             q=s.get(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',timeout=20); q.raise_for_status()
             if not q.json().get("items"):
               q=s.post(f'{B}/api/v1/tenants/{d["tenant"]["id"]}/services',json={"name":"QA Consultation","description":"QA","price":1000,"currency":"INR","duration_minutes":30,"is_active":True},timeout=20); q.raise_for_status()
-            return slug
+            return slug, d["tenant"]["id"], s
           def start(slug,n):
             for _ in range(5):
               x=requests.post(f"{B}/api/v1/public/business/{slug}/call",json={"name":"QA Customer","phone":"+9199"+str(10000000+n)},timeout=20)
@@ -67,7 +67,7 @@ jobs:
             if not d.get("reply"):raise RuntimeError("empty reply")
             return d
           for i,c in enumerate(C):
-            slug=setup(c);ok=bad=0
+            slug,tenant_id,admin=setup(c);ok=bad=0
             for t in T:
               for f in (S if t in T[:6] else S[:4]):
                 q=f.format(t=t)
@@ -88,12 +88,23 @@ jobs:
               d=turn(slug,cid,"Yes, confirm it",cv);cv=d.get("conversation_id",cv);b=d.get("booking",{})
               if not b.get("confirmed") or not b.get("booking_id"):raise RuntimeError("booking create missing confirmed=true or booking_id")
               bid=b["booking_id"]
+              # Verify the saved appointment through the authenticated tenant dashboard API.
+              saved=admin.get(f'{B}/api/v1/tenants/{tenant_id}/appointments',timeout=20);saved.raise_for_status()
+              rows=saved.json().get("items",[])
+              row=next((x for x in rows if str(x.get("id"))==str(bid)),None)
+              if not row: raise RuntimeError("confirmed booking missing from tenant appointments API; DB/dashboard persistence not verified")
+              if str(row.get("status","")).lower() not in ("confirmed","requested"):
+                raise RuntimeError("tenant appointments API returned unexpected booking status: "+str(row.get("status")))
               d=turn(slug,cid,"Cancel my appointment",cv);cv=d.get("conversation_id",cv);act=d.get("appointment_action",{})
               if act.get("status")!="awaiting_confirmation" or str(act.get("appointment_id",bid))!=str(bid):
                 raise RuntimeError("cancellation did not enter awaiting_confirmation for the same appointment: "+json.dumps(act,ensure_ascii=False)[:300])
               d=turn(slug,cid,"Yes, cancel it",cv);act=d.get("appointment_action",{})
               if act.get("status")!="cancelled" or str(act.get("appointment_id",bid))!=str(bid):
                 raise RuntimeError("cancellation did not persist for the same appointment: "+json.dumps(act,ensure_ascii=False)[:300])
+              saved=admin.get(f'{B}/api/v1/tenants/{tenant_id}/appointments',timeout=20);saved.raise_for_status()
+              row=next((x for x in saved.json().get("items",[]) if str(x.get("id"))==str(bid)),None)
+              if not row or str(row.get("status","")).lower()!="cancelled":
+                raise RuntimeError("tenant dashboard API did not reflect cancelled status for the same appointment")
               ok+=1
             except Exception as e:bad+=1;err("booking",c,"appointment -> today -> now -> confirm -> cancel",e)
             try:
