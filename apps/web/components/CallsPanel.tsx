@@ -84,7 +84,22 @@ export default function CallsPanel({ tenantId, token }: { tenantId: string; toke
     setLoading(false);
   }
 
-  useEffect(() => { if (tenantId) void loadAll(); }, [tenantId]);
+  useEffect(() => {
+    if (!tenantId) return;
+    void loadAll();
+    // Keep a dashboard opened in another tab in sync with calls happening in the PWA.
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadAll();
+    };
+    const timer = window.setInterval(refresh, 10000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+    // loadAll intentionally reads the current tenant/token from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, token]);
 
   const visible = useMemo(() => filter ? items.filter(c => {
     const f = filter.toLowerCase();
