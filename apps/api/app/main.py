@@ -2680,6 +2680,13 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
         )
         if action_result:
             result.update(action_result)
+            # This deterministic workflow owns the turn; don't let a generic
+            # fallback response trigger a contradictory handoff or overwrite its intent.
+            result["handoff_required"]=False
+            result["knowledge_hit"]=True
+            result["provider"]="appointment_workflow"
+            result["intent"]=(action_result.get("appointment_action") or {}).get("action") or "appointment_action"
+            result["next_step"]="reply"
             # generate_reply persists its own assistant turn; replace it with the
             # exact deterministic response returned to speech so transcript matches audio.
             action_conversation_id=result.get("conversation_id")
