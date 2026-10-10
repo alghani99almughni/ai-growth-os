@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-const API = String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\\/+$/, "");
+const API = String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 type Channel = "email" | "whatsapp";
 type Tab = "inbox" | "campaigns" | "settings";
 type PlatformStatus = { company_name: string; support_email: string; email_configured: boolean; email_from: string; whatsapp_configured: boolean; whatsapp_provider: string; campaign_contact_limit: number };
