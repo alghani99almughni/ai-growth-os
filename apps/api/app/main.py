@@ -2748,13 +2748,75 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 Appointment.starts_at==starts_utc,
                 Appointment.status.in_(["requested","confirmed","checked_in","serving"])
             ))
+            already_confirmed = bool(
+                existing_appointment and existing_appointment.status == "confirmed"
+            )
             if existing_appointment:
                 appointment,queue=existing_appointment,None
+                # A verbal confirmation upgrades an existing request instead of
+                # leaving the CRM row in "requested".
+                appointment.status = "confirmed"
             else:
                 appointment,queue=create_appointment(
-                    db,t,customer,service,starts_at,"ai_voice",None,None,False,False
+                    db,t,customer,service,starts_at,"ai_voice",
+                    None,f"Confirmed from voice call {call_for_booking.id}",False,False
                 )
+            # Keep the CRM appointment traceable to the exact voice call. The
+            # transcript remains on CallRecord; this event links it to the booking.
+            call_for_booking.resolution = "booking_confirmed"
+            call_for_booking.intent = "booking"
+            call_for_booking.summary = (
+                f"Appointment confirmed: {service.name} on "
+                f"{starts_at.isoformat()} (appointment_id={appointment.id})"
+            )
+            appointment.notes = (
+                ((appointment.notes or "").strip() + "\\n")
+                if appointment.notes and f"call_id={call_for_booking.id}" not in appointment.notes
+                else (appointment.notes or "")
+            )
+            if f"call_id={call_for_booking.id}" not in (appointment.notes or ""):
+                appointment.notes = (
+                    (appointment.notes + " " if appointment.notes else "")
+                    + f"call_id={call_for_booking.id}"
+                )
+            if not already_confirmed:
+                db.add(InteractionEvent(
+                    tenant_id=t.id,
+                    customer_id=customer.id,
+                    call_id=call_for_booking.id,
+                    channel="pwa",
+                    event_type="appointment_confirmed",
+                    payload_json=json.dumps({
+                        "appointment_id": appointment.id,
+                        "customer_id": customer.id,
+                        "service_id": service.id,
+                        "service_name": service.name,
+                        "starts_at": appointment.starts_at.isoformat(),
+                        "status": "confirmed",
+                        "source": "ai_voice",
+                        "call_id": call_for_booking.id,
+                    }),
+                ))
             db.commit()
+            if not already_confirmed:
+                try:
+                    publish_event_sync(t.id, "appointment.confirmed", {
+                        "appointment_id": appointment.id,
+                        "customer_id": customer.id,
+                        "customer_name": customer.name,
+                        "customer_phone": customer.phone,
+                        "service_name": service.name,
+                        "starts_at": appointment.starts_at.isoformat(),
+                        "status": "confirmed",
+                        "source": "ai_voice",
+                        "call_id": call_for_booking.id,
+                        "message": "Appointment confirmed from AI voice call",
+                    })
+                except Exception:
+                    logging.getLogger("uvicorn.error").exception(
+                        "APPOINTMENT_CONFIRMATION_ALERT_PUBLISH_FAILED tenant_id=%s appointment_id=%s",
+                        t.id, appointment.id,
+                    )
             conversation_row=db.get(Conversation, result.get("conversation_id"))
             if conversation_row:
                 conversation_row.state="booking_confirmed"
