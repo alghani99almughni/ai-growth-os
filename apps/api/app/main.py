@@ -2066,16 +2066,16 @@ def _voice_identity_instructions(customer) -> str:
     """Tell the realtime agent accurately whether caller identity is already saved."""
     if customer and customer.name and customer.phone:
         return (
-            "CUSTOMER ALREADY VERIFIED:\\n"
-            f"Name: {customer.name}\\nMobile: {customer.phone}\\n"
+            "CUSTOMER ALREADY VERIFIED:\n"
+            f"Name: {customer.name}\nMobile: {customer.phone}\n"
             "The customer's name and mobile number are already saved and verified. "
             "Do NOT ask for them again. Start with a warm greeting using their name."
         )
     known_name = customer.name if customer and customer.name else "not provided"
     known_phone = customer.phone if customer and customer.phone else "not provided"
     return (
-        "CUSTOMER IDENTITY NEEDS CAPTURE:\\n"
-        f"Known name: {known_name}\\nKnown mobile: {known_phone}\\n"
+        "CUSTOMER IDENTITY NEEDS CAPTURE:\n"
+        f"Known name: {known_name}\nKnown mobile: {known_phone}\n"
         "Identity is NOT fully verified. Politely ask only for missing name/mobile details. "
         "Once both are known, call save_customer_identity with both fields, reusing any known "
         "value. Do not claim verification until the tool returns verified=true."
@@ -2317,13 +2317,13 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                 if inp:
                     turn_controller.input_final()
                     state.customer_transcript.append(inp); state.turn_index+=1
-                    call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+inp
+                    call.transcript=((call.transcript+"\n") if call.transcript else "")+"CUSTOMER: "+inp
                     call.language=detect_language(inp); call.ai_turns=(call.ai_turns or 0)+1
                     db.commit(); await websocket.send_json({"type":"transcript","role":"customer","text":inp})
                 if out:
                     turn_controller.output(chars=len(out))
                     state.assistant_transcript.append(out)
-                    call.transcript=((call.transcript+"\\n") if call.transcript else "")+"AI: "+out
+                    call.transcript=((call.transcript+"\n") if call.transcript else "")+"AI: "+out
                     db.commit(); await websocket.send_json({"type":"transcript","role":"ai","text":out})
                 if event.get("toolCall"):
                     responses=[]
@@ -2916,7 +2916,7 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
             now=datetime.utcnow()
-            call.transcript=((call.transcript+"\\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\\nAI: "+result["reply"]
+            call.transcript=((call.transcript+"\n") if call.transcript else "")+"CUSTOMER: "+payload.transcript+"\nAI: "+result["reply"]
             call.intent=result.get("intent")
             call.language=result.get("language") or detect_language(payload.transcript)
             call.ai_turns=(call.ai_turns or 0)+1
@@ -3021,7 +3021,7 @@ def resolve_call(tenant_id,call_id,payload:CallResolution,user=Depends(get_curre
     if payload.knowledge_answer:
         question=""
         if call.transcript:
-            parts=[x.removeprefix("CUSTOMER: ").strip() for x in call.transcript.split("\\n") if x.startswith("CUSTOMER: ")]
+            parts=[x.removeprefix("CUSTOMER: ").strip() for x in call.transcript.split("\n") if x.startswith("CUSTOMER: ")]
             question=parts[-1] if parts else ""
         if question:
             existing=db.scalar(select(KnowledgeCandidate).where(
