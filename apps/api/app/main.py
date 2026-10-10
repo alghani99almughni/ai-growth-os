@@ -2889,6 +2889,15 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 f"generation_used={result.get('generation_used')}; booking_state={result.get('booking_state')}; "
                 f"handoff={result.get('handoff_required')}"
             )
+            appointment_action=result.get("appointment_action") or {}
+            if appointment_action.get("status") in ("cancelled", "rescheduled"):
+                action_name=appointment_action.get("status")
+                call.intent="appointment_cancellation" if action_name=="cancelled" else "appointment_rescheduling"
+                call.resolution="appointment_cancelled" if action_name=="cancelled" else "appointment_rescheduled"
+                call.summary=(
+                    f"Appointment {action_name}: appointment_id={appointment_action.get('appointment_id')}; "
+                    f"call_id={call.id}; transcript_retained=True"
+                )
             if result.get("handoff_required"):
                 call.human_callback_requested=True; call.status="handoff_requested"; call.resolution="human_callback"
                 route_call(db,t.id,call,result.get("intent"))
