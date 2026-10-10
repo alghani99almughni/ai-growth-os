@@ -24,6 +24,8 @@ export default function PlatformCommunicationsPage() {
   const [contactsJson, setContactsJson] = useState(JSON.stringify(sampleContacts, null, 2));
   const [sending, setSending] = useState(false);
   const [campaignResult, setCampaignResult] = useState<any>(null);
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replyingTicket, setReplyingTicket] = useState<string>("");
   async function request(path: string, init: RequestInit = {}) {
     const r = await fetch(API + path, { ...init, headers: { Authorization: "Bearer " + token, ...(init.body ? { "Content-Type": "application/json" } : {}), ...(init.headers || {}) }, cache: "no-store" });
     const raw = await r.text(); let data: any = {}; try { data = raw ? JSON.parse(raw) : {}; } catch {}
@@ -39,6 +41,19 @@ export default function PlatformCommunicationsPage() {
   }
   useEffect(() => { setToken(localStorage.getItem("ago_access_token") || ""); }, []);
   useEffect(() => { if (token) void refresh(); }, [token]);
+  async function replyToTicket(ticketId: string) {
+    const message = (replyDrafts[ticketId] || "").trim();
+    if (!message) { setError("Enter a reply before sending."); return; }
+    setReplyingTicket(ticketId); setError("");
+    try {
+      await request("/api/v1/platform/tickets/" + encodeURIComponent(ticketId) + "/reply", {
+        method: "POST", body: JSON.stringify({ message, from_tenant: false })
+      });
+      setReplyDrafts(prev => ({ ...prev, [ticketId]: "" }));
+      await refresh();
+    } catch (e: any) { setError(e.message || "Could not send support reply."); }
+    finally { setReplyingTicket(""); }
+  }
   async function sendCampaign() {
     setSending(true); setError(""); setCampaignResult(null);
     try {
@@ -67,7 +82,7 @@ export default function PlatformCommunicationsPage() {
     {loading && <p style={{ color: "#75839a" }}>Loading platform communication data…</p>}
     {!loading && tab === "inbox" && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 16 }}>
       <section style={panel}><SectionHeading title="Tenant support queue" subtitle="Review support issues from one place." />
-        {tickets.length === 0 ? <Empty text="No support tickets found." /> : tickets.slice(0,30).map((t,i) => <div key={t.id || i} style={listRow}><div style={{ display:"flex", justifyContent:"space-between", gap:8 }}><strong>{t.subject || t.title || "Support request"}</strong><span style={pill}>{t.priority || "normal"}</span></div><p style={{ margin:"6px 0", color:"#64748b", fontSize:12 }}>{t.tenant_name || t.business_name || t.tenant_id || "Tenant"} · {t.status || "new"}</p><p style={{ margin:0, fontSize:13, whiteSpace:"pre-wrap" }}>{t.body || t.description || ""}</p><p style={{ margin:"7px 0 0", color:"#94a3b8", fontSize:11 }}>{t.created_at ? new Date(t.created_at).toLocaleString() : ""}</p></div>)}
+        {tickets.length === 0 ? <Empty text="No support tickets found." /> : tickets.slice(0,30).map((t,i) => <div key={t.id || i} style={listRow}><div style={{ display:"flex", justifyContent:"space-between", gap:8 }}><strong>{t.subject || t.title || "Support request"}</strong><span style={pill}>{t.priority || "normal"}</span></div><p style={{ margin:"6px 0", color:"#64748b", fontSize:12 }}>{t.tenant_name || t.business_name || t.tenant_id || "Tenant"} · {t.status || "new"}</p><p style={{ margin:0, fontSize:13, whiteSpace:"pre-wrap" }}>{t.body || t.description || ""}</p><p style={{ margin:"7px 0 0", color:"#94a3b8", fontSize:11 }}>{t.created_at ? new Date(t.created_at).toLocaleString() : ""}</p><div style={{display:"grid",gap:8,marginTop:10}}><textarea aria-label={"Reply to "+(t.subject||t.title||"support ticket")} value={replyDrafts[t.id]||""} onChange={e=>setReplyDrafts(prev=>({...prev,[t.id]:e.target.value}))} rows={2} placeholder="Write a reply to the tenant…" style={{...fieldStyle,resize:"vertical"}}/><button type="button" disabled={!t.id||replyingTicket===t.id||!(replyDrafts[t.id]||"").trim()} onClick={()=>void replyToTicket(t.id)} style={secondaryButton}>{replyingTicket===t.id?"Sending reply…":"Send support reply"}</button></div></div>)}
         <p style={{ color:"#94a3b8", fontSize:11, marginTop:12 }}>Reply and update ticket status from platform Tickets.</p><a href="/platform/tickets" style={linkStyle}>Open ticket management →</a>
       </section>
       <section style={panel}><SectionHeading title="Recent platform messages" subtitle="Messages sent by Super Admin to tenant owners." />
