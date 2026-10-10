@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -84,6 +84,9 @@ export default function BookingsPanel({
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [busyId, setBusyId] = useState<string>("");
+  const [confirmationAlert, setConfirmationAlert] = useState("");
+  const [appointmentAlertTitle, setAppointmentAlertTitle] = useState("Appointment update");
+  const previousStatuses = useRef<Record<string, { status: string; starts_at: string }> | null>(null);
 
   const authHeaders = () => ({ Authorization: "Bearer " + token });
 
@@ -109,24 +112,58 @@ export default function BookingsPanel({
     return x;
   }
 
-  async function loadAll() {
-    setLoading(true);
-    setError("");
+  async function loadAll(silent = false) {
+    if (!silent) { setLoading(true); setError(""); }
     try {
       const [listRes, queueRes] = await Promise.all([
         jget(`/api/v1/tenants/${tenantId}/appointments?date=${date}`),
         jget(`/api/v1/tenants/${tenantId}/queue?date=${date}`).catch(() => ({ items: [] })),
       ]);
-      setItems(listRes.items || []);
+      const nextItems: Appointment[] = listRes.items || [];
+      const previous = previousStatuses.current;
+      if (silent && previous) {
+        const newlyCancelled = nextItems.find((a) => a.status === "cancelled" && previous[a.id]?.status !== "cancelled");
+        const newlyConfirmed = nextItems.find((a) => a.status === "confirmed" && previous[a.id]?.status !== "confirmed");
+        const rescheduled = nextItems.find((a) => previous[a.id] && previous[a.id].starts_at !== a.starts_at && a.status !== "cancelled");
+        const disappeared = Object.keys(previous).find((id) => !nextItems.some((a) => a.id === id));
+        if (newlyCancelled) {
+          setAppointmentAlertTitle("Appointment cancelled");
+          setConfirmationAlert(`${newlyCancelled.service_name || "Appointment"} · ${fmtRange(newlyCancelled)}`);
+        } else if (rescheduled) {
+          setAppointmentAlertTitle("Appointment rescheduled");
+          setConfirmationAlert(`${rescheduled.service_name || "Appointment"} · new time ${fmtRange(rescheduled)}`);
+        } else if (newlyConfirmed) {
+          setAppointmentAlertTitle("Appointment confirmed");
+          setConfirmationAlert(`${newlyConfirmed.service_name || "Appointment"} · ${fmtRange(newlyConfirmed)}`);
+        } else if (disappeared) {
+          setAppointmentAlertTitle("Appointment moved or removed");
+          setConfirmationAlert("An appointment no longer appears on this date. Refresh or check the customer's new appointment date.");
+        }
+      }
+      previousStatuses.current = Object.fromEntries(nextItems.map((a) => [a.id, { status: a.status, starts_at: a.starts_at }]));
+      setItems(nextItems);
       setQueue(queueRes.items || []);
     } catch (e: any) {
       setError(e.message || "Could not load bookings");
     }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 
   useEffect(() => {
-    if (tenantId) void loadAll();
+    if (!tenantId) return;
+    void loadAll();
+    // Keep a bookings tab current when an AI call creates or changes an appointment.
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadAll(true);
+    };
+    const timer = window.setInterval(refresh, 10000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+    // loadAll intentionally reads the current tenant/date from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, date]);
 
   async function setStatusFor(a: Appointment, newStatus: string) {
@@ -193,13 +230,20 @@ export default function BookingsPanel({
               fontSize: 13,
             }}
           />
-          <button className="btn-ghost" onClick={loadAll} disabled={loading}>
+          <button className="btn-ghost" onClick={() => void loadAll()} disabled={loading}>
             {loading ? "Loading…" : "Refresh"}
           </button>
         </div>
       </div>
 
       {error && <p style={{ color: "#b00", marginTop: 12 }}>{error}</p>}
+      {confirmationAlert && (
+        <div role="alert" aria-live="assertive" style={{ marginTop: 12, padding: "12px 14px", borderRadius: 8, border: "1px solid #9ad6ad", background: "#effaf2", color: "#14532d", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <strong>✓ {appointmentAlertTitle}</strong>
+          <span>{confirmationAlert}</span>
+          <button className="btn-ghost" onClick={() => setConfirmationAlert("")} aria-label="Dismiss appointment update alert">Dismiss</button>
+        </div>
+      )}
 
       {/* Appointments list */}
       <div style={{ marginTop: 24 }}>

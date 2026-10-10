@@ -13,6 +13,7 @@ from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,Sta
 from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context
+from .voice_booking_actions import handle_voice_appointment_action
 from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
@@ -2030,6 +2031,37 @@ def start_public_call(slug:str,payload:PublicCallStartRequest,db:Session=Depends
     db.add(call); db.commit(); db.refresh(call)
     return {"call_id":call.id,"customer_id":customer.id if customer else None,"status":"ringing","business_name":t.name,"room_token":issue_call_room_token(call.id,"call-customer")}
 
+@app.post("/api/v1/public/business/{slug}/call/{call_id}/end")
+def end_public_call(slug: str, call_id: str, db: Session = Depends(get_db)):
+    """Persist the end of a customer PWA call so dashboard status and duration are accurate."""
+    tenant = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
+    if not tenant:
+        raise HTTPException(404, "Business not found")
+    call = db.scalar(select(CallRecord).where(
+        CallRecord.id == call_id,
+        CallRecord.tenant_id == tenant.id,
+        CallRecord.source == "pwa_voice",
+    ))
+    if not call:
+        raise HTTPException(404, "Call session not found")
+    if call.status not in ("completed", "ended", "failed", "missed"):
+        ended_at = datetime.utcnow()
+        call.ended_at = ended_at
+        call.duration_seconds = max(
+            0,
+            int((ended_at - (call.answered_at or call.started_at or ended_at)).total_seconds()),
+        )
+        call.status = "completed"
+        if not call.resolution:
+            call.resolution = "ai"
+        db.commit()
+    return {
+        "call_id": call.id,
+        "status": call.status,
+        "ended_at": call.ended_at.isoformat() if call.ended_at else None,
+        "duration_seconds": call.duration_seconds or 0,
+    }
+
 @app.websocket("/ws/public/voice/{call_id}")
 async def public_voice(websocket:WebSocket,call_id:str):
     import logging
@@ -2637,13 +2669,58 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
     bound_conversation_id=_voice_conversation_for_call(
         db,t.id,payload.call_id,payload.conversation_id
     )
+    prior_conversation=db.get(Conversation,bound_conversation_id) if bound_conversation_id else None
+    prior_conversation_state=prior_conversation.state if prior_conversation else ""
     result=await generate_reply(db,t.id,payload.transcript,bound_conversation_id,payload.channel)
+    if payload.call_id:
+        action_call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
+        action_conversation=db.get(Conversation,result.get("conversation_id")) if result.get("conversation_id") else None
+        action_result=handle_voice_appointment_action(
+            db,t,action_call,action_conversation,payload.transcript,prior_conversation_state
+        )
+        if action_result:
+            result.update(action_result)
+            # This deterministic workflow owns the turn; don't let a generic
+            # fallback response trigger a contradictory handoff or overwrite its intent.
+            result["handoff_required"]=False
+            result["knowledge_hit"]=True
+            result["provider"]="appointment_workflow"
+            result["intent"]=(action_result.get("appointment_action") or {}).get("action") or "appointment_action"
+            result["next_step"]="reply"
+            # generate_reply persists its own assistant turn; replace it with the
+            # exact deterministic response returned to speech so transcript matches audio.
+            action_conversation_id=result.get("conversation_id")
+            if action_conversation_id and action_result.get("reply"):
+                transcript_reply=db.scalar(
+                    select(ConversationMessage)
+                    .where(
+                        ConversationMessage.conversation_id==action_conversation_id,
+                        ConversationMessage.role=="assistant",
+                    )
+                    .order_by(ConversationMessage.created_at.desc())
+                    .limit(1)
+                )
+                if transcript_reply:
+                    transcript_reply.content=action_result["reply"]
+                    transcript_reply.intent=action_result.get("appointment_action",{}).get("action") or "appointment_action"
+                    db.commit()
     _bind_voice_conversation(db,t.id,payload.call_id,result.get("conversation_id"))
 
     # Browser/PWA voice currently uses the deterministic /voice/turn path.
     # Execute confirmed appointments here; the realtime WebSocket has a
     # separate provider-tool path and is not involved in these calls.
     booking=result.get("booking") or {}
+    if booking.get("confirmation_requested") and not payload.call_id:
+        # Never tell the caller a booking is confirmed if the request cannot be
+        # tied to the server-created call/customer identity and committed.
+        logging.getLogger("uvicorn.error").error(
+            "VOICE_PUBLIC_BOOKING_MISSING_CALL_ID tenant_id=%s conversation_id=%s",
+            t.id, result.get("conversation_id"),
+        )
+        result["reply"]="I couldn't securely save that appointment yet. Let's try confirming the booking once more."
+        result["booking"]={**booking,"confirmed":False,"error":"Missing call session ID"}
+        result["handoff_required"]=False
+
     if payload.call_id and booking.get("confirmation_requested"):
         call_for_booking=db.scalar(select(CallRecord).where(
             CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id
@@ -2706,13 +2783,71 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 Appointment.starts_at==starts_utc,
                 Appointment.status.in_(["requested","confirmed","checked_in","serving"])
             ))
+            already_confirmed = bool(
+                existing_appointment and existing_appointment.status == "confirmed"
+            )
             if existing_appointment:
                 appointment,queue=existing_appointment,None
+                # A verbal confirmation upgrades an existing request instead of
+                # leaving the CRM row in "requested".
+                appointment.status = "confirmed"
             else:
                 appointment,queue=create_appointment(
-                    db,t,customer,service,starts_at,"ai_voice",None,None,False,False
+                    db,t,customer,service,starts_at,"ai_voice",
+                    None,f"Confirmed from voice call {call_for_booking.id}",False,False
                 )
+            # Keep the CRM appointment traceable to the exact voice call. The
+            # transcript remains on CallRecord; this event links it to the booking.
+            call_for_booking.resolution = "booking_confirmed"
+            call_for_booking.intent = "booking"
+            call_for_booking.summary = (
+                f"Appointment confirmed: {service.name} on "
+                f"{starts_at.isoformat()} (appointment_id={appointment.id})"
+            )
+            existing_notes = (appointment.notes or "").strip()
+            if f"call_id={call_for_booking.id}" not in existing_notes:
+                appointment.notes = (
+                    f"{existing_notes} | call_id={call_for_booking.id}"
+                    if existing_notes else f"call_id={call_for_booking.id}"
+                )
+            if not already_confirmed:
+                db.add(InteractionEvent(
+                    tenant_id=t.id,
+                    customer_id=customer.id,
+                    call_id=call_for_booking.id,
+                    channel="pwa",
+                    event_type="appointment_confirmed",
+                    payload_json=json.dumps({
+                        "appointment_id": appointment.id,
+                        "customer_id": customer.id,
+                        "service_id": service.id,
+                        "service_name": service.name,
+                        "starts_at": appointment.starts_at.isoformat(),
+                        "status": "confirmed",
+                        "source": "ai_voice",
+                        "call_id": call_for_booking.id,
+                    }),
+                ))
             db.commit()
+            if not already_confirmed:
+                try:
+                    publish_event_sync(t.id, "appointment.confirmed", {
+                        "appointment_id": appointment.id,
+                        "customer_id": customer.id,
+                        "customer_name": customer.name,
+                        "customer_phone": customer.phone,
+                        "service_name": service.name,
+                        "starts_at": appointment.starts_at.isoformat(),
+                        "status": "confirmed",
+                        "source": "ai_voice",
+                        "call_id": call_for_booking.id,
+                        "message": "Appointment confirmed from AI voice call",
+                    })
+                except Exception:
+                    logging.getLogger("uvicorn.error").exception(
+                        "APPOINTMENT_CONFIRMATION_ALERT_PUBLISH_FAILED tenant_id=%s appointment_id=%s",
+                        t.id, appointment.id,
+                    )
             conversation_row=db.get(Conversation, result.get("conversation_id"))
             if conversation_row:
                 conversation_row.state="booking_confirmed"
@@ -2763,68 +2898,6 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             result["booking"]={**booking,"confirmed":False,"error":str(exc),"stale":True}
             result["handoff_required"]=False
 
-    if payload.call_id and booking.get("cancel_requested"):
-        call_for_cancel=db.scalar(select(CallRecord).where(
-            CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id
-        ))
-        try:
-            if not call_for_cancel or not call_for_cancel.customer_id:
-                raise ValueError("Customer identity is required before cancelling an appointment.")
-            customer=db.get(Customer,call_for_cancel.customer_id)
-            if not customer:
-                raise ValueError("Customer record was not found.")
-            appointment=None
-            date_text=str(booking.get("date") or "").strip()
-            time_text=str(booking.get("time") or "").strip().upper()
-            if date_text and time_text:
-                starts_at=datetime.strptime(
-                    f"{date_text} {time_text}", "%Y-%m-%d %I:%M %p"
-                ) if ":" in time_text else datetime.strptime(
-                    f"{date_text} {time_text}", "%Y-%m-%d %I %p"
-                )
-                from .booking import local_to_utc_naive
-                starts_utc=local_to_utc_naive(starts_at,t.timezone)
-                appointment=db.scalar(select(Appointment).where(
-                    Appointment.tenant_id==t.id,
-                    Appointment.customer_id==customer.id,
-                    Appointment.starts_at==starts_utc,
-                    Appointment.status.in_(["requested","confirmed","checked_in","serving"])
-                ).order_by(Appointment.created_at.desc()).limit(1))
-            if not appointment:
-                appointment=db.scalar(select(Appointment).where(
-                    Appointment.tenant_id==t.id,
-                    Appointment.customer_id==customer.id,
-                    Appointment.starts_at>=datetime.utcnow(),
-                    Appointment.status.in_(["requested","confirmed","checked_in","serving"])
-                ).order_by(Appointment.starts_at.asc()).limit(1))
-            if not appointment:
-                raise ValueError("No active upcoming appointment was found.")
-            appointment.status="cancelled"
-            q=db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==appointment.id))
-            if q:
-                q.status="cancelled"
-                q.completed_at=datetime.utcnow()
-                appointment.queue_status="cancelled"
-            db.commit()
-            result["reply"]={
-                "hi":f"ठीक है। आपका {appointment.starts_at.strftime('%-d %B')} का अपॉइंटमेंट रद्द कर दिया गया है।",
-                "te":f"సరే. మీ {appointment.starts_at.strftime('%-d %B')} అపాయింట్‌మెంట్ రద్దు చేశాను."
-            }.get(
-                result.get("language"),
-                f"Okay. Your appointment for {appointment.starts_at.strftime('%B %-d at %-I:%M %p')} has been cancelled."
-            )
-            result["booking"]={**booking,"cancel_requested":False,"cancelled":True,
-                               "booking_id":appointment.id,"cancellation_confirmed":True}
-        except Exception as exc:
-            db.rollback()
-            logging.getLogger("uvicorn.error").warning(
-                "VOICE_PUBLIC_BOOKING_CANCEL_REJECTED call_id=%s booking=%s error=%s",
-                payload.call_id, booking, exc,
-            )
-            result["reply"]="I could not find an active appointment to cancel."
-            result["booking"]={**booking,"cancel_requested":False,"cancelled":False,
-                               "cancellation_confirmed":False,"error":str(exc)}
-
     if payload.call_id:
         call=db.scalar(select(CallRecord).where(CallRecord.id==payload.call_id,CallRecord.tenant_id==t.id))
         if call:
@@ -2840,6 +2913,7 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 f"generation_used={result.get('generation_used')}; booking_state={result.get('booking_state')}; "
                 f"handoff={result.get('handoff_required')}"
             )
+            appointment_action=result.get("appointment_action") or {}
             if result.get("handoff_required"):
                 call.human_callback_requested=True; call.status="handoff_requested"; call.resolution="human_callback"
                 route_call(db,t.id,call,result.get("intent"))
@@ -2847,7 +2921,17 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 call.resolution="knowledge"
             else:
                 call.resolution="ai"
+            if appointment_action.get("status") in ("cancelled", "rescheduled"):
+                action_name=appointment_action.get("status")
+                call.intent="appointment_cancellation" if action_name=="cancelled" else "appointment_rescheduling"
+                call.resolution="appointment_cancelled" if action_name=="cancelled" else "appointment_rescheduled"
+                call.summary=(
+                    f"Appointment {action_name}: appointment_id={appointment_action.get('appointment_id')}; "
+                    f"call_id={call.id}; transcript_retained=True"
+                )
             if call.answered_at is None: call.answered_at=now
+            if call.status in ("ringing", "created"):
+                call.status="ongoing"
             db.commit()
     return {**result,"tenant_id":t.id,"call_id":payload.call_id}
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)

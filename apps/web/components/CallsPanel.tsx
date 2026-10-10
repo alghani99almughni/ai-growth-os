@@ -75,16 +75,31 @@ export default function CallsPanel({ tenantId, token }: { tenantId: string; toke
     return x;
   }
 
-  async function loadAll() {
-    setLoading(true); setError("");
+  async function loadAll(silent = false) {
+    if (!silent) { setLoading(true); setError(""); }
     try {
       const res = await jget(`/api/v1/tenants/${tenantId}/calls`);
       setItems(res.items || []);
     } catch (e: any) { setError(e.message || "Could not load calls"); }
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 
-  useEffect(() => { if (tenantId) void loadAll(); }, [tenantId]);
+  useEffect(() => {
+    if (!tenantId) return;
+    void loadAll();
+    // Keep a dashboard opened in another tab in sync with calls happening in the PWA.
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadAll(true);
+    };
+    const timer = window.setInterval(refresh, 10000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+    // loadAll intentionally reads the current tenant/token from this render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, token]);
 
   const visible = useMemo(() => filter ? items.filter(c => {
     const f = filter.toLowerCase();
@@ -141,7 +156,7 @@ ${rows.map(row => `<Row>${row.map(v => `<Cell><Data ss:Type="String">${esc(v)}</
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <input placeholder="Search customer, phone, intent…" value={filter} onChange={e=>setFilter(e.target.value)}
             style={{padding:"8px 10px",border:"1px solid #d7dde8",borderRadius:8,fontSize:13,minWidth:240}} />
-          <button className="btn-ghost" onClick={loadAll} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
+          <button className="btn-ghost" onClick={() => void loadAll()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
           <button className="btn-primary" onClick={exportExcel} disabled={exporting || !visible.length}>{exporting ? "Exporting…" : "Export Excel"}</button>
         </div>
       </div>

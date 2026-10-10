@@ -324,7 +324,7 @@ def extract_booking_entities(text: str) -> dict:
 
 def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
     c = db.get(Conversation, conversation_id)
-    ctx = {"day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None, "now_requested": False}
+    ctx = {"day": None, "relative_day": None, "time": None, "time_hint": None, "date_hint": None, "now_requested": False, "resolved_date": None}
     if not c:
         return ctx
 
@@ -346,6 +346,41 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
         for key in ctx:
             if extracted.get(key) is not None:
                 ctx[key] = extracted[key]
+
+    # "Now" can select the next available slot and speak it back to the caller.
+    # That selected date/time is an assistant message, not a user utterance, so
+    # reconstruct it from the exact confirmation prompt before handling "yes".
+    # Otherwise we accidentally re-resolve "today" and lose the selected slot.
+    if c.state == "booking_confirmation":
+        last_assistant = db.scalar(
+            select(ConversationMessage)
+            .where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.role == "assistant",
+            )
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(1)
+        )
+        if last_assistant:
+            selected = re.search(
+                r"\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s*,?\s+"
+                r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\s+at\s+"
+                r"(\d{1,2})(?::([0-5]\d))?\s*(AM|PM)\b",
+                last_assistant.content or "",
+                re.IGNORECASE,
+            )
+            if selected:
+                month, day_num, year, hour, minute, meridiem = selected.groups()
+                try:
+                    ctx["resolved_date"] = datetime.strptime(
+                        f"{month} {day_num} {year}", "%B %d %Y"
+                    ).date()
+                    ctx["day"] = ctx["resolved_date"].strftime("%A").lower()
+                    ctx["relative_day"] = None
+                    ctx["time"] = f"{int(hour)}:{minute or '00'} {meridiem.upper()}"
+                except ValueError:
+                    # Invalid or localized prompts are not treated as a valid slot.
+                    ctx["resolved_date"] = None
     return ctx
 
 
@@ -629,7 +664,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         c.state="handoff_requested"
     elif c.state=="booking_confirmation" and is_explicit_confirmation(message):
         prior=previous_booking_context(db,c.id,message)
-        booking_date=resolve_booking_date(
+        booking_date=prior.get("resolved_date") or resolve_booking_date(
             tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
         )
         calendar=booking_calendar_status(db,tenant,booking_date,prior.get("time"))

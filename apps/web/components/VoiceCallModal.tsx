@@ -225,6 +225,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   const lineId = useRef(0);
   const lastLineRef = useRef<{ role: Role; at: number }>({ role: "system", at: 0 });
   const autoStartedRef = useRef(false);
+  const endRequestRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const linesRef = useRef<Line[]>([]);
   const pendingRef = useRef("");
@@ -779,6 +780,14 @@ ${recent}`,
 
   /* ---------- start / end ---------- */
   const endCall = (final: Phase = "ended") => {
+    const endingCallId = callRef.current?.call_id;
+    if (endingCallId && endRequestRef.current !== endingCallId) {
+      endRequestRef.current = endingCallId;
+      void fetch(
+        `${api()}/api/v1/public/business/${encodeURIComponent(slug)}/call/${encodeURIComponent(endingCallId)}/end`,
+        { method: "POST", keepalive: true },
+      ).catch(() => { if (endRequestRef.current === endingCallId) endRequestRef.current = null; });
+    }
     activeRef.current = false;
     clearIdle();
     clearPending();
@@ -797,6 +806,13 @@ ${recent}`,
   };
 
   const startCall = async (nm: string, ph: string, customerId?: string | null) => {
+    // Prevent rapid double-clicks or a second start while a call session is active.
+    if (phaseRef.current === "starting" || (activeRef.current && callRef.current?.call_id)) return;
+    // A newly identified customer updates the parent prop. Mark the call as
+    // already started before that callback can trigger the auto-start effect.
+    // Otherwise the same modal can create a second call and reset booking state.
+    autoStartedRef.current = true;
+    endRequestRef.current = null;
     setError("");
     // Every new call starts with a clean conversation boundary.
     convRef.current = null;
