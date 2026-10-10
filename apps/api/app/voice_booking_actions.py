@@ -58,9 +58,12 @@ def _action_intent(text: str) -> str | None:
         value,
     )
     reschedule = re.search(
-        r"\b(reschedul\w*|change (?:my |the )?(?:appointment|booking|time)|"
-        r"move (?:my |the )?(?:appointment|booking)|shift (?:my |the )?(?:appointment|booking))\b"
-        r"|समय बदल|तारीख बदल|మార్చు|తేదీ మార్చ|நேரம் மாற்ற|தேதி மாற்ற|ಸಮಯ ಬದಲ",
+        r"\b(reschedul\w*|change (?:my |the )?(?:appointment|booking|time|timing|date)|"
+        r"change (?:the )?(?:time|timing|date)|move (?:my |the )?(?:appointment|booking)|"
+        r"move it to|shift (?:my |the )?(?:appointment|booking)|shift it|"
+        r"change it to|make it (?:at|on))\b"
+        r"|समय बदल|तारीख बदल|समय बदलना|तारीख बदलना|మార్చు|తేదీ మార్చ|సమయం మార్చ|"
+        r"நேரம் மாற்ற|தேதி மாற்ற|நேரத்தை மாற்ற|ಸಮಯ ಬದಲ|ದಿನಾಂಕ ಬದಲ|സമയം മാറ്റ|തീയതി മാറ്റ",
         value,
     )
     if reschedule:
