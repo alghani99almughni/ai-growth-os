@@ -156,7 +156,7 @@ ${rows.map(row => `<Row>${row.map(v => `<Cell><Data ss:Type="String">${esc(v)}</
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <input placeholder="Search customer, phone, intent…" value={filter} onChange={e=>setFilter(e.target.value)}
             style={{padding:"8px 10px",border:"1px solid #d7dde8",borderRadius:8,fontSize:13,minWidth:240}} />
-          <button className="btn-ghost" onClick={loadAll} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
+          <button className="btn-ghost" onClick={() => void loadAll()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button>
           <button className="btn-primary" onClick={exportExcel} disabled={exporting || !visible.length}>{exporting ? "Exporting…" : "Export Excel"}</button>
         </div>
       </div>
