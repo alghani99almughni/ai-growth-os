@@ -37,7 +37,7 @@ def _affirmative(text: str) -> bool:
     return value in {
         "yes", "yes please", "yeah", "yep", "sure", "confirm", "confirmed",
         "okay", "ok", "please do", "go ahead", "haan", "han", "ji", "theek hai",
-        "हाँ", "हां", "जी", "हो", "होय", "অ্যাঁ", "হ্যাঁ", "ঠিক আছে",
+        "हाँ", "हां", "जी", "हो", "होय", "হ্যাঁ", "ঠিক আছে",
         "હા", "હા કરો", "ਹਾਂ", "ਠੀਕ ਹੈ", "ଁ", "ହଁ", "ଠିକ୍ ଅଛି",
         "అవును", "సరే", "అవును చేయండి", "ஆம்", "சரி",
         "ಹೌದು", "ಸರಿ", "അതെ", "ശരി",
@@ -58,7 +58,7 @@ def _negative(text: str) -> bool:
 def _action_intent(text: str) -> str | None:
     value = (text or "").casefold()
     cancel = re.search(
-        r"\b(cancel|cancell?ation|call off|drop)\b|रद्द|రద్దు|ரத்து|ರದ್ದು|റദ്ദാക്ക",
+        r"\b(cancel|cancell?ation|call off|drop)\b|रद्द|રદ|રદ્|বাতিল|রদ|রੱদ|ବାତିଲ|రద్దు|ரத்து|ರದ್ದು|റദ്ദാക്ക",
         value,
     )
     reschedule = re.search(
