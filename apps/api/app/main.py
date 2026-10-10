@@ -3494,7 +3494,7 @@ def platform_communications_status(user: User = Depends(get_current_user), db: S
         "whatsapp_configured": (
             bool((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
             if (cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "").lower() == "meta"
-            else bool((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id))
+            else bool(_platform_whatsapp_setting(db, "platform_whatsapp_openwa_encrypted") or ((cfg.notification_whatsapp_openwa_base_url or cfg.openwa_base_url) and (cfg.notification_whatsapp_openwa_api_key or cfg.openwa_api_key) and (cfg.notification_whatsapp_openwa_session_id or cfg.openwa_session_id)))
         ),
         "whatsapp_provider": cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "not configured",
         "campaign_contact_limit": 500,
@@ -3508,6 +3508,27 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
     from .platform_settings import get_all
     from .config import settings as cfg
     settings_data = get_all(db)
+    def _campaign_whatsapp_adapter():
+        active = _platform_whatsapp_setting(db, "platform_whatsapp_active_provider")
+        provider = active or cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "openwa"
+        encrypted = _platform_whatsapp_setting(db, "platform_whatsapp_" + provider + "_encrypted")
+        if encrypted:
+            key = cfg.integration_credential_encryption_key or cfg.whatsapp_credential_encryption_key
+            if not key:
+                raise RuntimeError("Provider credential encryption key is not configured")
+            try:
+                saved_cfg = decrypt_channel_config(encrypted, key)
+                return WhatsAppAdapter(
+                    provider=saved_cfg.get("provider", provider),
+                    openwa_base_url=saved_cfg.get("base_url", ""),
+                    openwa_api_key=saved_cfg.get("api_key", ""),
+                    openwa_session_id=saved_cfg.get("session_id", ""),
+                    access_token=saved_cfg.get("access_token", ""),
+                    phone_number_id=saved_cfg.get("phone_number_id", ""),
+                )
+            except Exception as exc:
+                raise RuntimeError("Saved platform WhatsApp credentials could not be decrypted") from exc
+        return _platform_whatsapp()
     eligible = []
     skipped = 0
     for contact in payload.contacts:
@@ -3521,7 +3542,7 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
         raise HTTPException(400, "No eligible recipients. Add valid contact details and explicit channel opt-in.")
     if payload.channel == "email" and not (cfg.resend_api_key and cfg.notification_from_email):
         raise HTTPException(503, "Platform email is not configured. Set RESEND_API_KEY and NOTIFICATION_FROM_EMAIL.")
-    whatsapp_provider = (cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "").lower()
+    whatsapp_provider = (_platform_whatsapp_setting(db, "platform_whatsapp_active_provider") or cfg.notification_whatsapp_provider or cfg.whatsapp_provider or "openwa").lower()
     whatsapp_ready = (
         bool((cfg.notification_whatsapp_access_token or cfg.whatsapp_access_token) and (cfg.notification_whatsapp_phone_number_id or cfg.whatsapp_phone_number_id))
         if whatsapp_provider == "meta"
@@ -3537,12 +3558,12 @@ async def platform_communications_send_campaign(payload: PlatformCampaignRequest
                 result = await send_email(address, payload.subject.strip() or payload.name, personalized)
                 sent = bool(result.get("sent"))
             else:
-                adapter = _platform_whatsapp()
+                adapter = _campaign_whatsapp_adapter()
                 if not adapter:
                     result = {"sent": False, "status": "not_configured"}
                 else:
-                    result = await adapter.send_template(address, payload.template_name, {"customer_name": contact.name or "there", "business_name": str(settings_data.get("company_name") or "AI Growth OS"), "offer": personalized, "_lang": "en"})
-                    result = {"sent": True, "status": "sent", "provider_id": (result or {}).get("messages", [{}])[0].get("id") if isinstance(result, dict) else None}
+                    provider_response = await adapter.send_template(address, payload.template_name, {"customer_name": contact.name or "there", "business_name": str(settings_data.get("company_name") or "AI Growth OS"), "offer": personalized, "_lang": "en"})
+                    result = {"sent": True, "status": "sent", "provider_id": (provider_response or {}).get("messages", [{}])[0].get("id") if isinstance(provider_response, dict) else None}
             results.append({"recipient": address, "name": contact.name, "status": "sent" if sent else result.get("status", "failed"), "provider": result.get("provider_id")})
         except Exception as exc:
             results.append({"recipient": address, "name": contact.name, "status": "failed", "error": str(exc)[:300]})
