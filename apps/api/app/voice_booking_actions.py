@@ -107,7 +107,7 @@ def _event(db, tenant: Tenant, call: CallRecord, appointment: Appointment,
         tenant_id=tenant.id,
         customer_id=appointment.customer_id,
         call_id=call.id,
-        channel="pwa",
+        channel="voice",
         event_type=event_type,
         payload_json=json.dumps(payload, ensure_ascii=False),
     ))
