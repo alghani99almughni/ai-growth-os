@@ -13,6 +13,7 @@ export default function MessagesPage() {
   const [form, setForm] = useState({ tenant_id: "", subject: "", body: "", send_email: true });
   const [sending, setSending] = useState(false);
   const [campaignTenants, setCampaignTenants] = useState<string[]>([]);
+  const [prospectLines, setProspectLines] = useState("");
   const [campaignChannels, setCampaignChannels] = useState<string[]>(["whatsapp"]);
   const [campaignSubject, setCampaignSubject] = useState("AI Growth OS update");
   const [campaignBody, setCampaignBody] = useState("");
@@ -116,11 +117,17 @@ export default function MessagesPage() {
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
     if (!campaignBody.trim()) { setStatus("Enter a campaign message."); return; }
     if (!consentConfirmed) { setStatus("Confirm opt-in/consent for every selected recipient."); return; }
+    const recipients = prospectLines.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+      const parts = line.split(",").map(x => x.trim());
+      return { name: parts[0] || "", phone: parts[1] || null, email: parts[2] || null };
+    });
+    if (!campaignTenants.length && !recipients.length) { setStatus("Select tenants or paste prospect contacts."); return; }
+    if (recipients.some(r => !r.phone && !r.email)) { setStatus("Each prospect line needs a phone and/or email: name,phone,email"); return; }
     setCampaignBusy(true); setStatus(""); setCampaignResult(null);
     try {
       const r = await fetch(api() + "/api/v1/platform/communications/campaign", {
         method: "POST", headers: headers(),
-        body: JSON.stringify({ tenant_ids: campaignTenants, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed }),
+        body: JSON.stringify({ tenant_ids: campaignTenants, recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed }),
       });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Campaign failed");
@@ -173,6 +180,10 @@ export default function MessagesPage() {
             </label>
           </div>
         </div>
+        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Prospect contact list (optional)
+          <textarea value={prospectLines} onChange={e => setProspectLines(e.target.value)} rows={4} placeholder={"One contact per line: name,phone,email\nExample: Ayesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
+          <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Paste only contacts who have opted in. You can send to selected tenants, prospects, or both.</span>
+        </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message
           <textarea value={campaignBody} onChange={e => setCampaignBody(e.target.value)} rows={4} maxLength={4000} placeholder="Write the message…" style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
         </label>
