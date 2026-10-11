@@ -574,3 +574,120 @@ async def platform_communications_campaign(
         "sent": sum(1 for r in results for c in r["channels"].values() if c.get("sent")),
         "results": results,
     }
+
+
+# ===========================================================================
+# PLATFORM EMAIL INBOX — platform mailbox only (independent of tenant accounts).
+# Configure PLATFORM_EMAIL_* environment variables in Render to enable it.
+# ===========================================================================
+
+class PlatformEmailReplyRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=20000)
+
+
+@router.get("/api/v1/platform/communications/email/inbox")
+async def platform_email_inbox(
+    limit: int = 100,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    import asyncio
+    import uuid
+    from datetime import datetime
+    from .models_email import PlatformEmailMessage
+    cfg = {
+        "imap_host": settings.platform_email_imap_host,
+        "imap_port": settings.platform_email_imap_port,
+        "imap_user": settings.platform_email_imap_user,
+        "imap_password": settings.platform_email_imap_password,
+        "smtp_host": settings.platform_email_smtp_host,
+        "smtp_port": settings.platform_email_smtp_port,
+        "smtp_user": settings.platform_email_smtp_user,
+        "smtp_password": settings.platform_email_smtp_password,
+        "smtp_starttls": settings.platform_email_smtp_starttls,
+    }
+    configured = all(cfg.get(k) for k in ("imap_host", "imap_port", "imap_user", "imap_password"))
+    poll_error = None
+    if configured:
+        try:
+            from .email_integration import fetch_new_messages_sync
+            messages = await asyncio.to_thread(fetch_new_messages_sync, cfg, 50)
+            for msg in messages:
+                mid = (msg.get("message_id") or "").strip()
+                if not mid:
+                    mid = "platform-inbox-" + str(msg.get("uid") or uuid.uuid4())
+                existing = db.scalar(select(PlatformEmailMessage).where(PlatformEmailMessage.message_id == mid))
+                if existing:
+                    continue
+                received_at = None
+                try:
+                    received_at = datetime.fromisoformat(msg["date"]) if msg.get("date") else None
+                except Exception:
+                    pass
+                db.add(PlatformEmailMessage(
+                    id=str(uuid.uuid4()), message_id=mid,
+                    from_address=msg.get("from") or "",
+                    to_address=msg.get("to") or settings.platform_email_address,
+                    subject=msg.get("subject") or "", body=msg.get("text") or "",
+                    received_at=received_at, status="unread",
+                ))
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            logger.warning("platform email inbox poll failed: %s", exc)
+            poll_error = "Inbox polling failed. Check the platform mailbox credentials and provider logs."
+    rows = db.scalars(select(PlatformEmailMessage).order_by(PlatformEmailMessage.created_at.desc()).limit(min(max(limit, 1), 300))).all()
+    return {
+        "configured": configured and bool(settings.platform_email_smtp_host and settings.platform_email_smtp_user and settings.platform_email_smtp_password),
+        "poll_error": poll_error,
+        "from_address": settings.platform_email_address or settings.platform_email_smtp_user or None,
+        "items": [{
+            "id": m.id, "from_address": m.from_address, "to_address": m.to_address,
+            "subject": m.subject, "body": m.body, "status": m.status,
+            "received_at": m.received_at.isoformat() if m.received_at else None,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+            "replied_at": m.replied_at.isoformat() if m.replied_at else None,
+        } for m in rows],
+    }
+
+
+@router.post("/api/v1/platform/communications/email/inbox/{message_id}/reply")
+async def platform_email_inbox_reply(
+    message_id: str,
+    payload: PlatformEmailReplyRequest,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    from datetime import datetime
+    from .models_email import PlatformEmailMessage
+    from .email_integration import send_reply_smtp
+    row = db.get(PlatformEmailMessage, message_id)
+    if not row:
+        raise HTTPException(404, "Inbox message not found")
+    required = (settings.platform_email_smtp_host, settings.platform_email_smtp_port,
+                settings.platform_email_smtp_user, settings.platform_email_smtp_password)
+    if not all(required):
+        raise HTTPException(503, "Platform SMTP is not configured in Render environment settings")
+    cfg = {
+        "smtp_host": settings.platform_email_smtp_host,
+        "smtp_port": settings.platform_email_smtp_port,
+        "smtp_user": settings.platform_email_smtp_user,
+        "smtp_password": settings.platform_email_smtp_password,
+        "smtp_starttls": settings.platform_email_smtp_starttls,
+    }
+    try:
+        await send_reply_smtp(cfg, row.from_address, row.subject, payload.body.strip())
+    except Exception as exc:
+        logger.warning("platform email reply failed message=%s: %s", message_id, exc)
+        raise HTTPException(502, "Platform email reply failed; check SMTP configuration")
+    row.replied_at = datetime.utcnow()
+    row.reply_text = payload.body.strip()
+    row.status = "replied"
+    db.commit()
+    try:
+        audit(db, tenant_id=None, actor_id=user.id, action="platform.email_replied",
+              target_type="platform_email_message", target_id=row.id,
+              detail={"to": row.from_address})
+    except Exception:
+        pass
+    return {"sent": True, "message_id": row.id, "to": row.from_address}
