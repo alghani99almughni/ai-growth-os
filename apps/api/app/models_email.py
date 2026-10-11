@@ -102,3 +102,15 @@ class PlatformWhatsAppMessage(Base):
     direction = Column(String, nullable=False, default="inbound", index=True)
     status = Column(String, nullable=False, default="received", index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PlatformContactPreference(Base):
+    """Platform-wide communication opt-outs for tenant and prospect contacts."""
+    __tablename__ = "platform_contact_preferences"
+
+    id = Column(String, primary_key=True)
+    phone_norm = Column(String, nullable=True, unique=True, index=True)
+    email_norm = Column(String, nullable=True, unique=True, index=True)
+    whatsapp_opt_out = Column(Boolean, nullable=False, default=False)
+    email_opt_out = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
