@@ -113,7 +113,7 @@ export default function MessagesPage() {
   }
 
   async function sendCampaign() {
-    if (!campaignTenants.length) { setStatus("Select at least one tenant."); return; }
+    if (!campaignTenants.length && !prospectLines.trim()) { setStatus("Select tenants or paste prospect contacts."); return; }
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
     if (!campaignBody.trim()) { setStatus("Enter a campaign message."); return; }
     if (!consentConfirmed) { setStatus("Confirm opt-in/consent for every selected recipient."); return; }
