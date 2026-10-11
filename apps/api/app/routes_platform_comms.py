@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select, func
@@ -691,3 +691,110 @@ async def platform_email_inbox_reply(
     except Exception:
         pass
     return {"sent": True, "message_id": row.id, "to": row.from_address}
+
+
+# ===========================================================================
+# PLATFORM WHATSAPP INBOX — configure the platform OpenWA webhook to this URL.
+# The webhook secret must be set; tenant WhatsApp sessions remain untouched.
+# ===========================================================================
+
+class PlatformWhatsAppReplyRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+@router.get("/api/v1/platform/communications/whatsapp/inbox")
+def platform_whatsapp_inbox(
+    limit: int = 100,
+    phone: str = "",
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    from .models_email import PlatformWhatsAppMessage
+    q = select(PlatformWhatsAppMessage)
+    if phone:
+        q = q.where(PlatformWhatsAppMessage.phone == phone)
+    rows = db.scalars(q.order_by(PlatformWhatsAppMessage.created_at.desc()).limit(min(max(limit, 1), 300))).all()
+    return {
+        "configured": bool(settings.notification_whatsapp_openwa_base_url and settings.notification_whatsapp_openwa_api_key and settings.notification_whatsapp_openwa_session_id),
+        "webhook_url": settings.public_app_url.rstrip("/") + "/api/v1/webhooks/platform/openwa",
+        "webhook_secret_configured": bool(settings.openwa_webhook_secret),
+        "items": [{
+            "id": m.id, "phone": m.phone, "contact_name": m.contact_name,
+            "body": m.body, "direction": m.direction, "status": m.status,
+            "created_at": m.created_at.isoformat() if m.created_at else None,
+        } for m in rows],
+    }
+
+
+@router.post("/api/v1/webhooks/platform/openwa")
+async def platform_openwa_webhook(request: Request, db: Session = Depends(_db)):
+    import json
+    import uuid
+    from .models_email import PlatformWhatsAppMessage
+    secret = settings.openwa_webhook_secret or ""
+    if not secret:
+        raise HTTPException(503, "Platform OpenWA webhook secret is not configured")
+    raw = await request.body()
+    signature = request.headers.get("X-OpenWA-Signature") or request.headers.get("X-Webhook-Signature")
+    from .integrations import WhatsAppAdapter
+    if not WhatsAppAdapter.verify_webhook(raw, signature, secret):
+        raise HTTPException(401, "Invalid OpenWA webhook signature")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Invalid webhook JSON")
+    if payload.get("event") != "message.received":
+        return {"ok": True, "ignored": True}
+    data = payload.get("data") or {}
+    if data.get("isGroup"):
+        return {"ok": True, "ignored": True}
+    phone = str(data.get("senderPhone") or data.get("from") or data.get("chatId") or "").split("@")[0].strip()
+    body = str(data.get("body") or "").strip()
+    if not phone or not body:
+        return {"ok": True, "ignored": True}
+    provider_id = str(data.get("id") or data.get("messageId") or "").strip() or None
+    if provider_id:
+        existing = db.scalar(select(PlatformWhatsAppMessage).where(PlatformWhatsAppMessage.provider_message_id == provider_id))
+        if existing:
+            return {"ok": True, "duplicate": True}
+    contact = data.get("contact") or {}
+    row = PlatformWhatsAppMessage(
+        id=str(uuid.uuid4()), provider_message_id=provider_id, phone=phone,
+        contact_name=(contact.get("pushName") or contact.get("name") or None),
+        body=body, direction="inbound", status="received",
+    )
+    db.add(row)
+    db.commit()
+    return {"ok": True, "message_id": row.id}
+
+
+@router.post("/api/v1/platform/communications/whatsapp/inbox/{message_id}/reply")
+async def platform_whatsapp_inbox_reply(
+    message_id: str,
+    payload: PlatformWhatsAppReplyRequest,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    import uuid
+    from .models_email import PlatformWhatsAppMessage
+    inbound = db.get(PlatformWhatsAppMessage, message_id)
+    if not inbound or inbound.direction != "inbound":
+        raise HTTPException(404, "Inbound WhatsApp message not found")
+    from .notifications import send_platform_whatsapp
+    result = await send_platform_whatsapp(inbound.phone, payload.body.strip())
+    if not result.get("sent"):
+        raise HTTPException(502, "Platform WhatsApp send failed: " + str(result.get("status") or "provider error"))
+    outbound = PlatformWhatsAppMessage(
+        id=str(uuid.uuid4()), phone=inbound.phone, contact_name=inbound.contact_name,
+        body=payload.body.strip(), direction="outbound", status="sent",
+    )
+    db.add(outbound)
+    inbound.status = "replied"
+    db.commit()
+    try:
+        audit(db, tenant_id=None, actor_id=user.id, action="platform.whatsapp_replied",
+              target_type="platform_whatsapp_message", target_id=inbound.id,
+              detail={"phone": inbound.phone})
+    except Exception:
+        pass
+    return {"sent": True, "message_id": outbound.id, "phone": inbound.phone}
