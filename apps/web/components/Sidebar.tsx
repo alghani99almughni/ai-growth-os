@@ -90,7 +90,7 @@ export default function Sidebar({
       : "";
 
   // If Super Admin is viewing a tenant via ?tenant=, show the tenant menu.
-  const viewingAsTenant = !!urlTenant;
+  const viewingAsTenant = pathname.startsWith("/dashboard") && !!urlTenant;
   const isAdmin = (role === "platform_admin" || role === "super_admin") && !viewingAsTenant;
 
   const items: NavItem[] = isAdmin ? ADMIN_NAV : TENANT_NAV;
