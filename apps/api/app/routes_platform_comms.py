@@ -501,8 +501,15 @@ async def platform_email_send(
 # This intentionally uses platform credentials, never tenant mailbox/channel keys.
 # ===========================================================================
 
+class PlatformCampaignRecipient(BaseModel):
+    name: str = Field(default="", max_length=160)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[EmailStr] = None
+
+
 class PlatformCampaignRequest(BaseModel):
-    tenant_ids: list[str] = Field(min_length=1, max_length=500)
+    tenant_ids: list[str] = Field(default_factory=list, max_length=500)
+    recipients: list[PlatformCampaignRecipient] = Field(default_factory=list, max_length=1000)
     subject: str = Field(default="", max_length=300)
     body: str = Field(min_length=1, max_length=4000)
     channels: list[str] = Field(min_length=1)
@@ -515,57 +522,70 @@ async def platform_communications_campaign(
     user=Depends(_require_platform_admin),
     db: Session = Depends(_db),
 ):
-    """Send a platform-owned email/WhatsApp campaign to explicitly selected tenants.
+    """Send platform-owned outreach to selected tenants and/or manually entered prospects.
 
-    A campaign requires the admin to attest that every selected recipient opted in.
-    It does not silently treat tenant registration as marketing consent.
+    The caller must attest consent for every recipient. Tenant registration alone is
+    not treated as marketing consent; tenant credentials are never used for delivery.
     """
     channels = {str(c).strip().lower() for c in payload.channels}
     if not channels or not channels.issubset({"whatsapp", "email"}):
         raise HTTPException(400, "channels must contain whatsapp and/or email")
     if not payload.consent_confirmed:
         raise HTTPException(400, "Confirm that every selected recipient has opted in before sending")
+    if not payload.tenant_ids and not payload.recipients:
+        raise HTTPException(400, "Select tenant recipients or enter prospect contacts")
     body = payload.body.strip()
     if not body:
         raise HTTPException(400, "Message body is required")
-    tenants = db.scalars(select(Tenant).where(Tenant.id.in_(set(payload.tenant_ids)))).all()
+    tenants = db.scalars(select(Tenant).where(Tenant.id.in_(set(payload.tenant_ids)))).all() if payload.tenant_ids else []
     by_id = {t.id: t for t in tenants}
     missing = [tid for tid in set(payload.tenant_ids) if tid not in by_id]
     if missing:
         raise HTTPException(404, "One or more selected tenants were not found")
-    from .notifications import send_email, send_platform_whatsapp
-    results = []
+    targets = []
     for tid in payload.tenant_ids:
         tenant = by_id[tid]
-        result = {"tenant_id": tenant.id, "tenant_name": tenant.name, "channels": {}}
+        address = tenant.email
+        if not address:
+            owner = db.scalar(select(User).where(
+                User.tenant_id == tenant.id,
+                User.role.in_(["owner", "admin"]),
+                User.is_active == True,  # noqa: E712
+            ).order_by(User.created_at.asc()).limit(1))
+            address = owner.email if owner else None
+        targets.append({
+            "tenant_id": tenant.id, "name": tenant.name,
+            "phone": tenant.whatsapp_number or tenant.phone, "email": address,
+        })
+    for recipient in payload.recipients:
+        if not recipient.phone and not recipient.email:
+            raise HTTPException(400, "Every prospect needs a phone number and/or email address")
+        targets.append({
+            "tenant_id": None, "name": recipient.name.strip() or recipient.phone or recipient.email,
+            "phone": recipient.phone, "email": str(recipient.email) if recipient.email else None,
+        })
+    from .notifications import send_email, send_platform_whatsapp
+    results = []
+    for target in targets:
+        result = {"tenant_id": target["tenant_id"], "tenant_name": target["name"], "channels": {}}
         if "whatsapp" in channels:
-            phone = tenant.whatsapp_number or tenant.phone
-            if not phone:
+            if not target["phone"]:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "no_phone"}
             else:
-                result["channels"]["whatsapp"] = await send_platform_whatsapp(phone, body)
+                result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], body)
         if "email" in channels:
-            address = tenant.email
-            if not address:
-                owner = db.scalar(select(User).where(
-                    User.tenant_id == tenant.id,
-                    User.role.in_(["owner", "admin"]),
-                    User.is_active == True,  # noqa: E712
-                ).order_by(User.created_at.asc()).limit(1))
-                address = owner.email if owner else None
-            if not address:
+            if not target["email"]:
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
             else:
                 result["channels"]["email"] = await send_email(
-                    address,
-                    payload.subject.strip() or "AI Growth OS",
-                    body,
+                    target["email"], payload.subject.strip() or "AI Growth OS", body
                 )
         results.append(result)
         try:
-            audit(db, tenant_id=tenant.id, actor_id=user.id,
+            audit(db, tenant_id=target["tenant_id"], actor_id=user.id,
                   action="platform.communication_campaign",
-                  target_type="tenant", target_id=tenant.id,
+                  target_type="tenant" if target["tenant_id"] else "prospect",
+                  target_id=target["tenant_id"] or "manual-recipient",
                   detail={"channels": sorted(channels), "consent_confirmed": True})
         except Exception:
             pass
@@ -574,7 +594,6 @@ async def platform_communications_campaign(
         "sent": sum(1 for r in results for c in r["channels"].values() if c.get("sent")),
         "results": results,
     }
-
 
 # ===========================================================================
 # PLATFORM EMAIL INBOX — platform mailbox only (independent of tenant accounts).
