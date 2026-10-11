@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     notification_whatsapp_openwa_base_url:str=""
     notification_whatsapp_openwa_api_key:str=""
     notification_whatsapp_openwa_session_id:str=""
+    platform_email_address:str=""
+    platform_email_imap_host:str=""
+    platform_email_imap_port:int=993
+    platform_email_imap_user:str=""
+    platform_email_imap_password:str=""
+    platform_email_smtp_host:str=""
+    platform_email_smtp_port:int=587
+    platform_email_smtp_user:str=""
+    platform_email_smtp_password:str=""
+    platform_email_smtp_starttls:bool=True
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
