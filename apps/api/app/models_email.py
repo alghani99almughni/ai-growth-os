@@ -72,3 +72,19 @@ class EmailLog(Base):
     ticket_id = Column(String, nullable=True, index=True)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+class PlatformEmailMessage(Base):
+    """Persisted messages received by the platform-owned Super Admin mailbox."""
+    __tablename__ = "platform_email_messages"
+
+    id = Column(String, primary_key=True)
+    message_id = Column(String, nullable=False, unique=True, index=True)
+    from_address = Column(String, nullable=False)
+    to_address = Column(String, nullable=False, default="")
+    subject = Column(String, nullable=False, default="")
+    body = Column(Text, nullable=False, default="")
+    received_at = Column(DateTime, nullable=True)
+    replied_at = Column(DateTime, nullable=True)
+    reply_text = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="unread", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
