@@ -118,6 +118,7 @@ def ensure_email_schema() -> None:
     _Base.metadata.create_all(bind=_engine, tables=[
         models_email.TenantEmailAccount.__table__,
         models_email.EmailLog.__table__,
+        models_email.PlatformEmailMessage.__table__,
     ])
 
 
