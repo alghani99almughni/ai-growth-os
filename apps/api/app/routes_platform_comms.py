@@ -580,15 +580,17 @@ async def platform_communications_campaign(
             elif phone_pref and phone_pref.whatsapp_opt_out:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
             else:
-                result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], body)
+                whatsapp_body = body + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
+                result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
         if "email" in channels:
             if not target["email"]:
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
             elif email_pref and email_pref.email_opt_out:
                 result["channels"]["email"] = {"sent": False, "status": "opted_out"}
             else:
+                email_body = body + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
                 result["channels"]["email"] = await send_email(
-                    target["email"], payload.subject.strip() or "AI Growth OS", body
+                    target["email"], payload.subject.strip() or "AI Growth OS", email_body
                 )
         results.append(result)
         try:
@@ -641,6 +643,8 @@ async def platform_email_inbox(
         try:
             from .email_integration import fetch_new_messages_sync
             messages = await asyncio.to_thread(fetch_new_messages_sync, cfg, 50)
+            from email.utils import parseaddr
+            from .models_email import PlatformContactPreference
             for msg in messages:
                 mid = (msg.get("message_id") or "").strip()
                 if not mid:
@@ -653,12 +657,26 @@ async def platform_email_inbox(
                     received_at = datetime.fromisoformat(msg["date"]) if msg.get("date") else None
                 except Exception:
                     pass
+                sender_raw = msg.get("from") or ""
+                sender_email = (parseaddr(sender_raw)[1] or sender_raw).strip().lower()
+                message_body = msg.get("text") or ""
+                subject = msg.get("subject") or ""
+                lines = {line.strip().lower() for line in message_body.splitlines()}
+                unsubscribe = ("unsubscribe" in subject.lower() or bool(lines & {"unsubscribe", "unsubscribe me", "stop", "opt out", "opt-out", "remove me"}))
+                status = "unsubscribed" if unsubscribe else "unread"
+                if unsubscribe and sender_email:
+                    pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == sender_email))
+                    if not pref:
+                        pref = PlatformContactPreference(id=str(uuid.uuid4()), email_norm=sender_email)
+                        db.add(pref)
+                    pref.email_opt_out = True
+                    pref.updated_at = datetime.utcnow()
                 db.add(PlatformEmailMessage(
                     id=str(uuid.uuid4()), message_id=mid,
-                    from_address=msg.get("from") or "",
+                    from_address=sender_raw,
                     to_address=msg.get("to") or settings.platform_email_address,
-                    subject=msg.get("subject") or "", body=msg.get("text") or "",
-                    received_at=received_at, status="unread",
+                    subject=subject, body=message_body,
+                    received_at=received_at, status=status,
                 ))
             db.commit()
         except Exception as exc:
