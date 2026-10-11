@@ -119,6 +119,7 @@ def ensure_email_schema() -> None:
         models_email.TenantEmailAccount.__table__,
         models_email.EmailLog.__table__,
         models_email.PlatformEmailMessage.__table__,
+        models_email.PlatformWhatsAppMessage.__table__,
     ])
 
 
