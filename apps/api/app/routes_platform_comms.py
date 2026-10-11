@@ -716,7 +716,7 @@ def platform_whatsapp_inbox(
     rows = db.scalars(q.order_by(PlatformWhatsAppMessage.created_at.desc()).limit(min(max(limit, 1), 300))).all()
     return {
         "configured": bool(settings.notification_whatsapp_openwa_base_url and settings.notification_whatsapp_openwa_api_key and settings.notification_whatsapp_openwa_session_id),
-        "webhook_url": settings.public_app_url.rstrip("/") + "/api/v1/webhooks/platform/openwa",
+        "webhook_url": settings.api_public_url.rstrip("/") + "/api/v1/webhooks/platform/openwa",
         "webhook_secret_configured": bool(settings.openwa_webhook_secret),
         "items": [{
             "id": m.id, "phone": m.phone, "contact_name": m.contact_name,
