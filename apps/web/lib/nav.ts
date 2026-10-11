@@ -34,8 +34,6 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/tenants",      label: "Tenants",           icon: "Building2", labelKey: "nav.tenants" },
   { href: "/platform/tenants/new",  label: "Create tenant",     icon: "Building2" },
   { href: "/platform/industry-catalog", label: "Industry catalogue", icon: "Globe" },
-  { href: "/platform/whatsapp",     label: "WhatsApp",           icon: "MessageCircle" },
-  { href: "/platform/email",        label: "Email",              icon: "Mail" },
   { href: "/platform/ai",           label: "AI providers",       icon: "Bot", labelKey: "nav.ai" },
   { href: "/platform/features",     label: "Feature defaults",   icon: "ToggleLeft", labelKey: "nav.features" },
   { href: "/platform/audit",        label: "Audit log",          icon: "FileText", labelKey: "nav.audit" },
@@ -43,6 +41,6 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/monitoring",   label: "Monitoring",         icon: "Activity" },
   { href: "/platform/settings",    label: "Settings",            icon: "Settings2", labelKey: "nav.settings" },
   { href: "/platform/tickets",     label: "Tickets",              icon: "LifeBuoy", labelKey: "nav.tickets" },
-  { href: "/platform/messages",    label: "Messages",             icon: "MessageSquare", labelKey: "nav.messages" },
+  { href: "/platform/messages",    label: "Communications",       icon: "MessageSquare", labelKey: "nav.messages" },
   { href: "/platform/calendar",    label: "Calendar",              icon: "CalendarDays", labelKey: "nav.calendar" },
 ];
