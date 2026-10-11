@@ -1,0 +1,1852 @@
+diff --git a/apps/api/app/ai_router.py b/apps/api/app/ai_router.py
+index fbe7950..4d8c148 100644
+--- a/apps/api/app/ai_router.py
++++ b/apps/api/app/ai_router.py
+@@ -1,5 +1,5 @@
+ import re
+-from difflib import SequenceMatcher
++from difflib import SequenceMatcher, get_close_matches
+ from sqlalchemy import select
+ from sqlalchemy.orm import Session
+ from .models_ai import GlobalFaq
+@@ -117,6 +117,50 @@ def structured_match(db:Session,tenant_id:str,message:str)->str|None:
+         products=db.scalars(select(Product).where(Product.tenant_id==tenant_id,Product.is_active==True)).all()
+         if products:return "Here are the currently configured products: "+"; ".join(f"{p.name}: {p.price} {p.currency}" for p in products if p.price is not None)
+     return None
++_FUNCTION_WORDS={"is","are","was","were","am","be","been","the","a","an","and","or","of","to","in","on","at","for","do","does","did",
++    "you","your","yours","we","our","it","its","i","me","my","can","could","would","will","shall","may","might","have","has","had",
++    "what","when","where","which","who","whom","how","why","there","this","that","these","those","with","about","please","tell",
++    "know","get","any","some","yes","no","ok","okay","also","than","then","if","so","as","by","from","not","hi","hello","want","need"}
++def _has_topical_overlap(message:str,candidate:str)->bool:
++    """A library answer must share at least one real topic word with the question.
++
++    The fuzzy score alone could be cleared by function words ("is tomorrow a holiday" matched the
++    parking entry because both contain "is"), which produced a confident wrong answer. Applies to
++    English text only; other scripts keep the previous behaviour.
++    """
++    topic={t for t in normalize(message) if t not in _FUNCTION_WORDS}
++    if not topic or any(not t.isascii() for t in topic):
++        return True
++    source=normalize(candidate)
++    if topic&source:
++        return True
++    for t in topic:
++        if len(t)>=4 and any(s.startswith(t) or t.startswith(s) for s in source if len(s)>=4):
++            return True   # park / parking, open / opening
++        if len(t)>=5 and get_close_matches(t,source,n=1,cutoff=0.82):
++            return True   # speech-recognition typos
++    return False
++def _stem(token:str)->str:
++    for suffix in ("ing","ed","es","s"):
++        if len(token)>len(suffix)+3 and token.endswith(suffix):
++            return token[:-len(suffix)]
++    return token
++def _topic_score(message:str,candidate:str)->float:
++    """Share of the question's topic words found in the item (word forms and near-typos count).
++
++    "can I park my car" -> parking, "do you have parkng" -> parking. Function words are ignored so
++    they cannot create a match on their own. English text only.
++    """
++    topic={t for t in normalize(message) if t not in _FUNCTION_WORDS}
++    if not topic or any(not t.isascii() for t in topic):
++        return 0.0
++    source=normalize(candidate)
++    source_stems={_stem(x) for x in source}
++    hits=0
++    for t in topic:
++        if _stem(t) in source_stems or (len(t)>=5 and get_close_matches(t,source,n=1,cutoff=0.82)):
++            hits+=1
++    return hits/len(topic)
+ def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
+     from .models_growth import KnowledgeItem
+     rows=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True,KnowledgeItem.approval_status.in_(["approved","system"]))).all()
+@@ -129,7 +173,10 @@ def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
+     best,best_score=None,0.0
+     for row in rows:
+         if row.language and row.language not in {language,"en"}:continue
+-        score=_score(message,(row.title or "")+" "+(row.content or ""))
++        text=(row.title or "")+" "+(row.content or "")
++        score=max(_score(message,text),_topic_score(message,text))
+         if row.language==language:score+=0.08
+         if score>best_score:best_score,best=score,row
+-    return best.content if best and best_score>=0.38 else None    
+\ No newline at end of file
++    if best and best_score>=0.38 and _has_topical_overlap(message,(best.title or "")+" "+(best.content or "")):
++        return best.content
++    return None
+diff --git a/apps/api/app/brain.py b/apps/api/app/brain.py
+index 9ad2e77..1b2f02a 100644
+--- a/apps/api/app/brain.py
++++ b/apps/api/app/brain.py
+@@ -16,6 +16,7 @@ from .voice_language_patterns import language_request, relative_day_from_text, n
+ from .booking import available_slots
+ from .knowledge_brain_v2 import classify as classify_v2
+ from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
++from .voice_followups import spoken_time, describe_day_hours, is_day_followup, HOURS_CUES
+ from datetime import datetime, timedelta
+ from zoneinfo import ZoneInfo
+ 
+@@ -315,6 +316,10 @@ def extract_booking_entities(text: str) -> dict:
+                         meridiem="PM" if re.search(r"\b(?:baje|vajje|vagye|gantlaki|manikku|gantige|vajta)\b",value) else None
+                     time_value=f"{hour} {meridiem}" if meridiem else f"{hour}"
+ 
++    spoken = spoken_time(value)           # "9 30 am", "nine thirty", "half past nine", "ten o'clock"
++    if spoken and (time_value is None or (":" in spoken and ":" not in time_value)):
++        time_value = spoken               # also repairs "half past nine in the morning" -> "9 AM" (minutes were lost)
++
+     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
+     date_hint = None
+     dm=re.search(r"\b(?:date|day|on)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
+@@ -345,6 +350,15 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
+ 
+     for row in rows:
+         extracted = extract_booking_entities(row.content)
++        # "tomorrow" ... later "Monday": day / relative day / date are ONE slot, so the most recent
++        # mention replaces the older ones. Without this the stale "tomorrow" kept winning and a
++        # perfectly good Monday booking was reported as "tomorrow is closed".
++        if extracted.get("day"):
++            ctx["relative_day"] = None; ctx["date_hint"] = None
++        elif extracted.get("relative_day"):
++            ctx["day"] = None; ctx["date_hint"] = None
++        elif extracted.get("date_hint"):
++            ctx["day"] = None; ctx["relative_day"] = None
+         for key in ctx:
+             if extracted.get(key) is not None:
+                 ctx[key] = extracted[key]
+@@ -420,7 +434,11 @@ BOOKING_TEXT={
+ "hi":{"day_time":"ज़रूर। {day} को आप किस समय अपॉइंटमेंट चाहते हैं?","day":"ज़रूर। आप किस दिन का अपॉइंटमेंट चाहते हैं?","both":"ज़रूर। आप किस दिन और किस समय का अपॉइंटमेंट चाहते हैं?","confirm":"ठीक है। मैंने {date} को {time} का अपॉइंटमेंट रखा है। क्या मैं इसे कन्फर्म कर दूँ?","closed":"{day} को हम बंद रहते हैं। कृपया दूसरा दिन चुनिए।","outside":"{time} हमारे {day} के काम के समय के बाहर है। कृपया दूसरा समय चुनिए।","unavailable":"{day} को {time} का स्लॉट उपलब्ध नहीं है। कृपया दूसरा समय चुनिए।","past":"{time} का समय आज निकल चुका है। कृपया बाद का समय चुनिए।","past_date":"यह तारीख निकल चुकी है। कृपया आगे की तारीख चुनिए।","ampm":"आप {hour} AM कहना चाहते हैं या {hour} PM?","hint":"ज़रूर। {day} को {hint} का समय है। कृपया सही समय बताइए।","date":"ठीक है, {date} तारीख। किस महीने और किस समय का अपॉइंटमेंट चाहिए?"},
+ "te":{"day_time":"తప్పకుండా. {day} ఏ సమయంలో అపాయింట్‌మెంట్ కావాలి?","day":"తప్పకుండా. ఏ రోజు అపాయింట్‌మెంట్ కావాలి?","both":"తప్పకుండా. ఏ రోజు మరియు ఏ సమయంలో అపాయింట్‌మెంట్ కావాలి?","confirm":"సరే. {date} న {time} అపాయింట్‌మెంట్ ఉంది. నేను కన్ఫర్మ్ చేయనా?","closed":"{day} రోజు మేము మూసి ఉంటాము. మరో రోజు ఎంచుకోండి.","outside":"{time} {day} మా పని సమయానికి బయట ఉంది. మరో సమయం ఎంచుకోండి.","unavailable":"{day} {time} స్లాట్ అందుబాటులో లేదు. మరో సమయం ఎంచుకోండి.","past":"{time} ఈరోజు గడిచిపోయింది. దయచేసి తర్వాతి సమయం ఎంచుకోండి.","past_date":"ఆ తేదీ గడిచిపోయింది. దయచేసి భవిష్యత్ తేదీ ఎంచుకోండి.","ampm":"మీరు {hour} AM అంటున్నారా లేదా {hour} PM అంటున్నారా?","hint":"సరే. {day} {hint} సమయం. ఖచ్చితమైన సమయం చెప్పండి.","date":"సరే, {date} తేదీ. ఏ నెల మరియు ఏ సమయం కావాలి?"}}
+ def booking_text(language,key,**values):
+-    return BOOKING_TEXT.get(language,BOOKING_TEXT["en"]).get(key,BOOKING_TEXT["en"][key]).format(**values)
++    text=BOOKING_TEXT.get(language,BOOKING_TEXT["en"]).get(key,BOOKING_TEXT["en"][key]).format(**values)
++    if language not in ("hi","te"):   # English wording (also the fallback for other languages)
++        text=re.sub(r"\bon (today|tomorrow|day after tomorrow)\b",r"\1",text)   # "on tomorrow" -> "tomorrow"
++        text=text[:1].upper()+text[1:]                                          # "tomorrow is closed." -> "Tomorrow ..."
++    return text
+ def booking_day_label(language,value):
+     if language=="hi":
+         return {"today":"आज","tomorrow":"कल","day after tomorrow":"परसों"}.get(value,value or "उस दिन")
+@@ -428,6 +446,77 @@ def booking_day_label(language,value):
+         return {"today":"ఈ రోజు","tomorrow":"రేపు","day after tomorrow":"ఎల్లుండి"}.get(value,value or "ఆ రోజు")
+     return value or "that day"
+ 
++def with_meridiem(db: Session, tenant: Tenant, time_value: str|None, target_date) -> str|None:
++    """"9:30" -> "9:30 AM" when only one of AM/PM falls inside that day's opening hours.
++
++    The booking step already did this when it first proposed the slot, but the later "confirm" turn
++    re-read the raw "9:30" from the transcript, so the calendar check could not parse it and a caller
++    who simply said "9:30" ... "confirm" was told the time was unavailable (and the booking code
++    downstream needs AM/PM). Ambiguous or unknown cases are returned unchanged.
++    """
++    if not time_value or not target_date or re.search(r"\b(?:AM|PM)\b", time_value, re.I):
++        return time_value
++    tm = re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
++    if not tm or not 1 <= int(tm.group(1)) <= 11:
++        return time_value
++    hour, minute = int(tm.group(1)), int(tm.group(2) or 0)
++    row = db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id,
++                                               BusinessHour.weekday==target_date.weekday()))
++    if not row or row.is_closed:
++        return time_value
++    from datetime import time as _time
++    from .booking import is_inside_hours
++    am_inside = is_inside_hours(row.open_time, row.close_time, _time(hour, minute))
++    pm_inside = is_inside_hours(row.open_time, row.close_time, _time(hour + 12, minute))
++    if am_inside == pm_inside:
++        return time_value
++    meridiem = "AM" if am_inside else "PM"
++    return f"{hour}:{minute:02d} {meridiem}" if minute else f"{hour} {meridiem}"
++
++
++def _hours_by_weekday(db: Session, tenant_id: str) -> dict:
++    return {r.weekday: r for r in db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id)).all()}
++
++
++def day_hours_followup(db: Session, tenant: Tenant, message: str, language: str, intent: str,
++                       entities: dict, prev_intent: str, offer_booking: bool) -> str|None:
++    """Answer "tomorrow" / "and Sunday?" / "are you open Monday?" from the real hours table.
++
++    Library-first and token-free: this runs in the same structured-answer stage as the generic hours
++    reply and only replaces it with a more specific answer. If anything is missing (no day, no hours
++    row for that weekday) it returns None and the normal ladder continues untouched.
++    """
++    if entities.get("time") or entities.get("date_hint"):
++        return None                       # that is a booking request, not an opening-hours question
++    if not (entities.get("day") or entities.get("relative_day")) or entities.get("relative_day") == "yesterday":
++        return None
++    explicit = intent == "business_hours" or bool(HOURS_CUES.search(message.casefold()))
++    follow_up = prev_intent == "business_hours" and is_day_followup(message)
++    if not (explicit or follow_up):
++        return None
++    target = resolve_booking_date(tenant, entities.get("day"), entities.get("relative_day"))
++    if not target:
++        return None
++    return describe_day_hours(
++        target, _hours_by_weekday(db, tenant.id), language=language,
++        relative=None if entities.get("day") and not entities.get("relative_day") else entities.get("relative_day"),
++        now_local=datetime.now(ZoneInfo(tenant.timezone)), offer_booking=offer_booking,
++    )
++
++
++def closed_day_notice(db: Session, tenant: Tenant, target, language: str, relative_day: str|None) -> str|None:
++    """If the caller picked a day we are closed, say so now instead of first asking for a time."""
++    if not target:
++        return None
++    row = db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id, BusinessHour.weekday==target.weekday()))
++    if not row or not row.is_closed:
++        return None
++    return describe_day_hours(
++        target, _hours_by_weekday(db, tenant.id), language=language, relative=relative_day,
++        now_local=datetime.now(ZoneInfo(tenant.timezone)), closed_day_question=True,
++    )
++
++
+ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
+     current = extract_booking_entities(message)
+     logger.info(
+@@ -536,6 +625,14 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
+             {"day": day_label, "time": time_value, "date": resolved_date.isoformat() if resolved_date else None, "service_id":calendar.get("service_id"), "complete": True},
+         )
+ 
++    if day_label and not time_value:
++        notice = closed_day_notice(db, tenant, resolved_date, c.language, relative_day)
++        if notice:
++            c.state = "booking_day"
++            return notice, {"day": day_label, "time": None, "time_hint": time_hint, "date_hint": date_hint,
++                            "date": resolved_date.isoformat() if resolved_date else None,
++                            "closed": True, "complete": False}
++
+     if day_label and time_hint:
+         c.state = "booking_time_clarification"
+         return (
+@@ -581,6 +678,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
+     detected_language=detect_language(message)
+     intent=local_intent(message)
+     c=conversation(db,tenant_id,message,detected_language,channel,conversation_id)
++    prev_intent=c.intent or ""
+     requested_language=language_request(message)
+     if requested_language:
+         language=requested_language
+@@ -634,6 +732,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
+         booking_date=resolve_booking_date(
+             tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
+         )
++        prior["time"]=with_meridiem(db,tenant,prior.get("time"),booking_date)
+         calendar=booking_calendar_status(db,tenant,booking_date,prior.get("time"))
+         if booking_date and prior.get("time") and calendar.get("available") is True:
+             booking="Perfect. I'll confirm that appointment now."
+@@ -779,15 +878,32 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
+             "what day would you prefer" in previous_text or
+             "what time would you prefer" in previous_text
+         )
+-        contextual_booking = booking_invitation and has_booking_entities and intent in {"information","business_hours","closing"}
+-        if contextual_booking or intent=="booking" or c.state.startswith("booking"):
++        invited_yes = booking_invitation and is_explicit_confirmation(message) and capability_enabled(policy,"bookings",True)
++        exploring_hours = prev_intent=="business_hours" and bool(
++            HOURS_CUES.search(m) or re.match(r"\s*(?:and|what about|how about|is it|are you|is that)\b", m))
++        contextual_booking = (booking_invitation and (has_booking_entities or invited_yes) and not exploring_hours
++                              and intent in {"information","business_hours","closing"})
++        implicit_booking = (
++            intent=="information" and bool(current_entities.get("time"))
++            and bool(current_entities.get("day") or current_entities.get("relative_day"))
++            and capability_enabled(policy,"bookings",True)
++        )   # "Monday 9:30 am please" is a booking request even without the word "book"
++        if contextual_booking or implicit_booking or intent=="booking" or c.state.startswith("booking"):
+             booking, booking_data = booking_reply_from_state(db, tenant, c, message)
+         elif c.state.startswith("booking"):
+             booking_data = {"day": None, "time": None, "complete": False}
+         else:
+             booking_data = {"day": None, "time": None, "complete": False}
+ 
+-    direct=hours or booking or structured_match(db,tenant_id,message)
++    day_reply=None
++    if not booking:
++        day_reply=day_hours_followup(
++            db,tenant,message,language,intent,current_entities,prev_intent,
++            offer_booking=language=="en" and capability_enabled(policy,"bookings",True),
++        )
++        if day_reply:
++            intent="business_hours"       # the next bare follow-up ("and Sunday?") keeps this context
++    direct=day_reply or hours or booking or structured_match(db,tenant_id,message)
+     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
+     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
+     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
+diff --git a/apps/api/app/voice_escalate.py b/apps/api/app/voice_escalate.py
+index 6e20489..d5fcc6d 100644
+--- a/apps/api/app/voice_escalate.py
++++ b/apps/api/app/voice_escalate.py
+@@ -38,6 +38,8 @@ import asyncio
+ import base64
+ import json
+ import logging
++import os
++from contextlib import AsyncExitStack, asynccontextmanager
+ from datetime import datetime
+ from typing import Optional
+ from zoneinfo import ZoneInfo
+@@ -137,43 +139,131 @@ def _save_transcript(call_id: str, lines: list[str]) -> None:
+         db.close()
+ 
+ 
+-def _live_config(genai_types, system_prompt: str):
+-    """Build the Live config. Falls back to the minimal config if this SDK version rejects an option."""
++WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
++
++
++def _transcription_language_codes(policy: dict) -> list[str]:
++    """BCP-47 hints for the caller-speech transcript.
++
++    With no hint Gemini guesses the language per utterance and, for Indian-accented English, often
++    prints "no thanks" in Devanagari or Telugu script. English-India is always a hint; a tenant whose
++    voice locale is another language (policy.voice.locale / policy.language) gets that one first.
++    Override with SPECIALIST_TRANSCRIPTION_LANGUAGES="en-IN,hi-IN" or "auto" to send no hint.
++    """
++    env = os.getenv("SPECIALIST_TRANSCRIPTION_LANGUAGES", "").strip()
++    if env.lower() == "auto":
++        return []
++    if env:
++        return [c.strip() for c in env.split(",") if c.strip()]
++    voice = policy.get("voice") if isinstance(policy.get("voice"), dict) else {}
++    lang = policy.get("language") if isinstance(policy.get("language"), dict) else {}
++    raw = voice.get("locale") or voice.get("language") or lang.get("locale") or (
++        policy.get("language") if isinstance(policy.get("language"), str) else None)
++    codes = ["en-IN"]
++    if isinstance(raw, str) and raw.strip():
++        code = raw.strip().replace("_", "-")
++        if "-" not in code:
++            code += "-IN"
++        if code.lower() != "en-in":
++            codes.insert(0, code)
++    return codes
++
++
++def _vad_settings() -> dict:
++    """Turn-taking speed. Lower silence = faster answers but easier to cut a slow speaker off."""
++    def _int(name: str, default: int) -> int:
++        try:
++            return int(os.getenv(name, default))
++        except (TypeError, ValueError):
++            return default
++    return {"silence_duration_ms": _int("SPECIALIST_VAD_SILENCE_MS", 400),
++            "prefix_padding_ms": _int("SPECIALIST_VAD_PREFIX_MS", 100)}
++
++
++def _handoff_tool(genai_types):
++    return genai_types.Tool(function_declarations=[
++        genai_types.FunctionDeclaration(
++            name="request_human_handoff",
++            description=(
++                "Call this when the customer asks for a human, manager or supervisor, or when you cannot "
++                "resolve their request. Say one short sentence telling them you are connecting them to the "
++                "team, then call this."
++            ),
++            parameters={
++                "type": "OBJECT",
++                "properties": {"reason": {"type": "STRING", "description": "Why a human is needed."}},
++            },
++        ),
++    ])
++
++
++def _live_config(genai_types, system_prompt: str, *, tuned: bool = False,
++                 language_codes: Optional[list[str]] = None, vocabulary: Optional[list[str]] = None):
++    """Build the Live config. Falls back to the minimal config if this SDK version rejects an option.
++
++    tuned=True adds faster turn detection, transcript language hints and a small custom vocabulary.
++    The caller keeps an untuned copy and retries with it if the Live server refuses a tuned option.
++    """
+     base = dict(
+         response_modalities=["AUDIO"],
+         system_instruction=genai_types.Content(parts=[genai_types.Part(text=system_prompt)]),
+     )
+     try:
++        in_cfg: dict = {}
++        if tuned:
++            if language_codes:
++                in_cfg["language_codes"] = language_codes
++            if vocabulary:
++                in_cfg["custom_vocabulary"] = vocabulary
+         extras = dict(
+-            input_audio_transcription=genai_types.AudioTranscriptionConfig(),
++            input_audio_transcription=genai_types.AudioTranscriptionConfig(**in_cfg),
+             output_audio_transcription=genai_types.AudioTranscriptionConfig(),
+-            tools=[genai_types.Tool(function_declarations=[
+-                genai_types.FunctionDeclaration(
+-                    name="request_human_handoff",
+-                    description=(
+-                        "Call this when the customer asks for a human, manager or supervisor, or when you cannot "
+-                        "resolve their request. Say one short sentence telling them you are connecting them to the "
+-                        "team, then call this."
+-                    ),
+-                    parameters={
+-                        "type": "OBJECT",
+-                        "properties": {"reason": {"type": "STRING", "description": "Why a human is needed."}},
+-                    },
+-                ),
+-            ])],
++            tools=[_handoff_tool(genai_types)],
+         )
++        if tuned:
++            vad = _vad_settings()
++            extras["realtime_input_config"] = genai_types.RealtimeInputConfig(
++                automatic_activity_detection=genai_types.AutomaticActivityDetection(
++                    start_of_speech_sensitivity=genai_types.StartSensitivity.START_SENSITIVITY_HIGH,
++                    end_of_speech_sensitivity=genai_types.EndSensitivity.END_SENSITIVITY_HIGH,
++                    prefix_padding_ms=vad["prefix_padding_ms"],
++                    silence_duration_ms=vad["silence_duration_ms"],
++                )
++            )
+         return genai_types.LiveConnectConfig(**base, **extras), True
+     except Exception:
+-        logger.exception("full Live config rejected by SDK; using minimal config (no transcripts, no handoff tool)")
++        logger.exception("full Live config rejected by SDK (tuned=%s); using minimal config (no transcripts, no handoff tool)", tuned)
+         return genai_types.LiveConnectConfig(**base), False
+ 
+ 
++@asynccontextmanager
++async def _connect_live(client, model: str, tuned_config, baseline_config):
++    """Open the Live session with the tuned config; if the server refuses it, retry with the baseline.
++
++    A rejected optional setting must never turn into 'AI voice service unavailable' for the caller.
++    """
++    stack = AsyncExitStack()
++    try:
++        try:
++            session = await stack.enter_async_context(client.aio.live.connect(model=model, config=tuned_config))
++        except Exception:
++            if tuned_config is baseline_config:
++                raise
++            logger.exception("tuned Live config refused by server; retrying with baseline config")
++            session = await stack.enter_async_context(client.aio.live.connect(model=model, config=baseline_config))
++        yield session
++    finally:
++        await stack.aclose()
++
++
+ @router.websocket("/ws/escalate/{call_id}")
+ async def voice_escalate(websocket: WebSocket, call_id: str):
+     await websocket.accept()
+     logger.info("escalate ws accepted call_id=%s", call_id)
+ 
+     system_prompt = ""
++    language_codes: list[str] = []
++    vocabulary: list[str] = []
+     db: Session = SessionLocal()
+     try:
+         call = db.get(CallRecord, call_id)
+@@ -195,6 +285,8 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
+         policy = tenant_policy(db, tenant.id)
+         context = knowledge_context(db, tenant.id)
+         system_prompt = _build_system_prompt(tenant, customer, policy, context)
++        language_codes = _transcription_language_codes(policy)
++        vocabulary = [tenant.name] + WEEKDAYS if tenant.name else list(WEEKDAYS)
+     finally:
+         db.close()   # do not hold a pooled connection for the whole call
+ 
+@@ -209,12 +301,14 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
+ 
+     client = genai.Client(api_key=settings.gemini_api_key)
+     model_name = _live_model(getattr(settings, "gemini_live_model", None))
+-    config, has_tools = _live_config(genai_types, system_prompt)
++    config, has_tools = _live_config(genai_types, system_prompt, tuned=True,
++                                     language_codes=language_codes, vocabulary=vocabulary)
++    baseline_config, _ = _live_config(genai_types, system_prompt, tuned=False)
+     buffer = _TranscriptBuffer()
+     outcome = {"crashed": False, "handoff": False}
+ 
+     async def run_session() -> None:
+-        async with client.aio.live.connect(model=model_name, config=config) as session:
++        async with _connect_live(client, model_name, config, baseline_config) as session:
+             await websocket.send_json({"type": "status", "status": "connected", "provider": "gemini", "model": model_name})
+ 
+             stop = asyncio.Event()
+diff --git a/apps/api/app/voice_followups.py b/apps/api/app/voice_followups.py
+new file mode 100644
+index 0000000..0f700f1
+--- /dev/null
++++ b/apps/api/app/voice_followups.py
+@@ -0,0 +1,240 @@
++"""Deterministic answers for short spoken follow-ups. No AI model is ever called here.
++
++Everything in this module is pure (no database, no network) so it can be unit-tested:
++
++* ``spoken_time``      "9 30 am", "nine thirty", "half past nine", "ten o'clock"  ->  "9:30 AM" ...
++* ``describe_day_hours``  "Tomorrow is Sunday, and we're closed. We reopen on Monday at 9:00 AM."
++* ``is_day_followup``  "tomorrow", "and Sunday?", "what about Saturday"  (a bare day reference)
++
++The brain uses these *inside* its existing stages (structured answer / booking entity extraction);
++the order of the stages and the shape of the reply are unchanged.
++"""
++from __future__ import annotations
++
++import re
++from datetime import date, datetime, time
++from typing import Mapping, Optional
++
++# --------------------------------------------------------------------------------------
++# Spoken times
++# --------------------------------------------------------------------------------------
++
++_HOURS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8,
++          "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
++_MINUTES = {"fifteen": 15, "twenty": 20, "thirty": 30, "fortyfive": 45, "fifty": 50}  # keys have no spaces/hyphens
++_HOUR_WORD = "|".join(_HOURS)
++_HOUR_ANY = rf"(?:1[0-2]|0?[1-9]|{_HOUR_WORD})"
++_MIN_WORD = r"(?:fifteen|twenty|thirty|forty[\s-]?five|fifty)"
++_CUE = r"(?:at|by|around|about|for|come|coming|reach|arrive|slot|time|appointment|book|booking|schedule|visit)"
++
++
++def _to_hour(token: str) -> int:
++    token = token.strip().lower()
++    return _HOURS[token] if token in _HOURS else int(token)
++
++
++def _meridiem(value: str, explicit: Optional[str] = None) -> Optional[str]:
++    if explicit:
++        return "AM" if explicit.lower().startswith("a") else "PM"
++    if re.search(r"\b(?:morning|subah|savere|uday|sakal)\b", value):
++        return "AM"
++    if re.search(r"\b(?:afternoon|evening|night|tonight|shaam|sanje)\b", value):
++        return "PM"
++    return None
++
++
++def _fmt(hour: int, minute: int, mer: Optional[str]) -> str:
++    base = f"{hour}:{minute:02d}" if minute else f"{hour}"
++    return f"{base} {mer}" if mer else base
++
++
++def spoken_time(text: str) -> Optional[str]:
++    """Return a time string like "9:30 AM" / "9:30" / "10" from spoken-style English, else None.
++
++    Deliberately conservative: it is only used when the original parser found no time, and every
++    pattern needs a clear time signal (meridiem, "o'clock", "half/quarter past", or a time cue), so
++    ordinary numbers in a sentence ("I have two kids") are not read as times.
++    """
++    v = (text or "").casefold().replace("a.m.", "am").replace("p.m.", "pm")
++    v = re.sub(r"[,;!?]", " ", v)
++    v = re.sub(r"\s+", " ", v).strip()
++    if not v:
++        return None
++
++    # "half past nine" / "half past 9"
++    m = re.search(rf"\bhalf (?:past|after) ({_HOUR_ANY})\b", v)
++    if m:
++        return _fmt(_to_hour(m.group(1)), 30, _meridiem(v))
++    # "quarter past nine" / "quarter to ten"
++    m = re.search(rf"\bquarter (?:past|after) ({_HOUR_ANY})\b", v)
++    if m:
++        return _fmt(_to_hour(m.group(1)), 15, _meridiem(v))
++    m = re.search(rf"\bquarter to ({_HOUR_ANY})\b", v)
++    if m:
++        hour = _to_hour(m.group(1)) - 1 or 12
++        return _fmt(hour, 45, _meridiem(v))
++
++    # "ten o'clock" / "10 oclock" (digits are handled by the original parser; words are not)
++    m = re.search(rf"\b({_HOUR_ANY}) o['’]?clock\b", v)
++    if m:
++        return _fmt(_to_hour(m.group(1)), 0, _meridiem(v))
++
++    # "9 30 am", "9.30 pm", "9 30 a m"
++    m = re.search(r"\b(1[0-2]|0?[1-9])[.\s]([0-5]\d)\s*(a\.?\s?m\.?|p\.?\s?m\.?)(?=\W|$)", v)
++    if m:
++        return _fmt(int(m.group(1)), int(m.group(2)), _meridiem(v, m.group(3)))
++
++    # "at 9 30" / "at 9.30" (no am/pm, but an explicit time cue)
++    m = re.search(rf"\b{_CUE}\s+(1[0-2]|0?[1-9])[.\s]([0-5]\d)\b(?!\s*(?:am|pm|:))", v)
++    if m:
++        return _fmt(int(m.group(1)), int(m.group(2)), _meridiem(v))
++
++    # "nine thirty", "nine forty five", "nine fifteen am"
++    m = re.search(rf"\b({_HOUR_WORD}) ({_MIN_WORD})(?![-\w])(?:\s*(am|pm))?\b", v)
++    if m:
++        minute = _MINUTES.get(re.sub(r"[\s-]+", "", m.group(2)))
++        # quarter-hour minutes are unambiguous as a bare answer to "which time?"; 20/50 need a signal
++        if minute is not None and (minute in (15, 30, 45) or m.group(3) or re.search(rf"\b{_CUE}\b", v) or _meridiem(v)):
++            return _fmt(_to_hour(m.group(1)), minute, _meridiem(v, m.group(3)))
++    return None
++
++
++# --------------------------------------------------------------------------------------
++# Day-specific opening hours
++# --------------------------------------------------------------------------------------
++
++WEEKDAYS_EN = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
++WEEKDAYS_HI = ("सोमवार", "मंगलवार", "बुधवार", "गुरुवार", "शुक्रवार", "शनिवार", "रविवार")
++WEEKDAYS_TE = ("సోమవారం", "మంగళవారం", "బుధవారం", "గురువారం", "శుక్రవారం", "శనివారం", "ఆదివారం")
++_WEEKDAYS = {"en": WEEKDAYS_EN, "hi": WEEKDAYS_HI, "te": WEEKDAYS_TE}
++_REL = {
++    "en": {"today": "Today", "tomorrow": "Tomorrow", "day_after_tomorrow": "The day after tomorrow"},
++    "hi": {"today": "आज", "tomorrow": "कल", "day_after_tomorrow": "परसों"},
++    "te": {"today": "ఈ రోజు", "tomorrow": "రేపు", "day_after_tomorrow": "ఎల్లుండి"},
++}
++
++
++def clock(t: time) -> str:
++    """9:00 AM style, no leading zero."""
++    return t.strftime("%I:%M %p").lstrip("0")
++
++
++def _days(language: str):
++    return _WEEKDAYS.get(language, WEEKDAYS_EN)
++
++
++def next_open_day(hours: Mapping[int, object], after: date, horizon: int = 7):
++    """First day after ``after`` (within a week) that has opening hours set and is not closed."""
++    from datetime import timedelta
++    for offset in range(1, horizon + 1):
++        d = after + timedelta(days=offset)
++        row = hours.get(d.weekday())
++        if row is not None and not getattr(row, "is_closed", False):
++            return d, row
++    return None
++
++
++def describe_day_hours(
++    target: date,
++    hours: Mapping[int, object],
++    *,
++    language: str = "en",
++    relative: Optional[str] = None,
++    now_local: Optional[datetime] = None,
++    offer_booking: bool = False,
++    closed_day_question: bool = False,
++) -> Optional[str]:
++    """One spoken sentence or two about whether the business is open on ``target``.
++
++    ``hours`` maps weekday (0=Monday) to a row with ``is_closed``, ``open_time``, ``close_time``.
++    Returns None when the tenant has no hours configured for that weekday (the caller then falls
++    through to the normal ladder; nothing is ever guessed).
++    """
++    row = hours.get(target.weekday())
++    if row is None:
++        return None
++    lang = language if language in _WEEKDAYS else "en"
++    names = _days(lang)
++    weekday = names[target.weekday()]
++    rel = (relative or "").replace(" ", "_")
++    rel_word = _REL[lang].get(rel)
++    closed = bool(getattr(row, "is_closed", False))
++    nxt = next_open_day(hours, target) if closed or (now_local and target == now_local.date()) else None
++
++    if lang == "hi":
++        lead = f"{rel_word} {weekday}" if rel_word else weekday
++        if closed:
++            text = (f"{lead} है और हम बंद रहते हैं।" if rel_word else f"{weekday} को हम बंद रहते हैं।")
++            if nxt:
++                text += f" हम {names[nxt[0].weekday()]} को {clock(nxt[1].open_time)} पर फिर खुलेंगे।"
++            return text
++        return f"{lead} को हम {clock(row.open_time)} से {clock(row.close_time)} तक खुले रहते हैं।"
++
++    if lang == "te":
++        lead = f"{rel_word} {weekday}" if rel_word else weekday
++        if closed:
++            text = f"{lead}, మేము మూసివేసి ఉంటాము."
++            if nxt:
++                text += f" {names[nxt[0].weekday()]} {clock(nxt[1].open_time)} కి తెరుస్తాము."
++            return text
++        return f"{lead} మేము {clock(row.open_time)} నుండి {clock(row.close_time)} వరకు తెరిచి ఉంటాము."
++
++    # English (and the fallback for every other language)
++    opening, closing = (clock(row.open_time), clock(row.close_time)) if not closed else ("", "")
++    is_today = bool(now_local and target == now_local.date())
++    if closed:
++        text = f"{rel_word} is {weekday}, and we're closed." if rel_word else f"On {weekday} we're closed."
++        if nxt:
++            text += f" We reopen on {names[nxt[0].weekday()]} at {clock(nxt[1].open_time)}."
++            if offer_booking:
++                text += f" Would you like to book an appointment for {names[nxt[0].weekday()]}?"
++            elif closed_day_question:
++                text += " Which day would you prefer instead?"
++        return text
++
++    lead = f"{rel_word}, {weekday}," if rel_word else f"On {weekday},"
++    if is_today and now_local.time() >= row.close_time:
++        text = f"{lead} we were open from {opening} to {closing}, and we've closed for the day."
++        if nxt:
++            text += f" We reopen on {names[nxt[0].weekday()]} at {clock(nxt[1].open_time)}."
++    elif is_today and now_local.time() < row.open_time:
++        text = f"{lead} we open at {opening} and close at {closing}."
++        if offer_booking:
++            text += " Would you like to book an appointment?"
++    else:
++        text = f"{lead} we're open from {opening} to {closing}."
++        if offer_booking:
++            text += " Would you like to book an appointment?"
++    return text
++
++
++# --------------------------------------------------------------------------------------
++# What counts as a bare "day" follow-up
++# --------------------------------------------------------------------------------------
++
++_FILLER = {
++    "and", "what", "about", "how", "then", "ok", "okay", "yeah", "yes", "yep", "sure", "hmm", "so", "the",
++    "on", "for", "is", "it", "its", "it's", "same", "also", "too", "that", "day", "please", "only", "a",
++    "at", "in", "um", "uh", "well", "now", "will", "you", "be", "are", "we", "open", "available", "tell",
++    "me", "do", "does",
++}
++_DAYWORDS = {
++    "today", "tomorrow", "tonight", "after", "monday", "tuesday", "wednesday", "thursday", "friday",
++    "saturday", "sunday", "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
++    "yesterday", "weekend",
++}
++HOURS_CUES = re.compile(r"\b(holiday|holidays|working|work|closed|close|closing|open|opening|hours|timing|timings|off)\b")
++
++
++def is_day_followup(message: str) -> bool:
++    """True for "tomorrow", "and Sunday?", "what about Saturday", "कल", "రేపు" ... (a bare day)."""
++    text = (message or "").strip().casefold()
++    if not text:
++        return False
++    words = re.findall(r"[\w'’]+", text, flags=re.UNICODE)
++    if not words or len(words) > 6:
++        return False
++    if any(not w.isascii() for w in words):  # Hindi / Telugu / ...: short utterance that already has a day entity
++        return len(words) <= 3
++    leftover = [w for w in words if w not in _FILLER and w not in _DAYWORDS]
++    return not leftover
+diff --git a/apps/api/app/webcall_runtime.py b/apps/api/app/webcall_runtime.py
+index 172802e..576f5af 100644
+--- a/apps/api/app/webcall_runtime.py
++++ b/apps/api/app/webcall_runtime.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import asyncio
+ import base64
++import collections
+ import logging
+ import time
+ from fractions import Fraction
+@@ -25,6 +26,8 @@ FRAME_MS = 20
+ SAMPLES_PER_FRAME = AUDIO_RATE * FRAME_MS // 1000
+ BYTES_PER_SAMPLE = 2
+ SILENCE_FRAME_BYTES = SAMPLES_PER_FRAME * BYTES_PER_SAMPLE
++# Providers send a reply faster than real time; hold up to 90 s so a reply is never truncated.
++MAX_BUFFERED_FRAMES = 90 * 1000 // FRAME_MS
+ 
+ 
+ class PcmAudioTrack:
+@@ -47,27 +50,50 @@ class PcmAudioTrack:
+ 
+ 
+ class OutgoingAudioTrack(MediaStreamTrack):
++    """Audio sent to the browser, buffered per reply and released in real time.
++
++    Realtime providers deliver a reply FASTER than real time. The previous version kept only
++    80 frames (1.6 s) and dropped the OLDEST frame when full, so the start of any reply longer than
++    ~1.6 s was cut off, and it returned frames as fast as aiortc asked for them, so the browser
++    received bursts instead of a steady 20 ms cadence. Silence frames were also emitted every 40 ms
++    while carrying 20 ms of media time, so the RTP clock ran at half speed while idle.
++
++    Now: a whole reply is buffered, exactly one 20 ms frame is released per 20 ms of wall-clock time
++    (the same scheme as aiortc's own AudioStreamTrack), and silence uses the same clock. A side
++    benefit is that barge-in is prompt: clear() removes everything not yet sent, and at most a few
++    frames are already in flight instead of up to 1.6 s.
++    """
++
+     kind = "audio"
+ 
+     def __init__(self):
+         super().__init__()
+-        self.queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=80)
++        self.frames: collections.deque[bytes] = collections.deque()
+         self.pts = 0
+         self.closed = False
++        self.dropped_frames = 0
+         self._framer = PcmAudioTrack()
++        self._start: float | None = None
++
++    @property
++    def queued_ms(self) -> int:
++        return len(self.frames) * FRAME_MS
+ 
+     async def recv(self) -> AudioFrame:
+-        try:
+-            pcm = await asyncio.wait_for(self.queue.get(), timeout=FRAME_MS / 1000 * 2)
+-        except asyncio.TimeoutError:
+-            pcm = b"\x00" * SILENCE_FRAME_BYTES
+-        if pcm is None:
+-            self.closed = True
+-            pcm = b"\x00" * SILENCE_FRAME_BYTES
+-        if len(pcm) < SILENCE_FRAME_BYTES:
+-            pcm += b"\x00" * (SILENCE_FRAME_BYTES - len(pcm))
+-        elif len(pcm) > SILENCE_FRAME_BYTES:
+-            pcm = pcm[:SILENCE_FRAME_BYTES]
++        now = time.monotonic()
++        if self._start is None:
++            self._start = now
++        else:
++            wait = self._start + self.pts / AUDIO_RATE - now
++            if wait < -0.5:
++                # The event loop stalled for >0.5 s. Re-anchor the clock instead of sending the
++                # backlog as one burst to "catch up".
++                self._start = now - self.pts / AUDIO_RATE
++                wait = 0.0
++            if wait > 0:
++                await asyncio.sleep(wait)
++
++        pcm = self.frames.popleft() if self.frames else b"\x00" * SILENCE_FRAME_BYTES
+         frame = AudioFrame(format="s16", layout="mono", samples=SAMPLES_PER_FRAME)
+         frame.sample_rate = AUDIO_RATE
+         frame.time_base = Fraction(1, AUDIO_RATE)
+@@ -80,32 +106,21 @@ class OutgoingAudioTrack(MediaStreamTrack):
+         if self.closed:
+             return
+         for chunk in self._framer.feed(pcm):
+-            try:
+-                self.queue.put_nowait(chunk)
+-            except asyncio.QueueFull:
+-                try:
+-                    self.queue.get_nowait()
+-                except asyncio.QueueEmpty:
+-                    pass
+-                try:
+-                    self.queue.put_nowait(chunk)
+-                except asyncio.QueueFull:
+-                    pass
++            if len(self.frames) >= MAX_BUFFERED_FRAMES:
++                self.frames.popleft()
++                self.dropped_frames += 1
++                if self.dropped_frames == 1:
++                    logger.warning("WEB_CALL_AUDIO_BUFFER_FULL frames=%s", MAX_BUFFERED_FRAMES)
++            self.frames.append(chunk)
+ 
+     def clear(self) -> None:
+-        while True:
+-            try:
+-                self.queue.get_nowait()
+-            except asyncio.QueueEmpty:
+-                break
++        """Drop everything not yet sent (barge-in / provider reconnect)."""
++        self.frames.clear()
++        self._framer.buffer.clear()
+ 
+     async def close(self) -> None:
+         self.closed = True
+         self.clear()
+-        try:
+-            self.queue.put_nowait(None)
+-        except asyncio.QueueFull:
+-            pass
+ 
+ 
+ class WebCallRuntime:
+diff --git a/apps/api/tests/test_voice_escalate_config.py b/apps/api/tests/test_voice_escalate_config.py
+new file mode 100644
+index 0000000..12e4774
+--- /dev/null
++++ b/apps/api/tests/test_voice_escalate_config.py
+@@ -0,0 +1,100 @@
++"""Specialist (Gemini Live) bridge: tuned turn-taking/transcript hints with a safe fallback."""
++import asyncio
++
++import pytest
++from google.genai import types
++
++from app import voice_escalate as ve
++
++
++def test_tuned_config_has_fast_turn_detection_and_language_hints():
++    cfg, ok = ve._live_config(types, "prompt", tuned=True,
++                              language_codes=["en-IN"], vocabulary=["QA real-estate", "Monday"])
++    assert ok is True
++    vad = cfg.realtime_input_config.automatic_activity_detection
++    assert vad.silence_duration_ms == 400 and vad.prefix_padding_ms == 100
++    assert vad.end_of_speech_sensitivity == types.EndSensitivity.END_SENSITIVITY_HIGH
++    assert cfg.input_audio_transcription.language_codes == ["en-IN"]
++    assert "Monday" in cfg.input_audio_transcription.custom_vocabulary
++    assert cfg.tools  # the human-handoff tool is still there
++
++
++def test_baseline_config_is_unchanged_behaviour():
++    cfg, ok = ve._live_config(types, "prompt", tuned=False)
++    assert ok is True
++    assert cfg.realtime_input_config is None
++    assert not cfg.input_audio_transcription.language_codes
++    assert cfg.tools
++
++
++def test_vad_is_tunable_from_the_environment(monkeypatch):
++    monkeypatch.setenv("SPECIALIST_VAD_SILENCE_MS", "650")
++    monkeypatch.setenv("SPECIALIST_VAD_PREFIX_MS", "not-a-number")
++    assert ve._vad_settings() == {"silence_duration_ms": 650, "prefix_padding_ms": 100}
++
++
++def test_transcription_language_hints(monkeypatch):
++    monkeypatch.delenv("SPECIALIST_TRANSCRIPTION_LANGUAGES", raising=False)
++    assert ve._transcription_language_codes({}) == ["en-IN"]
++    assert ve._transcription_language_codes({"voice": {"locale": "te"}}) == ["te-IN", "en-IN"]
++    assert ve._transcription_language_codes({"language": {"locale": "hi-IN"}}) == ["hi-IN", "en-IN"]
++    assert ve._transcription_language_codes({"voice": {"locale": "en_IN"}}) == ["en-IN"]
++    monkeypatch.setenv("SPECIALIST_TRANSCRIPTION_LANGUAGES", "auto")
++    assert ve._transcription_language_codes({"voice": {"locale": "te"}}) == []
++    monkeypatch.setenv("SPECIALIST_TRANSCRIPTION_LANGUAGES", "en-IN, hi-IN")
++    assert ve._transcription_language_codes({}) == ["en-IN", "hi-IN"]
++
++
++class _FakeLive:
++    def __init__(self, refuse_configs):
++        self.refuse_configs = refuse_configs
++        self.attempts = []
++        self.closed = []
++
++    def connect(self, model, config):
++        outer = self
++
++        class _Ctx:
++            async def __aenter__(self_inner):
++                outer.attempts.append(config)
++                if config in outer.refuse_configs:
++                    raise RuntimeError("1007 invalid argument")
++                return f"session-with-{config}"
++
++            async def __aexit__(self_inner, *exc):
++                outer.closed.append(config)
++
++        return _Ctx()
++
++
++class _FakeClient:
++    def __init__(self, live):
++        self.aio = type("Aio", (), {"live": live})()
++
++
++def _run(live, tuned, baseline):
++    async def go():
++        async with ve._connect_live(_FakeClient(live), "m", tuned, baseline) as session:
++            return session
++
++    return asyncio.run(go())
++
++
++def test_tuned_session_is_used_when_the_server_accepts_it():
++    live = _FakeLive(refuse_configs=set())
++    assert _run(live, "tuned", "baseline") == "session-with-tuned"
++    assert live.attempts == ["tuned"] and live.closed == ["tuned"]
++
++
++def test_server_refusing_tuned_options_falls_back_to_baseline():
++    live = _FakeLive(refuse_configs={"tuned"})
++    assert _run(live, "tuned", "baseline") == "session-with-baseline"
++    assert live.attempts == ["tuned", "baseline"]
++    assert live.closed == ["baseline"]
++
++
++def test_baseline_failure_still_raises_so_the_call_can_escalate_to_a_human():
++    live = _FakeLive(refuse_configs={"tuned", "baseline"})
++    with pytest.raises(RuntimeError):
++        _run(live, "tuned", "baseline")
++    assert live.attempts == ["tuned", "baseline"]
+diff --git a/apps/api/tests/test_voice_followups.py b/apps/api/tests/test_voice_followups.py
+new file mode 100644
+index 0000000..15bef14
+--- /dev/null
++++ b/apps/api/tests/test_voice_followups.py
+@@ -0,0 +1,316 @@
++"""Library-first voice brain: day follow-ups, spoken times, day corrections, confirm, precision.
++
++No AI model is called anywhere in this file (no provider keys are configured, so an unanswerable
++question escalates instead of generating). Dates are computed from "now" so the tests pass on any
++day of the week.
++"""
++import asyncio
++from datetime import datetime, time, timedelta
++from types import SimpleNamespace
++from zoneinfo import ZoneInfo
++
++import pytest
++from sqlalchemy import create_engine
++from sqlalchemy.orm import sessionmaker
++
++from app import brain
++from app.ai_router import knowledge_match
++from app.db import Base
++from app.models import Service, Tenant
++from app.models_growth import BusinessHour, KnowledgeItem
++from app.voice_followups import (
++    WEEKDAYS_EN, WEEKDAYS_HI, WEEKDAYS_TE, describe_day_hours, is_day_followup, spoken_time,
++)
++
++TZ = "Asia/Kolkata"
++
++
++def _now():
++    return datetime.now(ZoneInfo(TZ))
++
++
++def _day(offset):
++    return (_now() + timedelta(days=offset)).date()
++
++
++def make_db(closed_offsets=(), library=True):
++    """Every weekday open 9-18, except the weekdays of today+offset for offsets in closed_offsets."""
++    engine = create_engine("sqlite:///:memory:")
++    Base.metadata.create_all(engine)
++    db = sessionmaker(bind=engine)()
++    db.add(Tenant(id="t1", name="Demo Realty", slug="demo", industry="real_estate", timezone=TZ))
++    closed = {_day(o).weekday() for o in closed_offsets}
++    for wd in range(7):
++        db.add(BusinessHour(tenant_id="t1", weekday=wd, open_time=time(9, 0), close_time=time(18, 0),
++                            is_closed=wd in closed, slot_interval_minutes=30))
++    db.add(Service(id="s1", tenant_id="t1", name="Site visit", price=0, currency="INR",
++                   duration_minutes=30, is_active=True))
++    if library:
++        db.add(KnowledgeItem(tenant_id="t1", title="Parking", language="en", is_active=True,
++                             approval_status="approved",
++                             content="Free parking is available for visitors in the basement."))
++        db.add(KnowledgeItem(tenant_id="t1", title="Location", language="en", is_active=True,
++                             approval_status="approved",
++                             content="We are located at 12 Lake View Road, Hyderabad, next to the metro station."))
++    db.commit()
++    return db
++
++
++class Convo:
++    """One caller talking to the real brain."""
++
++    def __init__(self, db):
++        self.db, self.cid, self.last = db, None, None
++
++    def say(self, text):
++        self.last = asyncio.run(brain.generate_reply(self.db, "t1", text, self.cid, "voice"))
++        self.cid = self.last.get("conversation_id") or self.cid
++        return self.last
++
++    @property
++    def reply(self):
++        return self.last["reply"]
++
++    @property
++    def escalated(self):
++        return bool(self.last.get("handoff_required"))
++
++    @property
++    def state(self):
++        return self.db.get(brain.Conversation, self.cid).state
++
++
++# ---------------------------------------------------------------------------------------
++# pure helpers
++# ---------------------------------------------------------------------------------------
++
++@pytest.mark.parametrize("text,expected", [
++    ("Monday 9 30 am please", "9:30 AM"),
++    ("book me for Monday at nine thirty", "9:30"),
++    ("nine thirty", "9:30"),
++    ("half past nine", "9:30"),
++    ("can I come on Monday morning at half past nine", "9:30 AM"),
++    ("ten o'clock", "10"),
++    ("quarter past ten in the evening", "10:15 PM"),
++    ("quarter to ten", "9:45"),
++    ("nine forty-five am", "9:45 AM"),
++    ("9.30 pm", "9:30 PM"),
++    ("at 9 30", "9:30"),
++    ("twelve thirty pm", "12:30 PM"),
++])
++def test_spoken_times(text, expected):
++    assert spoken_time(text) == expected
++
++
++@pytest.mark.parametrize("text", [
++    "I have two kids", "I have two thirty-year-old cars", "call me on 9 30 September",
++    "my number is 98 30", "ten twenty people came", "what are your timings",
++])
++def test_ordinary_numbers_are_not_times(text):
++    assert spoken_time(text) is None
++
++
++def test_brain_entity_extraction_uses_spoken_times():
++    assert brain.extract_booking_entities("Monday 9 30 am please")["time"] == "9:30 AM"
++    assert brain.extract_booking_entities("half past nine on Monday")["time"] == "9:30"
++    assert brain.extract_booking_entities("9:30")["time"] == "9:30"   # unchanged behaviour
++
++
++@pytest.mark.parametrize("text,expected", [
++    ("tomorrow", True), ("and Sunday?", True), ("what about Saturday", True), ("today", True),
++    ("how about Monday please", True), ("कल", True), ("రేపు", True),
++    ("book an appointment tomorrow", False), ("what is the price for the site visit", False),
++])
++def test_day_followup_detection(text, expected):
++    assert is_day_followup(text) is expected
++
++
++def _hours(closed=()):
++    return {wd: SimpleNamespace(is_closed=wd in closed, open_time=time(9, 0), close_time=time(18, 0))
++            for wd in range(7)}
++
++
++def _dt(y, m, d, h, mi):
++    return datetime(y, m, d, h, mi, tzinfo=ZoneInfo(TZ))
++
++
++def test_describe_open_and_closed_days_in_english():
++    sat, sun, mon = _dt(2026, 10, 10, 11, 0).date(), _dt(2026, 10, 11, 11, 0).date(), _dt(2026, 10, 12, 11, 0).date()
++    hours = _hours(closed={6})
++    now = _dt(2026, 10, 10, 11, 0)
++    assert describe_day_hours(sat, hours, relative="today", now_local=now) == "Today, Saturday, we're open from 9:00 AM to 6:00 PM."
++    assert describe_day_hours(sun, hours, relative="tomorrow", now_local=now) == \
++        "Tomorrow is Sunday, and we're closed. We reopen on Monday at 9:00 AM."
++    assert describe_day_hours(sun, hours, now_local=now) == "On Sunday we're closed. We reopen on Monday at 9:00 AM."
++    assert describe_day_hours(mon, hours, now_local=now, offer_booking=True) == \
++        "On Monday, we're open from 9:00 AM to 6:00 PM. Would you like to book an appointment?"
++    assert describe_day_hours(sun, hours, relative="tomorrow", now_local=now, offer_booking=True).endswith(
++        "Would you like to book an appointment for Monday?")
++    assert describe_day_hours(sun, hours, relative="tomorrow", now_local=now, closed_day_question=True).endswith(
++        "Which day would you prefer instead?")
++
++
++def test_describe_today_before_and_after_hours():
++    sat = _dt(2026, 10, 10, 8, 0).date()
++    hours = _hours(closed={6})
++    after = describe_day_hours(sat, hours, relative="today", now_local=_dt(2026, 10, 10, 19, 0))
++    assert "we've closed for the day" in after and "We reopen on Monday at 9:00 AM." in after
++    before = describe_day_hours(sat, hours, relative="today", now_local=_dt(2026, 10, 10, 7, 30))
++    assert before == "Today, Saturday, we open at 9:00 AM and close at 6:00 PM."
++
++
++def test_describe_hindi_telugu_and_unknown_hours():
++    sun = _dt(2026, 10, 11, 11, 0).date()
++    now = _dt(2026, 10, 10, 11, 0)
++    hours = _hours(closed={6})
++    hi = describe_day_hours(sun, hours, language="hi", relative="tomorrow", now_local=now)
++    assert hi.startswith("कल रविवार") and "बंद" in hi and WEEKDAYS_HI[0] in hi
++    te = describe_day_hours(sun, hours, language="te", relative="tomorrow", now_local=now)
++    assert te.startswith("రేపు ఆదివారం") and WEEKDAYS_TE[0] in te
++    assert describe_day_hours(sun, {}, now_local=now) is None          # nothing configured -> never guess
++    assert describe_day_hours(sun, hours, language="fr", relative="tomorrow", now_local=now).startswith("Tomorrow is Sunday")
++
++
++# ---------------------------------------------------------------------------------------
++# the real call: "timings" ... "tomorrow" used to escalate to the paid specialist layer
++# ---------------------------------------------------------------------------------------
++
++def test_tomorrow_after_hours_is_answered_from_the_hours_table_not_escalated():
++    caller = Convo(make_db(closed_offsets=(1,)))
++    caller.say("Manoj timings")
++    assert not caller.escalated
++    caller.say("tomorrow")
++    tomorrow = WEEKDAYS_EN[_day(1).weekday()]
++    assert not caller.escalated
++    assert caller.last["provider"] == "deterministic"
++    assert caller.reply.startswith(f"Tomorrow is {tomorrow}, and we're closed. We reopen on")
++    assert "book an appointment" in caller.reply
++
++
++@pytest.mark.parametrize("follow_up", ["tomorrow", "and tomorrow?", "what about tomorrow", "are you working tomorrow",
++                                       "is tomorrow a holiday", "are you open tomorrow"])
++def test_day_follow_up_phrasings(follow_up):
++    caller = Convo(make_db(closed_offsets=(1,)))
++    caller.say("what are your timings")
++    caller.say(follow_up)
++    assert not caller.escalated
++    assert WEEKDAYS_EN[_day(1).weekday()] in caller.reply
++
++
++def test_follow_ups_chain_and_name_the_right_weekday():
++    caller = Convo(make_db())
++    caller.say("what are your timings")
++    day_after = WEEKDAYS_EN[_day(2).weekday()]
++    caller.say(f"and {day_after}")
++    assert not caller.escalated and f"On {day_after}," in caller.reply
++    caller.say("what about tomorrow")                      # context survives the first follow-up
++    assert not caller.escalated and "Tomorrow," in caller.reply
++
++
++def test_bare_day_without_any_hours_context_is_not_guessed_at():
++    caller = Convo(make_db(library=False))
++    caller.say("tomorrow")
++    assert caller.escalated                                   # unchanged: honest hand-off, nothing invented
++
++
++def test_hindi_follow_up_is_answered_in_hindi():
++    caller = Convo(make_db(closed_offsets=(1,)))
++    caller.say("आपका समय क्या है")
++    caller.say("कल")
++    assert not caller.escalated
++    assert WEEKDAYS_HI[_day(1).weekday()] in caller.reply and "बंद" in caller.reply
++
++
++def test_yes_after_the_booking_offer_continues_into_booking():
++    caller = Convo(make_db(closed_offsets=(1,)))
++    caller.say("what are your timings")
++    caller.say("tomorrow")
++    caller.say("yes")
++    assert not caller.escalated
++    assert caller.reply == "Sure. Which day and time would you prefer?"
++    assert caller.state == "booking_day"
++
++
++# ---------------------------------------------------------------------------------------
++# booking: closed day, corrected day, spoken times, bare "9:30" + "confirm"
++# ---------------------------------------------------------------------------------------
++
++def test_closed_day_is_reported_before_asking_for_a_time():
++    caller = Convo(make_db(closed_offsets=(1,)))
++    caller.say("I want to book an appointment")
++    caller.say("tomorrow")
++    assert caller.reply.startswith(f"Tomorrow is {WEEKDAYS_EN[_day(1).weekday()]}, and we're closed.")
++    assert caller.reply.endswith("Which day would you prefer instead?")
++    assert caller.state == "booking_day" and not caller.escalated
++
++
++def test_correcting_the_day_replaces_the_old_one():
++    caller = Convo(make_db(closed_offsets=(1,)))
++    caller.say("I want to book an appointment")
++    caller.say("tomorrow")
++    target = _day(2)
++    caller.say(WEEKDAYS_EN[target.weekday()])
++    result = caller.say("10 am")
++    assert "Shall I confirm" in caller.reply
++    assert result["booking"]["date"] == target.isoformat()     # not the closed "tomorrow"
++
++
++def test_bare_nine_thirty_then_confirm_completes():
++    caller = Convo(make_db())
++    caller.say("I want to book an appointment")
++    caller.say(WEEKDAYS_EN[_day(2).weekday()])
++    caller.say("9:30")
++    assert "9:30 AM" in caller.reply and "Shall I confirm" in caller.reply
++    result = caller.say("yes confirm")
++    assert result["booking"]["confirmation_requested"] is True
++    assert result["booking"]["time"] == "9:30 AM"               # AM/PM resolved, so the booking code can parse it
++    assert result["booking"]["date"] == _day(2).isoformat()
++    assert not caller.escalated
++
++
++@pytest.mark.parametrize("utterance,expected_time", [
++    ("{day} 9 30 am please", "9:30 AM"),
++    ("can I come on {day} morning at half past nine", "9:30 AM"),
++    ("book me for {day} at nine thirty", "9:30 AM"),
++    ("I want an appointment {day} ten o'clock", "10 AM"),
++])
++def test_spoken_times_start_and_complete_a_booking(utterance, expected_time):
++    day = WEEKDAYS_EN[_day(2).weekday()]
++    caller = Convo(make_db())
++    result = caller.say(utterance.format(day=day))
++    assert not caller.escalated and "Shall I confirm" in caller.reply
++    assert expected_time in caller.reply and result["booking"]["date"] == _day(2).isoformat()
++
++
++def test_booking_wording_has_no_on_tomorrow():
++    caller = Convo(make_db())
++    caller.say("I want to book an appointment")
++    caller.say("tomorrow")
++    assert "on tomorrow" not in caller.reply.lower()
++    assert "tomorrow" in caller.reply.lower()
++
++
++# ---------------------------------------------------------------------------------------
++# library precision / recall (no AI): never a confident wrong answer, find word forms and typos
++# ---------------------------------------------------------------------------------------
++
++def test_function_words_cannot_create_a_library_match():
++    db = make_db()
++    assert knowledge_match(db, "t1", "is tomorrow a holiday") is None
++    assert knowledge_match(db, "t1", "what is the weather like") is None
++    assert knowledge_match(db, "t1", "is there a swimming pool") is None
++
++
++@pytest.mark.parametrize("question", ["is there parking", "can I park my car", "do you have parkng", "where can visitors park"])
++def test_library_finds_word_forms_and_typos(question):
++    assert "Free parking" in knowledge_match(make_db(), "t1", question)
++
++
++def test_library_still_answers_plain_questions():
++    assert "Lake View Road" in knowledge_match(make_db(), "t1", "where are you located")
++
++
++def test_unanswerable_question_still_escalates_honestly():
++    caller = Convo(make_db())
++    caller.say("do you have a swimming pool")
++    assert caller.escalated and caller.last["provider"] == "none"
+diff --git a/apps/api/tests/test_webcall_audio_pacing.py b/apps/api/tests/test_webcall_audio_pacing.py
+new file mode 100644
+index 0000000..83011b6
+--- /dev/null
++++ b/apps/api/tests/test_webcall_audio_pacing.py
+@@ -0,0 +1,111 @@
++"""OutgoingAudioTrack must buffer a whole reply and release it in real time.
++
++Regression for: replies longer than ~1.6 s losing their first words (drop-oldest on a small
++queue), audio leaving as a burst, and the idle media clock running at half speed.
++Plain sync tests (asyncio.run) so they also run where pytest-asyncio is not installed.
++"""
++import asyncio
++import time
++
++import app.webcall_runtime as wr
++from app.webcall_runtime import (
++    AUDIO_RATE,
++    FRAME_MS,
++    SAMPLES_PER_FRAME,
++    SILENCE_FRAME_BYTES,
++    OutgoingAudioTrack,
++)
++
++SPEECH = b"\x10\x20" * (AUDIO_RATE // 1000 * FRAME_MS)  # exactly one 20 ms frame of non-zero PCM
++
++
++def _speech(ms: int) -> bytes:
++    return SPEECH * (ms // FRAME_MS)
++
++
++def test_a_long_reply_is_buffered_whole_not_truncated():
++    async def run():
++        t = OutgoingAudioTrack()
++        await t.push_pcm(_speech(6000))  # a 6 s answer arriving at once
++        return t.queued_ms, t.dropped_frames
++
++    queued_ms, dropped = asyncio.run(run())
++    assert queued_ms == 6000
++    assert dropped == 0
++
++
++def test_reply_starts_with_its_first_frame():
++    async def run():
++        t = OutgoingAudioTrack()
++        first = b"\x01\x00" * SAMPLES_PER_FRAME
++        rest = _speech(3000)
++        await t.push_pcm(first + rest)
++        frame = await t.recv()
++        return bytes(frame.planes[0])[:SILENCE_FRAME_BYTES]
++
++    assert asyncio.run(run())[:2] == b"\x01\x00"  # the beginning of the reply is not the part that is lost
++
++
++def test_frames_are_released_in_real_time_not_as_a_burst():
++    async def run():
++        t = OutgoingAudioTrack()
++        await t.push_pcm(_speech(1000))  # 50 frames
++        t0 = time.perf_counter()
++        for _ in range(26):
++            await t.recv()
++        return time.perf_counter() - t0
++
++    elapsed = asyncio.run(run())
++    # first frame is immediate, then 25 x 20 ms = 500 ms. Generous bounds for slow CI machines.
++    assert 0.40 <= elapsed <= 1.20, elapsed
++
++
++def test_idle_silence_runs_on_the_real_time_clock():
++    async def run():
++        t = OutgoingAudioTrack()
++        t0 = time.perf_counter()
++        frames = [await t.recv() for _ in range(11)]
++        return time.perf_counter() - t0, frames
++
++    elapsed, frames = asyncio.run(run())
++    assert 0.16 <= elapsed <= 0.32, elapsed  # 10 intervals x 20 ms = 0.2 s (the old code took ~0.4 s)
++    assert [f.pts for f in frames] == [i * SAMPLES_PER_FRAME for i in range(11)]
++    assert all(f.sample_rate == AUDIO_RATE for f in frames)
++    assert all(bytes(f.planes[0])[:SILENCE_FRAME_BYTES] == b"\x00" * SILENCE_FRAME_BYTES for f in frames)
++
++
++def test_clear_on_barge_in_removes_everything_not_yet_sent():
++    async def run():
++        t = OutgoingAudioTrack()
++        await t.push_pcm(_speech(2000) + b"\x07\x00" * 100)  # includes a partial trailing frame
++        await t.recv()
++        t.clear()
++        await t.push_pcm(b"\x09\x00" * SAMPLES_PER_FRAME)
++        nxt = await t.recv()
++        return t.queued_ms, bytes(nxt.planes[0])[:2]
++
++    queued_ms, head = asyncio.run(run())
++    assert queued_ms == 0
++    assert head == b"\x09\x00"  # no leftover audio from the interrupted reply
++
++
++def test_buffer_cap_drops_oldest_and_counts(monkeypatch):
++    monkeypatch.setattr(wr, "MAX_BUFFERED_FRAMES", 10)
++
++    async def run():
++        t = OutgoingAudioTrack()
++        await t.push_pcm(_speech(15 * FRAME_MS))
++        return len(t.frames), t.dropped_frames
++
++    kept, dropped = asyncio.run(run())
++    assert (kept, dropped) == (10, 5)
++
++
++def test_push_after_close_is_ignored():
++    async def run():
++        t = OutgoingAudioTrack()
++        await t.close()
++        await t.push_pcm(_speech(200))
++        return t.queued_ms
++
++    assert asyncio.run(run()) == 0
+diff --git a/apps/web/app/ss-nutritions/page.tsx b/apps/web/app/ss-nutritions/page.tsx
+index d9d962c..49558b2 100644
+--- a/apps/web/app/ss-nutritions/page.tsx
++++ b/apps/web/app/ss-nutritions/page.tsx
+@@ -1,5 +1,6 @@
+ "use client";
+ import {useCallback,useEffect,useMemo,useRef,useState} from "react";
++import {nextRecognitionLang} from "../../lib/voiceEndpoint";
+ import {connectCustomerToStaff} from "./webrtc";
+ 
+ const api=()=>String(process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000").replace(/\/+$/,"");
+@@ -244,6 +245,10 @@ export default function SSNutritions(){
+     const speechLangs:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
+     const browserLang=(navigator.language||"en-IN").toLowerCase();
+     recognition.lang=Object.values(speechLangs).includes(browserLang)?browserLang:(speechLangs[browserLang.slice(0,2)]||"en-IN");
++    // The recogniser language only follows the reply language when the evidence is strong. One
++    // mis-scripted "नो थैंक्स" must not flip an English caller into Hindi recognition for the rest of the call.
++    let recLang=String(recognition.lang||"en-IN").slice(0,2).toLowerCase();
++    let recLangCandidate:string|null=null;
+     setCallState("connected");
+     setCallError("");
+ 
+@@ -292,7 +297,11 @@ export default function SSNutritions(){
+           if(!rr.ok) throw new Error(answer.detail||"Voice answer failed.");
+           conversationIdRef.current=answer.conversation_id||conversationIdRef.current;
+           setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
+-          if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
++          if(answer.language){
++            const next=nextRecognitionLang(recLang,String(answer.language),text,recLangCandidate);
++            recLang=next.lang; recLangCandidate=next.candidate;
++            if(speechLangs[recLang]) recognition.lang=speechLangs[recLang];
++          }
+           if(answer.handoff_required){
+             await handoffToHuman(payload);
+           }else{
+diff --git a/apps/web/components/VoiceCallModal.tsx b/apps/web/components/VoiceCallModal.tsx
+index 9b5e68b..f977663 100644
+--- a/apps/web/components/VoiceCallModal.tsx
++++ b/apps/web/components/VoiceCallModal.tsx
+@@ -22,6 +22,7 @@
+  */
+ 
+ import { useEffect, useRef, useState } from "react";
++import { endpointDelayMs, nextRecognitionLang, downsampleToPcm16, pcm16ToBase64 } from "../lib/voiceEndpoint";
+ 
+ type Props = {
+   slug: string;
+@@ -51,7 +52,12 @@ const wsBase = () => api().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+ 
+ const SPECIALIST_ON = process.env.NEXT_PUBLIC_SPECIALIST_AI !== "off";
+-const SR_DEBOUNCE_MS = 1300;      // merge speech fragments spoken within this gap
++const SR_DEBOUNCE_MS = 1300;      // fixed wait for speech fragments; only used when NEXT_PUBLIC_VOICE_FAST_ENDPOINT=off
++// Adaptive end-of-speech: read interim results (instead of waiting for the browser to finalise, which
++// takes 1-2 s on its own) and send as soon as the sentence sounds finished. A mid-sentence fragment
++// ("may I know") still waits the old 1.3 s. Set NEXT_PUBLIC_VOICE_FAST_ENDPOINT=off to go back.
++const FAST_ENDPOINT = process.env.NEXT_PUBLIC_VOICE_FAST_ENDPOINT !== "off";
++const PLAYBACK_CUSHION_S = 0.06;  // jitter cushion when specialist audio (re)starts after silence
+ const SPECIALIST_FIRST_SPEECH_MS = 15000;
+ 
+ // A customer asking for a person must never be answered by the booking flow.
+@@ -80,20 +86,9 @@ const FEMALE_HINTS = ["female", "woman", "heera", "kalpana", "zira", "hazel", "n
+ const MALE_HINTS = ["male", "man", "ravi", "david", "mark", "george", "guy", "ryan", "daniel", "alex"];
+ 
+ function encodePcm16(input: Float32Array, inputRate: number, targetRate = 16000): string {
+-  const ratio = inputRate / targetRate;
+-  const length = Math.max(1, Math.round(input.length / ratio));
+-  const pcm = new Int16Array(length);
+-  for (let i = 0; i < length; i++) {
+-    const idx = Math.min(input.length - 1, Math.floor(i * ratio));
+-    const s = Math.max(-1, Math.min(1, input[idx]));
+-    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+-  }
+-  const bytes = new Uint8Array(pcm.buffer);
+-  let bin = "";
+-  for (let i = 0; i < bytes.length; i += 0x8000) {
+-    bin += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
+-  }
+-  return btoa(bin);
++  // Area-averaged downsampling (see lib/voiceEndpoint.ts); the old "take every Nth sample" aliased
++  // high-frequency consonant energy into the speech band and hurt recognition.
++  return pcm16ToBase64(downsampleToPcm16(input, inputRate, targetRate));
+ }
+ 
+ function decodePcm16(b64: string): Int16Array {
+@@ -230,6 +225,9 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+   const pendingRef = useRef("");
+   const debounceRef = useRef<number | null>(null);
+   const lastReplyRef = useRef("");
++  const interimRef = useRef("");
++  const langCandidateRef = useRef<string | null>(null);
++  const ttsLangRef = useRef("en");     // language of the brain's last reply (voice for speech out)
+   const repeatRef = useRef(0);
+ 
+   const go = (p: Phase) => { phaseRef.current = p; setPhase(p); };
+@@ -264,18 +262,33 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+     if (debounceRef.current) window.clearTimeout(debounceRef.current);
+     debounceRef.current = null;
+     pendingRef.current = "";
++    interimRef.current = "";
+   };
+-  const queueUtterance = (text: string) => {
+-    const t = text.trim();
+-    if (!t) return;
+-    pendingRef.current = (pendingRef.current + " " + t).trim();
++  // (Re)arm the "caller has finished" timer. Every new speech result restarts it, so it fires a
++  // short while after the LAST word; how short depends on whether the sentence sounds finished.
++  const scheduleFlush = () => {
++    const combined = (pendingRef.current + " " + interimRef.current).trim();
++    if (!combined) return;
+     if (debounceRef.current) window.clearTimeout(debounceRef.current);
++    const delay = FAST_ENDPOINT ? endpointDelayMs(combined) : SR_DEBOUNCE_MS;
+     debounceRef.current = window.setTimeout(() => {
+-      const said = pendingRef.current;
++      const said = (pendingRef.current + " " + interimRef.current).trim();
+       pendingRef.current = "";
++      interimRef.current = "";
+       debounceRef.current = null;
+       void handleUtterance(said);
+-    }, SR_DEBOUNCE_MS);
++    }, delay);
++  };
++  const queueUtterance = (text: string) => {   // a finalised fragment
++    const t = text.trim();
++    if (!t) return;
++    pendingRef.current = (pendingRef.current + " " + t).trim();
++    interimRef.current = "";
++    scheduleFlush();
++  };
++  const queueInterim = (text: string) => {     // not finalised yet; still counts as "caller is talking"
++    interimRef.current = text.trim();
++    scheduleFlush();
+   };
+ 
+   /* ---------- speech out (browser) ---------- */
+@@ -333,13 +346,20 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+     if (!recRef.current) {
+       const rec = new SR();
+       rec.continuous = true;
+-      rec.interimResults = false;
++      rec.interimResults = FAST_ENDPOINT;
+       rec.maxAlternatives = 1;
+       rec.onresult = (ev: any) => {
++        // After we have sent an utterance (busy) or while the assistant talks, late results from
++        // the recogniser's own finalisation of the same speech must not be sent a second time.
++        if (busyRef.current || speakingRef.current) return;
++        let interim = "";
+         for (let i = ev.resultIndex; i < ev.results.length; i++) {
+           const r = ev.results[i];
+-          if (r.isFinal) queueUtterance(String(r[0]?.transcript || ""));
++          const text = String(r[0]?.transcript || "");
++          if (r.isFinal) queueUtterance(text);
++          else interim += text;
+         }
++        if (interim.trim()) queueInterim(interim);
+       };
+       rec.onend = () => { window.setTimeout(startListening, 250); };
+       rec.onerror = (ev: any) => {
+@@ -416,7 +436,15 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+       if (!res.ok) throw new Error(data.detail || "Voice answer failed.");
+       failsRef.current = 0;
+       convRef.current = data.conversation_id || convRef.current;
+-      if (data.language) langRef.current = String(data.language);
++      if (data.language) {
++        // Speech OUT follows the language of the reply immediately; the recogniser only switches
++        // when the evidence is strong (see nextRecognitionLang), otherwise one mis-scripted
++        // "नो थैंक्स" flips it to Hindi and every later English sentence is mis-heard.
++        ttsLangRef.current = String(data.language);
++        const next = nextRecognitionLang(langRef.current, String(data.language), said, langCandidateRef.current);
++        langRef.current = next.lang;
++        langCandidateRef.current = next.candidate;
++      }
+       const reply = String(data.reply || "").trim();
+ 
+       // The brain's "we'll call you back" text is not shown: the ladder decides what happens next.
+@@ -439,7 +467,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+ 
+       if (reply) {
+         pushLine("ai", reply);
+-        await speak(reply, langRef.current);
++        await speak(reply, ttsLangRef.current);
+       }
+     } catch {
+       failsRef.current += 1;
+@@ -501,7 +529,9 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+     src.connect(ctx.destination);
+     src.onended = () => playingRef.current.delete(src);
+     playingRef.current.add(src);
+-    nextPlayRef.current = Math.max(nextPlayRef.current, ctx.currentTime);
++    // If the queue has drained (start of a reply, or the network stalled), restart slightly in the
++    // future so the next chunk can arrive before playback reaches it; avoids clicks and gaps.
++    if (nextPlayRef.current < ctx.currentTime + 0.01) nextPlayRef.current = ctx.currentTime + PLAYBACK_CUSHION_S;
+     src.start(nextPlayRef.current);
+     nextPlayRef.current += buf.duration;
+   };
+@@ -513,7 +543,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
+     audioCtxRef.current = ctx;
+     await ctx.resume();
+     const source = ctx.createMediaStreamSource(stream);
+-    const proc = ctx.createScriptProcessor(4096, 1, 1);
++    const proc = ctx.createScriptProcessor(2048, 1, 1);
+     proc.onaudioprocess = (ev) => {
+       if (mutedRef.current || ws.readyState !== WebSocket.OPEN) return;
+       ws.send(JSON.stringify({ type: "audio", data: encodePcm16(ev.inputBuffer.getChannelData(0), ctx.sampleRate, 16000) }));
+@@ -653,9 +683,9 @@ ${recent}`,
+     setError("");
+     if (!SPECIALIST_ON) { await humanHandoff(); return; }
+     go("specialist");
+-    const hold = HOLD_LINE[langRef.current] || HOLD_LINE.en;
++    const hold = HOLD_LINE[ttsLangRef.current] || HOLD_LINE.en;
+     pushLine("system", hold);
+-    await speak(hold, langRef.current);
++    await speak(hold, ttsLangRef.current);
+     if (!activeRef.current) return;
+     try {
+       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+@@ -677,7 +707,7 @@ ${recent}`,
+     go("human_wait");
+     setError("");
+     pushLine("system", "Connecting you to our team…");
+-    void speak("Connecting you to our team. Please hold.", langRef.current);
++    void speak("Connecting you to our team. Please hold.", ttsLangRef.current);
+ 
+     const callId = callRef.current?.call_id;
+     if (!callId) { await requestCallback("No active call."); return; }
+diff --git a/apps/web/lib/voiceEndpoint.test.mts b/apps/web/lib/voiceEndpoint.test.mts
+new file mode 100644
+index 0000000..3213212
+--- /dev/null
++++ b/apps/web/lib/voiceEndpoint.test.mts
+@@ -0,0 +1,88 @@
++// Run: node --experimental-strip-types --test lib/voiceEndpoint.test.mts
++import test from "node:test";
++import assert from "node:assert/strict";
++import {
++  ENDPOINT_ANSWER_MS,
++  ENDPOINT_COMPLETE_MS,
++  ENDPOINT_INCOMPLETE_MS,
++  ENDPOINT_OTHER_SCRIPT_MS,
++  ENDPOINT_SINGLE_WORD_MS,
++  downsampleToPcm16,
++  endpointDelayMs,
++  nextRecognitionLang,
++} from "./voiceEndpoint.ts";
++
++test("complete sentences are sent quickly, mid-sentence fragments wait the old 1.3 s", () => {
++  assert.equal(endpointDelayMs("what are your timings"), ENDPOINT_COMPLETE_MS);
++  assert.equal(endpointDelayMs("may I know the timings"), ENDPOINT_COMPLETE_MS);
++  assert.equal(endpointDelayMs("may I know"), ENDPOINT_INCOMPLETE_MS);
++  assert.equal(endpointDelayMs("I want to book an"), ENDPOINT_INCOMPLETE_MS);
++  assert.equal(endpointDelayMs("and"), ENDPOINT_INCOMPLETE_MS);
++  assert.equal(endpointDelayMs(""), ENDPOINT_INCOMPLETE_MS);
++});
++
++test("one-word answers, times and punctuation end quickly", () => {
++  for (const w of ["yes", "No", "tomorrow", "9:30", "confirm", "Monday", "ok"]) {
++    assert.equal(endpointDelayMs(w), ENDPOINT_ANSWER_MS, w);
++  }
++  assert.equal(endpointDelayMs("No thanks."), ENDPOINT_ANSWER_MS);
++  assert.equal(endpointDelayMs("what is the fee?"), ENDPOINT_ANSWER_MS);
++  assert.equal(endpointDelayMs("manoj"), ENDPOINT_SINGLE_WORD_MS);
++});
++
++test("non-Latin scripts get a conservative fixed delay", () => {
++  assert.equal(endpointDelayMs("नो थैंक्स"), ENDPOINT_OTHER_SCRIPT_MS);
++  assert.equal(endpointDelayMs("నో థాంక్స్"), ENDPOINT_OTHER_SCRIPT_MS);
++});
++
++test("every 'sounds finished' delay is shorter than the old fixed 1300 ms", () => {
++  for (const d of [ENDPOINT_ANSWER_MS, ENDPOINT_COMPLETE_MS, ENDPOINT_SINGLE_WORD_MS, ENDPOINT_OTHER_SCRIPT_MS]) {
++    assert.ok(d < ENDPOINT_INCOMPLETE_MS);
++  }
++});
++
++test("a single short Devanagari/Telugu result does not switch the recogniser language", () => {
++  const first = nextRecognitionLang("en", "hi", "नो थैंक्स", null);
++  assert.deepEqual(first, { lang: "en", candidate: "hi" });
++  // the same language twice in a row is accepted (a genuine Hindi speaker)
++  assert.deepEqual(nextRecognitionLang("en", "hi", "हाँ जी", first.candidate), { lang: "hi", candidate: null });
++  // a long utterance switches immediately
++  assert.equal(nextRecognitionLang("en", "te", "నాకు రేపు అపాయింట్‌మెంట్ కావాలి", null).lang, "te");
++});
++
++test("recogniser returns to English from 2+ Latin words, not from one", () => {
++  assert.equal(nextRecognitionLang("hi", "en", "no thanks", null).lang, "en");
++  assert.equal(nextRecognitionLang("hi", "en", "yes", null).lang, "hi");
++  assert.deepEqual(nextRecognitionLang("en", "en", "hello there", "hi"), { lang: "en", candidate: null });
++  assert.deepEqual(nextRecognitionLang("en", undefined, "hello there", null), { lang: "en", candidate: null });
++});
++
++const rms = (a: Int16Array) => Math.sqrt(a.reduce((s, v) => s + (v / 32768) ** 2, 0) / a.length);
++const tone = (hz: number, rate: number, seconds: number) =>
++  Float32Array.from({ length: Math.floor(rate * seconds) }, (_, i) => 0.5 * Math.sin((2 * Math.PI * hz * i) / rate));
++
++test("downsample 48k -> 16k keeps length and keeps in-band speech", () => {
++  const out = downsampleToPcm16(tone(440, 48000, 1), 48000);
++  assert.equal(out.length, 16000);
++  assert.ok(rms(out) > 0.3 && rms(out) < 0.4); // 0.5 amplitude sine -> RMS ~0.354
++});
++
++test("downsample 44.1k -> 16k handles the fractional ratio", () => {
++  const out = downsampleToPcm16(tone(440, 44100, 1), 44100);
++  assert.ok(Math.abs(out.length - 16000) <= 1);
++  assert.ok(rms(out) > 0.3 && rms(out) < 0.4);
++});
++
++test("out-of-band energy is attenuated instead of aliasing at full strength", () => {
++  // a 12 kHz tone is above the 8 kHz Nyquist limit of 16 kHz audio.
++  const src = tone(12000, 48000, 1);
++  const naive = Int16Array.from({ length: 16000 }, (_, i) => src[i * 3] * 32767); // the old "pick every 3rd sample"
++  const averaged = downsampleToPcm16(src, 48000);
++  assert.ok(rms(averaged) < rms(naive) * 0.6, `averaged ${rms(averaged)} vs naive ${rms(naive)}`);
++});
++
++test("silence and clipping stay within range", () => {
++  assert.ok(downsampleToPcm16(new Float32Array(480), 48000).every((v) => v === 0));
++  const loud = downsampleToPcm16(Float32Array.from({ length: 480 }, () => 5), 48000);
++  assert.ok(loud.every((v) => v === 32767));
++});
+diff --git a/apps/web/lib/voiceEndpoint.ts b/apps/web/lib/voiceEndpoint.ts
+new file mode 100644
+index 0000000..722847d
+--- /dev/null
++++ b/apps/web/lib/voiceEndpoint.ts
+@@ -0,0 +1,148 @@
++/**
++ * Pure helpers for the browser-side voice call (VoiceCallModal).
++ *
++ * Kept free of React / DOM so they can be unit-tested with plain Node:
++ *   node --experimental-strip-types --test lib/voiceEndpoint.test.mts
++ */
++
++/* ------------------------------------------------------------------ */
++/* 1. Adaptive end-of-utterance ("endpointing")                        */
++/* ------------------------------------------------------------------ */
++
++/** The fixed wait the modal used before (kept as the "caller is mid-sentence" delay). */
++export const ENDPOINT_INCOMPLETE_MS = 1300;
++/** Utterance ends in punctuation or looks like a finished sentence. */
++export const ENDPOINT_COMPLETE_MS = 600;
++/** Utterance is a known one-word answer ("yes", "tomorrow", "9:30" ...). */
++export const ENDPOINT_ANSWER_MS = 450;
++/** A single unfamiliar word: wait a little longer in case more follows. */
++export const ENDPOINT_SINGLE_WORD_MS = 900;
++/** Non-Latin scripts: no English heuristics apply, stay conservative. */
++export const ENDPOINT_OTHER_SCRIPT_MS = 850;
++
++/** Words that, at the END of an utterance, mean the caller is almost certainly not finished. */
++const DANGLING = new Set([
++  "a", "an", "the", "and", "or", "but", "so", "if", "because", "to", "for", "of", "in", "on", "at",
++  "with", "from", "about", "by", "my", "your", "our", "their", "his", "her", "its", "is", "are", "was",
++  "were", "can", "could", "will", "would", "may", "might", "should", "do", "does", "did", "i", "i'd",
++  "i'm", "i'll", "we", "you", "that", "this", "what", "when", "where", "how", "who", "which", "than",
++  "know", "tell", "want", "wanna", "like", "need", "book", "get", "give", "check", "see", "ask", "find",
++  "make", "take", "have", "has", "let", "help",
++]);
++
++/** One-word replies that are complete on their own. */
++const SHORT_ANSWERS = new Set([
++  "yes", "no", "yeah", "yep", "nope", "ok", "okay", "sure", "thanks", "thank", "hello", "hi", "hey",
++  "bye", "goodbye", "confirm", "confirmed", "cancel", "correct", "right", "done", "stop", "repeat",
++  "please", "tomorrow", "today", "tonight", "morning", "afternoon", "evening",
++  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
++]);
++
++const isMostlyLatin = (s: string) => {
++  const letters = s.match(/\p{L}/gu) || [];
++  if (!letters.length) return true; // digits only, e.g. "9:30"
++  const latin = letters.filter((c) => /[A-Za-z]/.test(c)).length;
++  return latin / letters.length >= 0.8;
++};
++
++/**
++ * How long to wait after the LAST speech result before treating the utterance as finished.
++ * Short when the sentence sounds complete, long when it ends on a dangling word.
++ */
++export function endpointDelayMs(text: string): number {
++  const t = (text || "").trim();
++  if (!t) return ENDPOINT_INCOMPLETE_MS;
++  if (/[.?!।]$/.test(t)) return ENDPOINT_ANSWER_MS;
++  if (!isMostlyLatin(t)) return ENDPOINT_OTHER_SCRIPT_MS;
++
++  const words = t.split(/\s+/);
++  const last = words[words.length - 1].toLowerCase().replace(/[^\p{L}\p{N}'’:]/gu, "");
++  if (DANGLING.has(last)) return ENDPOINT_INCOMPLETE_MS;
++  if (words.length === 1) {
++    return SHORT_ANSWERS.has(last) || /\d/.test(last) ? ENDPOINT_ANSWER_MS : ENDPOINT_SINGLE_WORD_MS;
++  }
++  return ENDPOINT_COMPLETE_MS;
++}
++
++/* ------------------------------------------------------------------ */
++/* 2. Sticky recognition language                                      */
++/* ------------------------------------------------------------------ */
++
++export type LangDecision = { lang: string; candidate: string | null };
++
++/**
++ * Decide which language the browser recogniser should listen in next.
++ *
++ * Why this exists: when the recogniser hears an Indian-accented "no thanks" it can print it in
++ * Devanagari/Telugu script. The server then reports "hi"/"te", the recogniser is switched to that
++ * language, and every following English sentence is also printed in that script. A single short
++ * utterance must therefore not be enough to switch.
++ *
++ *  - Back to English is accepted from 2+ words (Latin text is reliable evidence).
++ *  - A different language needs 4+ words, or the same language twice in a row.
++ */
++export function nextRecognitionLang(
++  current: string,
++  detected: string | undefined | null,
++  said: string,
++  previousCandidate: string | null,
++): LangDecision {
++  const det = (detected || "").trim().toLowerCase();
++  if (!det || det === current) return { lang: current, candidate: null };
++
++  const wordCount = (said || "").trim().split(/\s+/).filter(Boolean).length;
++  if (det === "en") {
++    return wordCount >= 2 ? { lang: "en", candidate: null } : { lang: current, candidate: null };
++  }
++  if (wordCount >= 4 || previousCandidate === det) return { lang: det, candidate: null };
++  return { lang: current, candidate: det };
++}
++
++/* ------------------------------------------------------------------ */
++/* 3. Clean downsampling for the specialist (Gemini) microphone feed   */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Convert float mic samples at `inputRate` to 16-bit PCM at `targetRate` by area-averaging.
++ * The old code picked every Nth sample (no low-pass), which folds high frequencies back into the
++ * speech band (aliasing) and measurably hurts speech recognition. Averaging each output sample over
++ * the input span it covers is a cheap, effective anti-alias filter.
++ */
++export function downsampleToPcm16(input: Float32Array, inputRate: number, targetRate = 16000): Int16Array {
++  const ratio = inputRate / targetRate;
++  const outLen = Math.max(1, ratio <= 1 ? input.length : Math.floor(input.length / ratio));
++  const out = new Int16Array(outLen);
++  const clamp = (v: number) => (v < -1 ? -1 : v > 1 ? 1 : v);
++
++  for (let i = 0; i < outLen; i++) {
++    let sample: number;
++    if (ratio <= 1) {
++      sample = input[Math.min(input.length - 1, Math.floor(i * ratio))] || 0;
++    } else {
++      const start = i * ratio;
++      const end = Math.min(input.length, start + ratio);
++      let sum = 0;
++      let weight = 0;
++      for (let j = Math.floor(start); j < Math.ceil(end); j++) {
++        const w = Math.min(j + 1, end) - Math.max(j, start); // overlap of [j, j+1) with [start, end)
++        if (w <= 0) continue;
++        sum += input[j] * w;
++        weight += w;
++      }
++      sample = weight > 0 ? sum / weight : 0;
++    }
++    const s = clamp(sample);
++    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
++  }
++  return out;
++}
++
++/** Base64-encode 16-bit PCM for the specialist WebSocket. */
++export function pcm16ToBase64(pcm: Int16Array): string {
++  const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
++  let bin = "";
++  for (let i = 0; i < bytes.length; i += 0x8000) {
++    bin += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
++  }
++  return btoa(bin);
++}
