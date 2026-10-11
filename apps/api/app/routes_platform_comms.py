@@ -565,17 +565,27 @@ async def platform_communications_campaign(
             "phone": recipient.phone, "email": str(recipient.email) if recipient.email else None,
         })
     from .notifications import send_email, send_platform_whatsapp
+    from .models_email import PlatformContactPreference
+    import re
     results = []
     for target in targets:
         result = {"tenant_id": target["tenant_id"], "tenant_name": target["name"], "channels": {}}
+        phone_norm = re.sub(r"\D", "", str(target["phone"] or ""))
+        email_norm = str(target["email"] or "").strip().lower()
+        phone_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
+        email_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm)) if email_norm else None
         if "whatsapp" in channels:
             if not target["phone"]:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "no_phone"}
+            elif phone_pref and phone_pref.whatsapp_opt_out:
+                result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
             else:
                 result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], body)
         if "email" in channels:
             if not target["email"]:
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
+            elif email_pref and email_pref.email_opt_out:
+                result["channels"]["email"] = {"sent": False, "status": "opted_out"}
             else:
                 result["channels"]["email"] = await send_email(
                     target["email"], payload.subject.strip() or "AI Growth OS", body
