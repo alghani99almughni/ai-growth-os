@@ -85,6 +85,44 @@ export default function MessagesPage() {
 
   return (
     <div>
+      <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
+        <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform Communications</h2>
+        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>Send outreach using AI Growth OS platform-owned WhatsApp and email credentials, not tenant channel credentials.</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
+          <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Select tenant recipients
+            <select multiple value={campaignTenants} onChange={e => setCampaignTenants(Array.from(e.target.selectedOptions, o => o.value))} style={{ ...inputStyle, minHeight: 130 }}>
+              {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}{t.email ? " · " + t.email : ""}</option>)}
+            </select>
+            <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Use Ctrl-click to select multiple tenants.</span>
+          </label>
+          <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
+            <div style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Delivery channels</div>
+            {["whatsapp", "email"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
+              <input type="checkbox" checked={campaignChannels.includes(channel)} onChange={e => setCampaignChannels(prev => e.target.checked ? [...prev, channel] : prev.filter(x => x !== channel))} />
+              {channel === "whatsapp" ? "Platform WhatsApp" : "Platform email"}
+            </label>)}
+            <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Email subject
+              <input value={campaignSubject} onChange={e => setCampaignSubject(e.target.value)} style={inputStyle} />
+            </label>
+          </div>
+        </div>
+        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message
+          <textarea value={campaignBody} onChange={e => setCampaignBody(e.target.value)} rows={4} maxLength={4000} placeholder="Write the message…" style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
+        </label>
+        <label style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, fontSize: 12, lineHeight: 1.5, color: "#4b5563" }}>
+          <input type="checkbox" checked={consentConfirmed} onChange={e => setConsentConfirmed(e.target.checked)} style={{ marginTop: 2 }} />
+          I confirm every selected recipient opted in and required opt-out rules are respected.
+        </label>
+        <button onClick={sendCampaign} disabled={campaignBusy} style={{ marginTop: 14, background: "#4f46e5", color: "#fff", border: 0, padding: "11px 18px", borderRadius: 9, fontWeight: 700, cursor: campaignBusy ? "wait" : "pointer" }}>
+          {campaignBusy ? "Sending…" : "Send campaign"}
+        </button>
+        {campaignResult && <div style={{ marginTop: 14, borderTop: "1px solid #edf0f5", paddingTop: 12, fontSize: 12, color: "#4b5563" }}>
+          <strong>Delivery results</strong>
+          {campaignResult.results?.map((r: any) => <div key={r.tenant_id} style={{ padding: "8px 0", borderBottom: "1px solid #f1f4f8" }}>
+            <strong>{r.tenant_name}</strong> — {Object.entries(r.channels || {}).map(([c, v]: any) => c + ": " + (v.status || (v.sent ? "sent" : "failed"))).join(" · ")}
+          </div>)}
+        </div>}
+      </section>
       <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>Platform Messages</h1>
