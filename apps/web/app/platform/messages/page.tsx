@@ -12,6 +12,13 @@ export default function MessagesPage() {
   const [showCompose, setShowCompose] = useState(false);
   const [form, setForm] = useState({ tenant_id: "", subject: "", body: "", send_email: true });
   const [sending, setSending] = useState(false);
+  const [campaignTenants, setCampaignTenants] = useState<string[]>([]);
+  const [campaignChannels, setCampaignChannels] = useState<string[]>(["whatsapp"]);
+  const [campaignSubject, setCampaignSubject] = useState("AI Growth OS update");
+  const [campaignBody, setCampaignBody] = useState("");
+  const [consentConfirmed, setConsentConfirmed] = useState(false);
+  const [campaignBusy, setCampaignBusy] = useState(false);
+  const [campaignResult, setCampaignResult] = useState<any>(null);
 
   function headers() {
     return {
@@ -36,6 +43,25 @@ export default function MessagesPage() {
   }
 
   useEffect(() => { void load(); }, []);
+
+  async function sendCampaign() {
+    if (!campaignTenants.length) { setStatus("Select at least one tenant."); return; }
+    if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
+    if (!campaignBody.trim()) { setStatus("Enter a campaign message."); return; }
+    if (!consentConfirmed) { setStatus("Confirm opt-in/consent for every selected recipient."); return; }
+    setCampaignBusy(true); setStatus(""); setCampaignResult(null);
+    try {
+      const r = await fetch(api() + "/api/v1/platform/communications/campaign", {
+        method: "POST", headers: headers(),
+        body: JSON.stringify({ tenant_ids: campaignTenants, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed }),
+      });
+      const x = await r.json();
+      if (!r.ok) throw new Error(x?.detail || "Campaign failed");
+      setCampaignResult(x);
+      setStatus("Campaign processed: " + x.sent + " successful channel deliveries across " + x.selected + " selected tenants.");
+    } catch (e: any) { setStatus(e.message || "Campaign failed"); }
+    setCampaignBusy(false);
+  }
 
   async function send() {
     if (!form.tenant_id || !form.subject.trim()) { setStatus("Pick a tenant and enter a subject"); return; }
