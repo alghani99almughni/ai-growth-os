@@ -759,7 +759,9 @@ def platform_whatsapp_inbox(
 async def platform_openwa_webhook(request: Request, db: Session = Depends(_db)):
     import json
     import uuid
-    from .models_email import PlatformWhatsAppMessage
+    import re
+    from datetime import datetime
+    from .models_email import PlatformWhatsAppMessage, PlatformContactPreference
     secret = settings.openwa_webhook_secret or ""
     if not secret:
         raise HTTPException(503, "Platform OpenWA webhook secret is not configured")
@@ -786,6 +788,17 @@ async def platform_openwa_webhook(request: Request, db: Session = Depends(_db)):
         existing = db.scalar(select(PlatformWhatsAppMessage).where(PlatformWhatsAppMessage.provider_message_id == provider_id))
         if existing:
             return {"ok": True, "duplicate": True}
+    phone_norm = re.sub(r"\D", "", phone)
+    command = body.strip().lower()
+    pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
+    opt_out = command in {"stop", "unsubscribe", "cancel", "end", "quit"}
+    opt_in = command in {"start", "unstop", "subscribe"}
+    if opt_out or opt_in:
+        if not pref:
+            pref = PlatformContactPreference(id=str(uuid.uuid4()), phone_norm=phone_norm)
+            db.add(pref)
+        pref.whatsapp_opt_out = bool(opt_out)
+        pref.updated_at = datetime.utcnow()
     contact = data.get("contact") or {}
     row = PlatformWhatsAppMessage(
         id=str(uuid.uuid4()), provider_message_id=provider_id, phone=phone,
@@ -794,6 +807,18 @@ async def platform_openwa_webhook(request: Request, db: Session = Depends(_db)):
     )
     db.add(row)
     db.commit()
+    if opt_out:
+        try:
+            from .notifications import send_platform_whatsapp
+            await send_platform_whatsapp(phone, "You are opted out of AI Growth OS WhatsApp campaigns. Reply START if you want to opt in again.")
+        except Exception:
+            pass
+    elif opt_in:
+        try:
+            from .notifications import send_platform_whatsapp
+            await send_platform_whatsapp(phone, "You are opted in to AI Growth OS WhatsApp updates.")
+        except Exception:
+            pass
     return {"ok": True, "message_id": row.id}
 
 
