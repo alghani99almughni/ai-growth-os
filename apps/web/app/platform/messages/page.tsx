@@ -23,6 +23,10 @@ export default function MessagesPage() {
   const [emailInboxLoading, setEmailInboxLoading] = useState(false);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replySending, setReplySending] = useState<string>("");
+  const [whatsappInbox, setWhatsappInbox] = useState<any>({ items: [], configured: false });
+  const [whatsappInboxLoading, setWhatsappInboxLoading] = useState(false);
+  const [whatsappReplyDrafts, setWhatsappReplyDrafts] = useState<Record<string, string>>({});
+  const [whatsappReplySending, setWhatsappReplySending] = useState<string>("");
 
   function headers() {
     return {
@@ -47,6 +51,35 @@ export default function MessagesPage() {
   }
 
   useEffect(() => { void load(); }, []);
+
+  async function loadWhatsAppInbox() {
+    setWhatsappInboxLoading(true);
+    try {
+      const r = await fetch(api() + "/api/v1/platform/communications/whatsapp/inbox", { headers: headers(), cache: "no-store" });
+      const x = await r.json();
+      if (!r.ok) throw new Error(x?.detail || "Unable to load platform WhatsApp inbox");
+      setWhatsappInbox(x);
+      if (!x.configured || !x.webhook_secret_configured) setStatus("Platform WhatsApp inbox needs platform OpenWA credentials and webhook setup.");
+    } catch (e: any) { setStatus(e.message || "Unable to load platform WhatsApp inbox"); }
+    setWhatsappInboxLoading(false);
+  }
+
+  async function replyToWhatsApp(id: string) {
+    const body = (whatsappReplyDrafts[id] || "").trim();
+    if (!body) { setStatus("Enter a WhatsApp reply first."); return; }
+    setWhatsappReplySending(id); setStatus("");
+    try {
+      const r = await fetch(api() + "/api/v1/platform/communications/whatsapp/inbox/" + encodeURIComponent(id) + "/reply", {
+        method: "POST", headers: headers(), body: JSON.stringify({ body }),
+      });
+      const x = await r.json();
+      if (!r.ok) throw new Error(x?.detail || "WhatsApp reply failed");
+      setWhatsappReplyDrafts(prev => ({ ...prev, [id]: "" }));
+      setStatus("WhatsApp reply sent to " + x.phone);
+      await loadWhatsAppInbox();
+    } catch (e: any) { setStatus(e.message || "WhatsApp reply failed"); }
+    setWhatsappReplySending("");
+  }
 
   async function loadEmailInbox() {
     setEmailInboxLoading(true);
@@ -156,6 +189,32 @@ export default function MessagesPage() {
             <strong>{r.tenant_name}</strong> — {Object.entries(r.channels || {}).map(([c, v]: any) => c + ": " + (v.status || (v.sent ? "sent" : "failed"))).join(" · ")}
           </div>)}
         </div>}
+      </section>
+      <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform WhatsApp Inbox</h2>
+            <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>Receive and reply to messages sent to the platform-owned WhatsApp number.</p>
+          </div>
+          <button onClick={loadWhatsAppInbox} disabled={whatsappInboxLoading} style={{ background: "#fff", border: "1px solid #d7dce5", borderRadius: 9, padding: "9px 14px", cursor: whatsappInboxLoading ? "wait" : "pointer", fontWeight: 600 }}>
+            {whatsappInboxLoading ? "Loading…" : "Refresh WhatsApp inbox"}
+          </button>
+        </div>
+        <p style={{ fontSize: 12, color: "#4b5563" }}>Webhook URL: <code>{whatsappInbox.webhook_url || (api() + "/api/v1/webhooks/platform/openwa")}</code></p>
+        {!whatsappInbox.configured || !whatsappInbox.webhook_secret_configured ? <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>Configure platform-owned OpenWA credentials and OPENWA_WEBHOOK_SECRET in Render, then set this webhook URL on the platform OpenWA session. Incoming messages will appear here after the provider sends webhook events.</p> : null}
+        {(whatsappInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No platform WhatsApp messages loaded yet.</p> :
+          whatsappInbox.items.map((m: any) => <div key={m.id} style={{ borderTop: "1px solid #edf0f5", marginTop: 14, paddingTop: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <strong style={{ color: "#17213a" }}>{m.contact_name || m.phone}</strong>
+              <span style={{ color: "#75839a", fontSize: 11 }}>{m.created_at ? new Date(m.created_at).toLocaleString() : ""} · {m.direction} · {m.status}</span>
+            </div>
+            <div style={{ color: "#4b5563", fontSize: 12, margin: "5px 0" }}>{m.phone}</div>
+            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "#4b5563", background: "#fafbfd", borderRadius: 8, padding: 12 }}>{m.body}</pre>
+            {m.direction === "inbound" && m.status !== "replied" && <div style={{ display: "grid", gap: 8 }}>
+              <textarea value={whatsappReplyDrafts[m.id] || ""} onChange={e => setWhatsappReplyDrafts(prev => ({ ...prev, [m.id]: e.target.value }))} rows={2} placeholder={"Reply to " + m.phone} style={{ ...inputStyle, fontFamily: "inherit" }} />
+              <button onClick={() => replyToWhatsApp(m.id)} disabled={whatsappReplySending === m.id} style={{ justifySelf: "start", background: "#12805c", color: "#fff", border: 0, padding: "9px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>{whatsappReplySending === m.id ? "Sending…" : "Reply on WhatsApp"}</button>
+            </div>}
+          </div>)}
       </section>
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
