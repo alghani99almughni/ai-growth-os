@@ -88,3 +88,17 @@ class PlatformEmailMessage(Base):
     reply_text = Column(Text, nullable=True)
     status = Column(String, nullable=False, default="unread", index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class PlatformWhatsAppMessage(Base):
+    """Inbound/outbound conversation history for the platform-owned WhatsApp line."""
+    __tablename__ = "platform_whatsapp_messages"
+
+    id = Column(String, primary_key=True)
+    provider_message_id = Column(String, nullable=True, unique=True, index=True)
+    phone = Column(String, nullable=False, index=True)
+    contact_name = Column(String, nullable=True)
+    body = Column(Text, nullable=False, default="")
+    direction = Column(String, nullable=False, default="inbound", index=True)
+    status = Column(String, nullable=False, default="received", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
