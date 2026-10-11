@@ -38,6 +38,7 @@ export default function NewTenantPage() {
         const firstCategory = entries[0]?.category || "";
         setCategory(firstCategory);
         setCatalogEntryId(entries[0]?.id || "");
+        if (entries[0]) setIndustry(inferTemplate(entries[0]));
       })
       .catch(e => setErr(e.message || "Could not load active industry categories."))
       .finally(() => setCatalogLoading(false));
@@ -46,9 +47,30 @@ export default function NewTenantPage() {
   const categories = useMemo(() => Array.from(new Set(catalog.filter(x => x.is_active).map(x => x.category))), [catalog]);
   const subcategories = useMemo(() => catalog.filter(x => x.is_active && x.category === category).sort((a,b) => a.sort_order-b.sort_order || a.business_type.localeCompare(b.business_type)), [catalog, category]);
 
+  function inferTemplate(entry?: CatalogEntry) {
+    const text = ((entry?.category || "") + " " + (entry?.business_type || "")).toLowerCase();
+    if (/restaurant|cafe|food|dining|bakery|cater/.test(text)) return "restaurant";
+    if (/hotel|hospitality|resort|guest house|lodge/.test(text)) return "hotel";
+    if (/salon|beauty|barber|spa/.test(text)) return /spa|wellness/.test(text) ? "wellness" : "salon";
+    if (/dental|dentist|orthodont/.test(text)) return "dental";
+    if (/gym|fitness|sports|trainer/.test(text)) return "gym";
+    if (/real estate|property|realtor|housing|builder/.test(text)) return "real-estate";
+    if (/education|school|college|university|tuition|training|coaching|daycare/.test(text)) return "education";
+    if (/doctor|clinic|hospital|medical|healthcare|physio|pharmacy|nutrition|nutri|wellness|therapy/.test(text)) return /nutrition|nutri|wellness|therapy/.test(text) ? "wellness" : "health";
+    return "wellness";
+  }
+
   function changeCategory(value: string) {
     setCategory(value);
-    setCatalogEntryId(catalog.find(x => x.is_active && x.category === value)?.id || "");
+    const next = catalog.find(x => x.is_active && x.category === value);
+    setCatalogEntryId(next?.id || "");
+    if (next) setIndustry(inferTemplate(next));
+  }
+
+  function changeSubcategory(id: string) {
+    setCatalogEntryId(id);
+    const selected = catalog.find(x => x.id === id && x.is_active);
+    if (selected) setIndustry(inferTemplate(selected));
   }
 
   const submit = async () => {
@@ -95,13 +117,13 @@ export default function NewTenantPage() {
         </select>
       </Field>
       <Field label="Business type / subcategory">
-        <select value={catalogEntryId} disabled={catalogLoading || subcategories.length===0} onChange={e=>setCatalogEntryId(e.target.value)} style={inp}>
+        <select value={catalogEntryId} disabled={catalogLoading || subcategories.length===0} onChange={e=>changeSubcategory(e.target.value)} style={inp}>
           {subcategories.map(x=><option key={x.id} value={x.id}>{x.business_type}</option>)}
         </select>
         {catalogLoading && <small>Loading active catalogue…</small>}
         {!catalogLoading && categories.length===0 && <small>No active catalogue entries are available. Add one in Industry catalogue.</small>}
       </Field>
-      <Field label="AI starter template">
+      <Field label="AI starter template (auto-mapped from subcategory)">
         <select value={industry} onChange={e=>setIndustry(e.target.value)} style={inp}>{STARTER_TEMPLATES.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}</select>
       </Field>
       <Field label="Business name"><input value={businessName} onChange={e=>setBusinessName(e.target.value)} placeholder="Business name" style={inp}/></Field>
