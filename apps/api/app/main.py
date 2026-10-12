@@ -2158,6 +2158,8 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
         tool_declarations.append({"name":"check_availability","description":"Check the owned appointment calendar for a specific calendar date and optional time. ALWAYS use this before saying a requested appointment slot is available. The date must be YYYY-MM-DD in the tenant timezone. If service_id is omitted, use the first active service.","parameters":{"type":"OBJECT","properties":{"date":{"type":"STRING"},"time":{"type":"STRING"},"service_id":{"type":"STRING"},"staff_id":{"type":"STRING"}},"required":["date"]}})
         tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact calendar date, time and service. Never call this merely because the customer supplied details. The server performs a final availability check.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
     tool_declarations.append({"name":"request_human_handoff","description":"Request a real human executive when the customer explicitly asks for a person, when the requested issue cannot be resolved from approved business knowledge/tools, or when tenant policy requires human assistance. Do not use this for ordinary FAQs, missing booking details, or simple acknowledgements.","parameters":{"type":"OBJECT","properties":{"reason":{"type":"STRING"},"department":{"type":"STRING"}},"required":["reason"]}})
+    if _feature_config(db,tenant.id).get("security_visitor_management",False):
+        tool_declarations.append({"name":"request_visitor_access","description":"Create a visitor-access request only when the customer explicitly asks to arrange visitor entry. This always creates a PENDING request. Never say entry is approved; a human security team must approve it.","parameters":{"type":"OBJECT","properties":{"visitor_name":{"type":"STRING"},"visitor_mobile":{"type":"STRING"},"purpose":{"type":"STRING"},"destination":{"type":"STRING"},"vehicle_number":{"type":"STRING"}},"required":["visitor_name","purpose","destination"]}})
     providers=[]
     # Prefer the tenant's connected realtime-capable AI credential so public voice
     # works with the same per-tenant integration model used by the admin dashboard.
@@ -2456,6 +2458,43 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
                                     "confirmed":False,"error":str(exc),"retryable":False
                                 }}})
+                        elif name=="request_visitor_access":
+                                try:
+                                    if not _feature_config(db,tenant.id).get("security_visitor_management",False):
+                                        raise ValueError("Visitor access requests are not enabled for this business.")
+                                    visitor_name=str(args.get("visitor_name") or "").strip()
+                                    purpose=str(args.get("purpose") or "").strip()
+                                    destination=str(args.get("destination") or "").strip()
+                                    visitor_mobile=str(args.get("visitor_mobile") or (customer.phone if customer else "")).strip()
+                                    if not visitor_name or not purpose or not destination:
+                                        raise ValueError("Visitor name, purpose, and destination are required.")
+                                    from .models_security import VisitorPass, VisitorEvent, SecuritySite
+                                    site=db.scalar(select(SecuritySite).where(SecuritySite.tenant_id==tenant.id,SecuritySite.enabled==True).order_by(SecuritySite.created_at.desc()).limit(1))
+                                    raw_token=secrets.token_urlsafe(32)
+                                    now=datetime.utcnow()
+                                    visitor_pass=VisitorPass(
+                                        tenant_id=tenant.id,site_id=site.id if site else None,
+                                        token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+                                        visitor_name=visitor_name[:160],visitor_mobile=visitor_mobile[:32],
+                                        purpose=purpose[:240],destination=destination[:240],
+                                        vehicle_number=str(args.get("vehicle_number") or "").strip().upper()[:40],
+                                        industry=site.industry if site else "apartment",status="pending",
+                                        expires_at=now+timedelta(hours=24),created_by=customer.id if customer else call.id,
+                                    )
+                                    db.add(visitor_pass); db.flush()
+                                    db.add(VisitorEvent(tenant_id=tenant.id,pass_id=visitor_pass.id,
+                                        actor_id=customer.id if customer else call.id,event_type="visitor_request_created",
+                                        details_json=json.dumps({"source":"ai_voice","status":"pending"},separators=(",",":"))))
+                                    db.commit()
+                                    _log.info("VOICE_VISITOR_REQUEST_CREATED tenant_id=%s pass_id=%s call_id=%s",tenant.id,visitor_pass.id,call.id)
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
+                                        "request_id":visitor_pass.id,"status":"pending",
+                                        "message":"Your visitor access request has been recorded. The security team must approve it before entry."
+                                    }}})
+                                except Exception as exc:
+                                    db.rollback()
+                                    _log.exception("VOICE_VISITOR_REQUEST_FAILED tenant_id=%s call_id=%s",tenant.id,call.id)
+                                    responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"created":False,"error":str(exc),"retryable":False}}})
                         elif name=="request_human_handoff":
                                 try:
                                     routed=route_call(db,tenant.id,call,str(args.get("department") or "human_handoff"))
