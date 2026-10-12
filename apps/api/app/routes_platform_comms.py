@@ -721,6 +721,7 @@ async def platform_email_inbox_reply(
         "smtp_user": settings.platform_email_smtp_user,
         "smtp_password": settings.platform_email_smtp_password,
         "smtp_starttls": settings.platform_email_smtp_starttls,
+        "smtp_use_tls": settings.platform_email_smtp_use_tls,
     }
     try:
         await send_reply_smtp(cfg, row.from_address, row.subject, payload.body.strip())
