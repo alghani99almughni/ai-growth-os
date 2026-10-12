@@ -84,7 +84,7 @@ def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal)
     if body.site_id and not db.scalar(select(SecuritySite).where(SecuritySite.id==body.site_id,SecuritySite.tenant_id==tenant_id)):
         raise HTTPException(404,"Site not found")
     raw=secrets.token_urlsafe(32); now=datetime.utcnow()
-    p=VisitorPass(tenant_id=tenant_id,site_id=body.site_id,token_hash=hashlib.sha256(raw.encode()).hexdigest(),visitor_name=body.visitor_name.strip(),visitor_mobile=body.visitor_mobile,purpose=body.purpose,destination=body.destination,vehicle_number=body.vehicle_number,industry=(db.get(SecuritySite,body.site_id).industry if body.site_id else "apartment"),status="pending" if body.needs_approval else "approved",expires_at=now+timedelta(hours=body.valid_hours),created_by=user.id,approved_by=(None if body.needs_approval else user.id))
+    p=VisitorPass(tenant_id=tenant_id,site_id=body.site_id,token_hash=hashlib.sha256(raw.encode()).hexdigest(),visitor_name=body.visitor_name.strip(),visitor_mobile=body.visitor_mobile,purpose=body.purpose,destination=body.destination,vehicle_number=body.vehicle_number,industry=(db.get(SecuritySite,body.site_id).industry if body.site_id else body.industry),status="pending" if body.needs_approval else "approved",expires_at=now+timedelta(hours=body.valid_hours),created_by=user.id,approved_by=(None if body.needs_approval else user.id))
     db.add(p); db.flush(); event(db,tenant_id,p.id,user.id,"pass_created",{"status":p.status}); db.commit(); db.refresh(p)
     return pass_json(p,raw)
 
