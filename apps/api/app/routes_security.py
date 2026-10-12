@@ -209,7 +209,12 @@ def list_passes(tenant_id: str, user: User = Depends(principal), db: Session = D
 @router.post("/passes")
 def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
-    return _create_pass(tenant_id, body, user, db, needs_approval=body.needs_approval)
+    admin_only(user)
+    # Never allow a request payload to bypass human approval. Every new pass
+    # starts pending; the separate approve endpoint records the approving actor.
+    if not body.needs_approval:
+        raise HTTPException(422, "New visitor passes must require human approval")
+    return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
 @router.post("/requests")
