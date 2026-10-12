@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     platform_email_smtp_port:int=587
     platform_email_smtp_user:str=""
     platform_email_smtp_password:str=""
-    platform_email_smtp_starttls:bool=True
+    platform_email_smtp_starttls:bool=True; platform_email_smtp_use_tls:bool=False
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
