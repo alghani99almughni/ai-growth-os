@@ -1,5 +1,5 @@
 import re
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, get_close_matches
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .models_ai import GlobalFaq
@@ -117,6 +117,50 @@ def structured_match(db:Session,tenant_id:str,message:str)->str|None:
         products=db.scalars(select(Product).where(Product.tenant_id==tenant_id,Product.is_active==True)).all()
         if products:return "Here are the currently configured products: "+"; ".join(f"{p.name}: {p.price} {p.currency}" for p in products if p.price is not None)
     return None
+_FUNCTION_WORDS={"is","are","was","were","am","be","been","the","a","an","and","or","of","to","in","on","at","for","do","does","did",
+    "you","your","yours","we","our","it","its","i","me","my","can","could","would","will","shall","may","might","have","has","had",
+    "what","when","where","which","who","whom","how","why","there","this","that","these","those","with","about","please","tell",
+    "know","get","any","some","yes","no","ok","okay","also","than","then","if","so","as","by","from","not","hi","hello","want","need"}
+def _has_topical_overlap(message:str,candidate:str)->bool:
+    """A library answer must share at least one real topic word with the question.
+
+    The fuzzy score alone could be cleared by function words ("is tomorrow a holiday" matched the
+    parking entry because both contain "is"), which produced a confident wrong answer. Applies to
+    English text only; other scripts keep the previous behaviour.
+    """
+    topic={t for t in normalize(message) if t not in _FUNCTION_WORDS}
+    if not topic or any(not t.isascii() for t in topic):
+        return True
+    source=normalize(candidate)
+    if topic&source:
+        return True
+    for t in topic:
+        if len(t)>=4 and any(s.startswith(t) or t.startswith(s) for s in source if len(s)>=4):
+            return True   # park / parking, open / opening
+        if len(t)>=5 and get_close_matches(t,source,n=1,cutoff=0.82):
+            return True   # speech-recognition typos
+    return False
+def _stem(token:str)->str:
+    for suffix in ("ing","ed","es","s"):
+        if len(token)>len(suffix)+3 and token.endswith(suffix):
+            return token[:-len(suffix)]
+    return token
+def _topic_score(message:str,candidate:str)->float:
+    """Share of the question's topic words found in the item (word forms and near-typos count).
+
+    "can I park my car" -> parking, "do you have parkng" -> parking. Function words are ignored so
+    they cannot create a match on their own. English text only.
+    """
+    topic={t for t in normalize(message) if t not in _FUNCTION_WORDS}
+    if not topic or any(not t.isascii() for t in topic):
+        return 0.0
+    source=normalize(candidate)
+    source_stems={_stem(x) for x in source}
+    hits=0
+    for t in topic:
+        if _stem(t) in source_stems or (len(t)>=5 and get_close_matches(t,source,n=1,cutoff=0.82)):
+            hits+=1
+    return hits/len(topic)
 def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
     from .models_growth import KnowledgeItem
     rows=db.scalars(select(KnowledgeItem).where(KnowledgeItem.tenant_id==tenant_id,KnowledgeItem.is_active==True,KnowledgeItem.approval_status.in_(["approved","system"]))).all()
@@ -129,7 +173,10 @@ def knowledge_match(db:Session,tenant_id:str,message:str)->str|None:
     best,best_score=None,0.0
     for row in rows:
         if row.language and row.language not in {language,"en"}:continue
-        score=_score(message,(row.title or "")+" "+(row.content or ""))
+        text=(row.title or "")+" "+(row.content or "")
+        score=max(_score(message,text),_topic_score(message,text))
         if row.language==language:score+=0.08
         if score>best_score:best_score,best=score,row
-    return best.content if best and best_score>=0.38 else None    
+    if best and best_score>=0.38 and _has_topical_overlap(message,(best.title or "")+" "+(best.content or "")):
+        return best.content
+    return None

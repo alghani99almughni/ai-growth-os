@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useMemo,useRef,useState} from "react";
+import {nextRecognitionLang} from "../../lib/voiceEndpoint";
 import {connectCustomerToStaff} from "./webrtc";
 
 const api=()=>String(process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000").replace(/\/+$/,"");
@@ -244,6 +245,10 @@ export default function SSNutritions(){
     const speechLangs:any={en:"en-IN",hi:"hi-IN",te:"te-IN",ta:"ta-IN",kn:"kn-IN",ml:"ml-IN",mr:"mr-IN",bn:"bn-IN",gu:"gu-IN",pa:"pa-IN",ur:"ur-IN"};
     const browserLang=(navigator.language||"en-IN").toLowerCase();
     recognition.lang=Object.values(speechLangs).includes(browserLang)?browserLang:(speechLangs[browserLang.slice(0,2)]||"en-IN");
+    // The recogniser language only follows the reply language when the evidence is strong. One
+    // mis-scripted "नो थैंक्स" must not flip an English caller into Hindi recognition for the rest of the call.
+    let recLang=String(recognition.lang||"en-IN").slice(0,2).toLowerCase();
+    let recLangCandidate:string|null=null;
     setCallState("connected");
     setCallError("");
 
@@ -292,7 +297,11 @@ export default function SSNutritions(){
           if(!rr.ok) throw new Error(answer.detail||"Voice answer failed.");
           conversationIdRef.current=answer.conversation_id||conversationIdRef.current;
           setTranscript(prev=>[...prev,{role:"ai",text:answer.reply}]);
-          if(answer.language && speechLangs[answer.language]) recognition.lang=speechLangs[answer.language];
+          if(answer.language){
+            const next=nextRecognitionLang(recLang,String(answer.language),text,recLangCandidate);
+            recLang=next.lang; recLangCandidate=next.candidate;
+            if(speechLangs[recLang]) recognition.lang=speechLangs[recLang];
+          }
           if(answer.handoff_required){
             await handoffToHuman(payload);
           }else{
