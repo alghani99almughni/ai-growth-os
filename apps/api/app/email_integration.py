@@ -132,7 +132,8 @@ async def send_reply_smtp(cfg: dict, to_address: str, subject: str, body: str) -
         port=int(cfg["smtp_port"]),
         username=cfg["smtp_user"],
         password=cfg["smtp_password"],
-        start_tls=bool(cfg.get("smtp_starttls", True)),
+        use_tls=bool(cfg.get("smtp_use_tls", False) or int(cfg.get("smtp_port", 0)) == 465),
+        start_tls=bool(cfg.get("smtp_starttls", True) and not (cfg.get("smtp_use_tls", False) or int(cfg.get("smtp_port", 0)) == 465)),
     )
 
 
