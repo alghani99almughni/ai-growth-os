@@ -56,11 +56,13 @@ def principal(authorization: str | None = Header(default=None), db: Session = De
 
 
 def tenant_access(tenant_id: str, user: User, db: Session, *, require_feature: bool = True):
+    # Reject cross-tenant users before looking up the requested tenant to avoid
+    # exposing whether another tenant identifier exists.
+    if user.tenant_id != tenant_id and str(user.role).lower() not in PLATFORM_ROLES:
+        raise HTTPException(403, "Tenant access denied")
     tenant = db.get(Tenant, tenant_id)
     if not tenant or str(tenant.status).lower() not in ("active", "trial", "pending"):
         raise HTTPException(404, "Tenant not found or inactive")
-    if user.tenant_id != tenant_id and str(user.role).lower() not in PLATFORM_ROLES:
-        raise HTTPException(403, "Tenant access denied")
     if require_feature:
         row = db.scalar(select(TenantSetting).where(
             TenantSetting.tenant_id == tenant_id, TenantSetting.key == "features"
