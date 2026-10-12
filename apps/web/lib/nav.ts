@@ -40,6 +40,7 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/customers",     label: "Customers / CRM",     icon: "Users" },
   { href: "/platform/services",      label: "Services",             icon: "ShoppingBag" },
   { href: "/platform/team",          label: "Team",                 icon: "UserCog" },
+  { href: "/platform/loyalty",       label: "Loyalty",              icon: "Gift" },
   { href: "/platform/tenants/new",  label: "Create tenant",     icon: "Building2" },
   { href: "/platform/industry-catalog", label: "Industry catalogue", icon: "Globe" },
   { href: "/platform/ai",           label: "AI providers",       icon: "Bot", labelKey: "nav.ai" },
