@@ -20,23 +20,59 @@ def _platform_whatsapp() -> WhatsAppAdapter | None:
     return None
 
 async def send_email(to:str,subject:str,text:str,html:str|None=None)->dict:
-    if not settings.resend_api_key or not settings.notification_from_email:
+    """Send platform mail through Resend when configured, otherwise platform SMTP."""
+    if settings.resend_api_key and settings.notification_from_email:
+        payload={
+            "from": f"{settings.notification_from_name} <{settings.notification_from_email}>",
+            "to":[to],
+            "subject":subject,
+            "text":text,
+        }
+        if html: payload["html"]=html
+        async with httpx.AsyncClient(timeout=20) as client:
+            r=await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization":"Bearer "+settings.resend_api_key,"Content-Type":"application/json"},
+                json=payload,
+            )
+            r.raise_for_status()
+            return {"sent":True,"status":"sent","channel":"email","provider":"resend","provider_id":r.json().get("id")}
+
+    smtp_host = settings.platform_email_smtp_host
+    smtp_user = settings.platform_email_smtp_user
+    smtp_password = settings.platform_email_smtp_password
+    from_address = settings.platform_email_address or settings.notification_from_email or smtp_user
+    if not all([smtp_host, smtp_user, smtp_password, from_address]):
         return {"sent":False,"status":"not_configured","channel":"email"}
-    payload={
-        "from": f"{settings.notification_from_name} <{settings.notification_from_email}>",
-        "to":[to],
-        "subject":subject,
-        "text":text,
-    }
-    if html: payload["html"]=html
-    async with httpx.AsyncClient(timeout=20) as client:
-        r=await client.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization":"Bearer "+settings.resend_api_key,"Content-Type":"application/json"},
-            json=payload,
+
+    try:
+        from email.message import EmailMessage
+        from email.utils import formataddr
+        import aiosmtplib
+
+        msg = EmailMessage()
+        msg["From"] = formataddr((settings.notification_from_name or "AI Growth OS", from_address))
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.set_content(text)
+        if html:
+            msg.add_alternative(html, subtype="html")
+
+        use_tls = bool(settings.platform_email_smtp_use_tls or int(settings.platform_email_smtp_port) == 465)
+        await aiosmtplib.send(
+            msg,
+            hostname=smtp_host,
+            port=int(settings.platform_email_smtp_port),
+            username=smtp_user,
+            password=smtp_password,
+            use_tls=use_tls,
+            start_tls=bool(settings.platform_email_smtp_starttls and not use_tls),
+            timeout=25,
         )
-        r.raise_for_status()
-        return {"sent":True,"status":"sent","channel":"email","provider_id":r.json().get("id")}
+        return {"sent":True,"status":"sent","channel":"email","provider":"smtp","from_address":from_address}
+    except Exception as exc:
+        return {"sent":False,"status":"failed","channel":"email","provider":"smtp","error":str(exc)}
+
 
 async def send_platform_whatsapp(to:str,text:str)->dict:
     adapter=_platform_whatsapp()
