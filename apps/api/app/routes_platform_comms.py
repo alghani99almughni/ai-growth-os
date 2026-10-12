@@ -812,7 +812,7 @@ async def platform_openwa_webhook(request: Request, db: Session = Depends(_db)):
 
     body = str(data.get("text") or data.get("body") or "").strip()
     raw_phone = sender.split("@", 1)[0].strip()
-    phone_norm = re.sub(r"\\D", "", raw_phone)
+    phone_norm = re.sub(r"\D", "", raw_phone)
     if not phone_norm or len(phone_norm) < 7 or not body:
         return {"ok": True, "ignored": True}
     phone = phone_norm
