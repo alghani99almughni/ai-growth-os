@@ -13,6 +13,7 @@ export type NavItem = {
 export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard",           label: "Overview",             icon: "LayoutDashboard", exact: true, labelKey: "nav.tenant.overview" },
   { href: "/dashboard/calls",     label: "Calls & Transcripts",   icon: "Phone" },
+  { href: "/dashboard/security",   label: "Security & Visitors", icon: "ShieldCheck" },
   { href: "/dashboard/qr",        label: "QR codes",              icon: "QrCode", labelKey: "nav.tenant.qr" },
   { href: "/dashboard/orders",    label: "Orders",                icon: "ClipboardList", labelKey: "nav.tenant.orders" },
   { href: "/dashboard/bookings",  label: "Bookings",              icon: "CalendarDays", labelKey: "nav.tenant.bookings" },
@@ -33,6 +34,7 @@ export const TENANT_NAV: NavItem[] = [
 
 export const ADMIN_NAV: NavItem[] = [
   { href: "/platform",              label: "Platform overview", icon: "LayoutDashboard", exact: true, labelKey: "nav.overview" },
+  { href: "/platform/security",    label: "Security & Visitors", icon: "ShieldCheck" },
   { href: "/platform/tenants",      label: "Tenants",           icon: "Building2", labelKey: "nav.tenants" },
   { href: "/platform/calls",         label: "Calls & Transcripts", icon: "Phone" },
   { href: "/platform/bookings",      label: "Bookings",            icon: "CalendarDays" },
