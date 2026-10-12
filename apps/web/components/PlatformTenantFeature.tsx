@@ -7,8 +7,9 @@ import OrdersPanel from "./OrdersPanel";
 import CrmPanel from "./CrmPanel";
 import ServicesPanel from "./ServicesPanel";
 import TeamPanel from "./TeamPanel";
+import LoyaltyPanel from "./LoyaltyPanel";
 
-type Feature = "calls" | "bookings" | "orders" | "customers" | "services" | "team";
+type Feature = "calls" | "bookings" | "orders" | "customers" | "services" | "team" | "loyalty";
 type Tenant = { id: string; name: string; slug?: string; industry?: string; status?: string };
 
 const API = () => process.env.NEXT_PUBLIC_API_URL || "https://ai-growth-os-api.onrender.com";
@@ -19,6 +20,7 @@ const TITLES: Record<Feature, string> = {
   customers: "Customers / CRM",
   services: "Services",
   team: "Team",
+  loyalty: "Loyalty",
 };
 
 export default function PlatformTenantFeature({ feature }: { feature: Feature }) {
@@ -86,6 +88,7 @@ export default function PlatformTenantFeature({ feature }: { feature: Feature })
           {feature === "customers" && <CrmPanel {...panelProps} />}
           {feature === "services" && <ServicesPanel {...panelProps} />}
           {feature === "team" && <TeamPanel {...panelProps} />}
+          {feature === "loyalty" && <LoyaltyPanel {...panelProps} />}
         </section>
       )}
     </main>
