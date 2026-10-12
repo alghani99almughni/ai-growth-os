@@ -34,7 +34,6 @@ export const TENANT_NAV: NavItem[] = [
 
 export const ADMIN_NAV: NavItem[] = [
   { href: "/platform",              label: "Platform overview", icon: "LayoutDashboard", exact: true, labelKey: "nav.overview" },
-  { href: "/platform/security",    label: "Security & Visitors", icon: "ShieldCheck" },
   { href: "/platform/tenants",      label: "Tenants",           icon: "Building2", labelKey: "nav.tenants" },
   { href: "/platform/calls",         label: "Calls & Transcripts", icon: "Phone" },
   { href: "/platform/bookings",      label: "Bookings",            icon: "CalendarDays" },
