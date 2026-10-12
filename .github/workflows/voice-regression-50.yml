@@ -1,14 +1,8 @@
 name: Voice Agent Full Engineering Regression
 on:
-  push:
-    branches: [main]
-    paths:
-      - "apps/api/app/voice_*.py"
-      - "apps/api/app/voice.py"
-      - "apps/api/tests/test_voice_*.py"
+  # Legacy 15-tenant full engineering matrix is intentionally manual-only.
+  # Keep it available for an explicitly requested run, but do not use it as a PR/push gate.
   workflow_dispatch:
-  pull_request:
-    branches: [main]
 concurrency:
   group: production-qa-regression
   cancel-in-progress: false
