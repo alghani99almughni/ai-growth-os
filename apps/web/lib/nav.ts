@@ -50,8 +50,6 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/monitoring",   label: "Monitoring",         icon: "Activity" },
   { href: "/platform/settings",    label: "Settings",            icon: "Settings2", labelKey: "nav.settings" },
   { href: "/platform/tickets",     label: "Tickets",              icon: "LifeBuoy", labelKey: "nav.tickets" },
-  { href: "/platform/messages",    label: "Communications",       icon: "MessageSquare", labelKey: "nav.messages" },
-  { href: "/platform/email",      label: "Email",                 icon: "Mail" },
-  { href: "/platform/whatsapp",   label: "WhatsApp",              icon: "MessageCircle" },
+  { href: "/platform/messages",    label: "Marketing Hub",         icon: "Megaphone", labelKey: "nav.messages" },
   { href: "/platform/calendar",    label: "Calendar",              icon: "CalendarDays", labelKey: "nav.calendar" },
 ];
