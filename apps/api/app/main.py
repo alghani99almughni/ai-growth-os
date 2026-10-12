@@ -1992,6 +1992,46 @@ def create_feedback(slug,payload:FeedbackCreate,db:Session=Depends(get_db)):
         except Exception: pass
     return {"id":f.id,"saved":True,"google_review_url":review_url}
 
+class PublicVisitorRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    phone: str = Field(min_length=5, max_length=32)
+    visitor_name: str = Field(min_length=1, max_length=160)
+    visitor_mobile: str = Field(default="", max_length=32)
+    purpose: str = Field(min_length=1, max_length=240)
+    destination: str = Field(min_length=1, max_length=240)
+    vehicle_number: str = Field(default="", max_length=40)
+
+
+@app.post("/api/v1/public/business/{slug}/security/requests", status_code=201)
+def public_visitor_request(slug: str, payload: PublicVisitorRequest, db: Session=Depends(get_db)):
+    """Public PWA/chat request endpoint; creates a pending request only, never grants entry."""
+    tenant=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
+    if not tenant:
+        raise HTTPException(404,"Business not found")
+    if not _feature_config(db,tenant.id).get("security_visitor_management",False):
+        raise HTTPException(403,"Security & Visitor Management is not enabled for this business")
+    customer=upsert_customer(db,tenant.id,payload.phone.strip(),payload.name.strip(),False,source="pwa_security")
+    from .models_security import VisitorPass, VisitorEvent, SecuritySite
+    site=db.scalar(select(SecuritySite).where(SecuritySite.tenant_id==tenant.id,SecuritySite.enabled==True).order_by(SecuritySite.created_at.desc()).limit(1))
+    raw_token=secrets.token_urlsafe(32)
+    now=datetime.utcnow()
+    visitor_pass=VisitorPass(
+        tenant_id=tenant.id,site_id=site.id if site else None,
+        token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+        visitor_name=payload.visitor_name.strip(),visitor_mobile=payload.visitor_mobile.strip()[:32],
+        purpose=payload.purpose.strip(),destination=payload.destination.strip(),
+        vehicle_number=payload.vehicle_number.strip().upper()[:40],
+        industry=site.industry if site else "apartment",status="pending",
+        expires_at=now+timedelta(hours=24),created_by=customer.id,
+    )
+    db.add(visitor_pass); db.flush()
+    db.add(VisitorEvent(tenant_id=tenant.id,pass_id=visitor_pass.id,actor_id=customer.id,
+        event_type="visitor_request_created",details_json=json.dumps({"source":"pwa_chat","status":"pending"},separators=(",",":"))))
+    db.commit()
+    return {"request_id":visitor_pass.id,"status":"pending",
+            "message":"Your visitor request was sent to the security team. Entry requires their approval."}
+
+
 @app.post("/api/v1/public/chat")
 async def public_chat(payload:ChatRequest,db:Session=Depends(get_db)):
     t=db.get(Tenant,payload.tenant_id)
