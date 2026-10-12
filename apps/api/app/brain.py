@@ -15,6 +15,7 @@ from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
 from .booking import available_slots
 from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
+from .voice_followups import spoken_time, bare_time_answer, asks_for_time, describe_day_hours, is_day_followup, HOURS_CUES
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -251,7 +252,7 @@ _WEEKDAY_ALIASES = {
 }
 _RELATIVE_DAYS = ("today", "tomorrow", "day after tomorrow")
 
-def extract_booking_entities(text: str) -> dict:
+def extract_booking_entities(text: str, expecting_time: bool = False) -> dict:
     value = text.casefold().strip()
     day = None
     for alias, canonical in sorted(_WEEKDAY_ALIASES.items(), key=lambda x: -len(x[0])):
@@ -313,6 +314,12 @@ def extract_booking_entities(text: str) -> dict:
                         meridiem="PM" if regional_clock else None
                     time_value=f"{hour} {meridiem}" if meridiem else f"{hour}"
 
+    spoken = spoken_time(value)           # "9 30 am", "nine thirty", "half past nine", "ten o'clock"
+    if spoken and (time_value is None or (":" in spoken and ":" not in time_value)):
+        time_value = spoken               # also repairs "half past nine in the morning" -> "9 AM" (minutes were lost)
+    if time_value is None and expecting_time:
+        time_value = bare_time_answer(value)   # "10 10", "1010", "930", "11" -- only right after "What time ...?"
+
     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
     date_hint = None
     dm=re.search(r"\b(?:date|day|on)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
@@ -332,17 +339,31 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
         select(ConversationMessage)
         .where(
             ConversationMessage.conversation_id == conversation_id,
-            ConversationMessage.role == "user",
+            ConversationMessage.role.in_(("user", "assistant")),
         )
         .order_by(ConversationMessage.created_at.asc())
     )
     if c.cleared_at:
         q = q.where(ConversationMessage.created_at >= c.cleared_at)
 
-    rows = db.scalars(q.limit(30)).all()
+    rows = db.scalars(q.limit(60)).all()
 
+    last_assistant_text = None
     for row in rows:
-        extracted = extract_booking_entities(row.content)
+        if getattr(row, "role", "user") == "assistant":     # rows without a role are user messages
+            last_assistant_text = row.content
+            continue
+        # a bare "10 10" only counts as a time when the question before it asked for one
+        extracted = extract_booking_entities(row.content, expecting_time=asks_for_time(last_assistant_text))
+        # "tomorrow" ... later "Monday": day / relative day / date are ONE slot, so the most recent
+        # mention replaces the older ones. Without this the stale "tomorrow" kept winning and a
+        # perfectly good Monday booking was reported as "tomorrow is closed".
+        if extracted.get("day"):
+            ctx["relative_day"] = None; ctx["date_hint"] = None
+        elif extracted.get("relative_day"):
+            ctx["day"] = None; ctx["date_hint"] = None
+        elif extracted.get("date_hint"):
+            ctx["day"] = None; ctx["relative_day"] = None
         for key in ctx:
             if extracted.get(key) is not None:
                 ctx[key] = extracted[key]
@@ -453,7 +474,11 @@ BOOKING_TEXT={
 "hi":{"day_time":"ज़रूर। {day} को आप किस समय अपॉइंटमेंट चाहते हैं?","day":"ज़रूर। आप किस दिन का अपॉइंटमेंट चाहते हैं?","both":"ज़रूर। आप किस दिन और किस समय का अपॉइंटमेंट चाहते हैं?","confirm":"ठीक है। मैंने {date} को {time} का अपॉइंटमेंट रखा है। क्या मैं इसे कन्फर्म कर दूँ?","closed":"{day} को हम बंद रहते हैं। कृपया दूसरा दिन चुनिए।","outside":"{time} हमारे {day} के काम के समय के बाहर है। कृपया दूसरा समय चुनिए।","unavailable":"{day} को {time} का स्लॉट उपलब्ध नहीं है। कृपया दूसरा समय चुनिए।","past":"{time} का समय आज निकल चुका है। कृपया बाद का समय चुनिए।","past_date":"यह तारीख निकल चुकी है। कृपया आगे की तारीख चुनिए।","ampm":"आप {hour} AM कहना चाहते हैं या {hour} PM?","hint":"ज़रूर। {day} को {hint} का समय है। कृपया सही समय बताइए।","date":"ठीक है, {date} तारीख। किस महीने और किस समय का अपॉइंटमेंट चाहिए?"},
 "te":{"day_time":"తప్పకుండా. {day} ఏ సమయంలో అపాయింట్‌మెంట్ కావాలి?","day":"తప్పకుండా. ఏ రోజు అపాయింట్‌మెంట్ కావాలి?","both":"తప్పకుండా. ఏ రోజు మరియు ఏ సమయంలో అపాయింట్‌మెంట్ కావాలి?","confirm":"సరే. {date} న {time} అపాయింట్‌మెంట్ ఉంది. నేను కన్ఫర్మ్ చేయనా?","closed":"{day} రోజు మేము మూసి ఉంటాము. మరో రోజు ఎంచుకోండి.","outside":"{time} {day} మా పని సమయానికి బయట ఉంది. మరో సమయం ఎంచుకోండి.","unavailable":"{day} {time} స్లాట్ అందుబాటులో లేదు. మరో సమయం ఎంచుకోండి.","past":"{time} ఈరోజు గడిచిపోయింది. దయచేసి తర్వాతి సమయం ఎంచుకోండి.","past_date":"ఆ తేదీ గడిచిపోయింది. దయచేసి భవిష్యత్ తేదీ ఎంచుకోండి.","ampm":"మీరు {hour} AM అంటున్నారా లేదా {hour} PM అంటున్నారా?","hint":"సరే. {day} {hint} సమయం. ఖచ్చితమైన సమయం చెప్పండి.","date":"సరే, {date} తేదీ. ఏ నెల మరియు ఏ సమయం కావాలి?"}}
 def booking_text(language,key,**values):
-    return BOOKING_TEXT.get(language,BOOKING_TEXT["en"]).get(key,BOOKING_TEXT["en"][key]).format(**values)
+    text=BOOKING_TEXT.get(language,BOOKING_TEXT["en"]).get(key,BOOKING_TEXT["en"][key]).format(**values)
+    if language not in ("hi","te"):   # English wording (also the fallback for other languages)
+        text=re.sub(r"\bon (today|tomorrow|day after tomorrow)\b",r"\1",text)   # "on tomorrow" -> "tomorrow"
+        text=text[:1].upper()+text[1:]                                          # "tomorrow is closed." -> "Tomorrow ..."
+    return text
 def booking_day_label(language,value):
     if language=="hi":
         return {"today":"आज","tomorrow":"कल","day after tomorrow":"परसों"}.get(value,value or "उस दिन")
@@ -461,8 +486,79 @@ def booking_day_label(language,value):
         return {"today":"ఈ రోజు","tomorrow":"రేపు","day after tomorrow":"ఎల్లుండి"}.get(value,value or "ఆ రోజు")
     return value or "that day"
 
+def with_meridiem(db: Session, tenant: Tenant, time_value: str|None, target_date) -> str|None:
+    """"9:30" -> "9:30 AM" when only one of AM/PM falls inside that day's opening hours.
+
+    The booking step already did this when it first proposed the slot, but the later "confirm" turn
+    re-read the raw "9:30" from the transcript, so the calendar check could not parse it and a caller
+    who simply said "9:30" ... "confirm" was told the time was unavailable (and the booking code
+    downstream needs AM/PM). Ambiguous or unknown cases are returned unchanged.
+    """
+    if not time_value or not target_date or re.search(r"\b(?:AM|PM)\b", time_value, re.I):
+        return time_value
+    tm = re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
+    if not tm or not 1 <= int(tm.group(1)) <= 11:
+        return time_value
+    hour, minute = int(tm.group(1)), int(tm.group(2) or 0)
+    row = db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id,
+                                               BusinessHour.weekday==target_date.weekday()))
+    if not row or row.is_closed:
+        return time_value
+    from datetime import time as _time
+    from .booking import is_inside_hours
+    am_inside = is_inside_hours(row.open_time, row.close_time, _time(hour, minute))
+    pm_inside = is_inside_hours(row.open_time, row.close_time, _time(hour + 12, minute))
+    if am_inside == pm_inside:
+        return time_value
+    meridiem = "AM" if am_inside else "PM"
+    return f"{hour}:{minute:02d} {meridiem}" if minute else f"{hour} {meridiem}"
+
+
+def _hours_by_weekday(db: Session, tenant_id: str) -> dict:
+    return {r.weekday: r for r in db.scalars(select(BusinessHour).where(BusinessHour.tenant_id==tenant_id)).all()}
+
+
+def day_hours_followup(db: Session, tenant: Tenant, message: str, language: str, intent: str,
+                       entities: dict, prev_intent: str, offer_booking: bool) -> str|None:
+    """Answer "tomorrow" / "and Sunday?" / "are you open Monday?" from the real hours table.
+
+    Library-first and token-free: this runs in the same structured-answer stage as the generic hours
+    reply and only replaces it with a more specific answer. If anything is missing (no day, no hours
+    row for that weekday) it returns None and the normal ladder continues untouched.
+    """
+    if entities.get("time") or entities.get("date_hint"):
+        return None                       # that is a booking request, not an opening-hours question
+    if not (entities.get("day") or entities.get("relative_day")) or entities.get("relative_day") == "yesterday":
+        return None
+    explicit = intent == "business_hours" or bool(HOURS_CUES.search(message.casefold()))
+    follow_up = prev_intent == "business_hours" and is_day_followup(message)
+    if not (explicit or follow_up):
+        return None
+    target = resolve_booking_date(tenant, entities.get("day"), entities.get("relative_day"))
+    if not target:
+        return None
+    return describe_day_hours(
+        target, _hours_by_weekday(db, tenant.id), language=language,
+        relative=None if entities.get("day") and not entities.get("relative_day") else entities.get("relative_day"),
+        now_local=datetime.now(ZoneInfo(tenant.timezone)), offer_booking=offer_booking,
+    )
+
+
+def closed_day_notice(db: Session, tenant: Tenant, target, language: str, relative_day: str|None) -> str|None:
+    """If the caller picked a day we are closed, say so now instead of first asking for a time."""
+    if not target:
+        return None
+    row = db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id, BusinessHour.weekday==target.weekday()))
+    if not row or not row.is_closed:
+        return None
+    return describe_day_hours(
+        target, _hours_by_weekday(db, tenant.id), language=language, relative=relative_day,
+        now_local=datetime.now(ZoneInfo(tenant.timezone)), closed_day_question=True,
+    )
+
+
 def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
-    current = extract_booking_entities(message)
+    current = extract_booking_entities(message, expecting_time=asks_for_time(c.last_assistant_message))
     logger.info(
         "VOICE_BOOKING_EXTRACTION conversation_id=%s state_before=%s message=%r entities=%s",
         c.id, c.state, message, current,
@@ -569,6 +665,14 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
             {"day": day_label, "time": time_value, "date": resolved_date.isoformat() if resolved_date else None, "service_id":calendar.get("service_id"), "complete": True},
         )
 
+    if day_label and not time_value:
+        notice = closed_day_notice(db, tenant, resolved_date, c.language, relative_day)
+        if notice:
+            c.state = "booking_day"
+            return notice, {"day": day_label, "time": None, "time_hint": time_hint, "date_hint": date_hint,
+                            "date": resolved_date.isoformat() if resolved_date else None,
+                            "closed": True, "complete": False}
+
     if day_label and time_hint:
         c.state = "booking_time_clarification"
         return (
@@ -614,6 +718,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     detected_language=detect_language(message)
     intent=local_intent(message)
     c=conversation(db,tenant_id,message,detected_language,channel,conversation_id)
+    prev_intent=c.intent or ""
     requested_language=language_request(message)
     if requested_language:
         language=requested_language
@@ -638,7 +743,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     policy=tenant_policy(db,tenant_id)
     m=message.casefold()
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
-    current_entities=extract_booking_entities(message)
+    current_entities=extract_booking_entities(message, expecting_time=asks_for_time(c.last_assistant_message))
     has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested"))
     active_booking=c.state.startswith("booking")
     if c.state == "new" and any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
@@ -667,6 +772,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         booking_date=prior.get("resolved_date") or resolve_booking_date(
             tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
         )
+        prior["time"]=with_meridiem(db,tenant,prior.get("time"),booking_date)
         calendar=booking_calendar_status(db,tenant,booking_date,prior.get("time"))
         if booking_date and prior.get("time") and calendar.get("available") is True:
             booking="Perfect. I'll confirm that appointment now."
@@ -812,15 +918,32 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             "what day would you prefer" in previous_text or
             "what time would you prefer" in previous_text
         )
-        contextual_booking = booking_invitation and has_booking_entities and intent in {"information","business_hours","closing"}
-        if contextual_booking or intent=="booking" or c.state.startswith("booking"):
+        invited_yes = booking_invitation and is_explicit_confirmation(message) and capability_enabled(policy,"bookings",True)
+        exploring_hours = prev_intent=="business_hours" and bool(
+            HOURS_CUES.search(m) or re.match(r"\s*(?:and|what about|how about|is it|are you|is that)\b", m))
+        contextual_booking = (booking_invitation and (has_booking_entities or invited_yes) and not exploring_hours
+                              and intent in {"information","business_hours","closing"})
+        implicit_booking = (
+            intent=="information" and bool(current_entities.get("time"))
+            and bool(current_entities.get("day") or current_entities.get("relative_day"))
+            and capability_enabled(policy,"bookings",True)
+        )   # "Monday 9:30 am please" is a booking request even without the word "book"
+        if contextual_booking or implicit_booking or intent=="booking" or c.state.startswith("booking"):
             booking, booking_data = booking_reply_from_state(db, tenant, c, message)
         elif c.state.startswith("booking"):
             booking_data = {"day": None, "time": None, "complete": False}
         else:
             booking_data = {"day": None, "time": None, "complete": False}
 
-    direct=hours or booking or structured_match(db,tenant_id,message)
+    day_reply=None
+    if not booking:
+        day_reply=day_hours_followup(
+            db,tenant,message,language,intent,current_entities,prev_intent,
+            offer_booking=language=="en" and capability_enabled(policy,"bookings",True),
+        )
+        if day_reply:
+            intent="business_hours"       # the next bare follow-up ("and Sunday?") keeps this context
+    direct=day_reply or hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None

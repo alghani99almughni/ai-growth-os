@@ -38,6 +38,8 @@ import asyncio
 import base64
 import json
 import logging
+import os
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -137,35 +139,130 @@ def _save_transcript(call_id: str, lines: list[str]) -> None:
         db.close()
 
 
-def _live_config(genai_types, system_prompt: str):
-    """Build the Live config. Falls back to the minimal config if this SDK version rejects an option."""
+# Appended to the web client's hand-over text. The greeting step is already done by the assistant, so the
+# specialist must not welcome the customer again (it cost several seconds of speech and lost the booking).
+OPENING_ADDENDUM = (
+    "\n\nThe greeting step is already done: the customer is mid-call and has just spoken to the assistant. "
+    "Do NOT give a welcome greeting and do NOT re-introduce the business. Start by answering the latest customer "
+    "request directly in one or two short sentences (use their name at most once). If a booking was in progress, "
+    "continue it from where it stopped."
+)
+
+WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+
+def _transcription_language_codes(policy: dict) -> list[str]:
+    """BCP-47 hints for the caller-speech transcript.
+
+    With no hint Gemini guesses the language per utterance and, for Indian-accented English, often
+    prints "no thanks" in Devanagari or Telugu script. English-India is always a hint; a tenant whose
+    voice locale is another language (policy.voice.locale / policy.language) gets that one first.
+    Override with SPECIALIST_TRANSCRIPTION_LANGUAGES="en-IN,hi-IN" or "auto" to send no hint.
+    """
+    env = os.getenv("SPECIALIST_TRANSCRIPTION_LANGUAGES", "").strip()
+    if env.lower() == "auto":
+        return []
+    if env:
+        return [c.strip() for c in env.split(",") if c.strip()]
+    voice = policy.get("voice") if isinstance(policy.get("voice"), dict) else {}
+    lang = policy.get("language") if isinstance(policy.get("language"), dict) else {}
+    raw = voice.get("locale") or voice.get("language") or lang.get("locale") or (
+        policy.get("language") if isinstance(policy.get("language"), str) else None)
+    codes = ["en-IN"]
+    if isinstance(raw, str) and raw.strip():
+        code = raw.strip().replace("_", "-")
+        if "-" not in code:
+            code += "-IN"
+        if code.lower() != "en-in":
+            codes.insert(0, code)
+    return codes
+
+
+def _vad_settings() -> dict:
+    """Turn-taking speed. Lower silence = faster answers but easier to cut a slow speaker off."""
+    def _int(name: str, default: int) -> int:
+        try:
+            return int(os.getenv(name, default))
+        except (TypeError, ValueError):
+            return default
+    return {"silence_duration_ms": _int("SPECIALIST_VAD_SILENCE_MS", 400),
+            "prefix_padding_ms": _int("SPECIALIST_VAD_PREFIX_MS", 100)}
+
+
+def _handoff_tool(genai_types):
+    return genai_types.Tool(function_declarations=[
+        genai_types.FunctionDeclaration(
+            name="request_human_handoff",
+            description=(
+                "Call this when the customer asks for a human, manager or supervisor, or when you cannot "
+                "resolve their request. Say one short sentence telling them you are connecting them to the "
+                "team, then call this."
+            ),
+            parameters={
+                "type": "OBJECT",
+                "properties": {"reason": {"type": "STRING", "description": "Why a human is needed."}},
+            },
+        ),
+    ])
+
+
+def _live_config(genai_types, system_prompt: str, *, tuned: bool = False,
+                 language_codes: Optional[list[str]] = None, vocabulary: Optional[list[str]] = None):
+    """Build the Live config. Falls back to the minimal config if this SDK version rejects an option.
+
+    tuned=True adds faster turn detection, transcript language hints and a small custom vocabulary.
+    The caller keeps an untuned copy and retries with it if the Live server refuses a tuned option.
+    """
     base = dict(
         response_modalities=["AUDIO"],
         system_instruction=genai_types.Content(parts=[genai_types.Part(text=system_prompt)]),
     )
     try:
+        in_cfg: dict = {}
+        if tuned:
+            if language_codes:
+                in_cfg["language_codes"] = language_codes
+            if vocabulary:
+                in_cfg["custom_vocabulary"] = vocabulary
         extras = dict(
-            input_audio_transcription=genai_types.AudioTranscriptionConfig(),
+            input_audio_transcription=genai_types.AudioTranscriptionConfig(**in_cfg),
             output_audio_transcription=genai_types.AudioTranscriptionConfig(),
-            tools=[genai_types.Tool(function_declarations=[
-                genai_types.FunctionDeclaration(
-                    name="request_human_handoff",
-                    description=(
-                        "Call this when the customer asks for a human, manager or supervisor, or when you cannot "
-                        "resolve their request. Say one short sentence telling them you are connecting them to the "
-                        "team, then call this."
-                    ),
-                    parameters={
-                        "type": "OBJECT",
-                        "properties": {"reason": {"type": "STRING", "description": "Why a human is needed."}},
-                    },
-                ),
-            ])],
+            tools=[_handoff_tool(genai_types)],
         )
+        if tuned:
+            vad = _vad_settings()
+            extras["realtime_input_config"] = genai_types.RealtimeInputConfig(
+                automatic_activity_detection=genai_types.AutomaticActivityDetection(
+                    start_of_speech_sensitivity=genai_types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_of_speech_sensitivity=genai_types.EndSensitivity.END_SENSITIVITY_HIGH,
+                    prefix_padding_ms=vad["prefix_padding_ms"],
+                    silence_duration_ms=vad["silence_duration_ms"],
+                )
+            )
         return genai_types.LiveConnectConfig(**base, **extras), True
     except Exception:
-        logger.exception("full Live config rejected by SDK; using minimal config (no transcripts, no handoff tool)")
+        logger.exception("full Live config rejected by SDK (tuned=%s); using minimal config (no transcripts, no handoff tool)", tuned)
         return genai_types.LiveConnectConfig(**base), False
+
+
+@asynccontextmanager
+async def _connect_live(client, model: str, tuned_config, baseline_config):
+    """Open the Live session with the tuned config; if the server refuses it, retry with the baseline.
+
+    A rejected optional setting must never turn into 'AI voice service unavailable' for the caller.
+    """
+    stack = AsyncExitStack()
+    try:
+        try:
+            session = await stack.enter_async_context(client.aio.live.connect(model=model, config=tuned_config))
+        except Exception:
+            if tuned_config is baseline_config:
+                raise
+            logger.exception("tuned Live config refused by server; retrying with baseline config")
+            session = await stack.enter_async_context(client.aio.live.connect(model=model, config=baseline_config))
+        yield session
+    finally:
+        await stack.aclose()
 
 
 @router.websocket("/ws/escalate/{call_id}")
@@ -174,6 +271,8 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
     logger.info("escalate ws accepted call_id=%s", call_id)
 
     system_prompt = ""
+    language_codes: list[str] = []
+    vocabulary: list[str] = []
     db: Session = SessionLocal()
     try:
         call = db.get(CallRecord, call_id)
@@ -195,6 +294,8 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
         policy = tenant_policy(db, tenant.id)
         context = knowledge_context(db, tenant.id)
         system_prompt = _build_system_prompt(tenant, customer, policy, context)
+        language_codes = _transcription_language_codes(policy)
+        vocabulary = [tenant.name] + WEEKDAYS if tenant.name else list(WEEKDAYS)
     finally:
         db.close()   # do not hold a pooled connection for the whole call
 
@@ -209,12 +310,14 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
 
     client = genai.Client(api_key=settings.gemini_api_key)
     model_name = _live_model(getattr(settings, "gemini_live_model", None))
-    config, has_tools = _live_config(genai_types, system_prompt)
+    config, has_tools = _live_config(genai_types, system_prompt, tuned=True,
+                                     language_codes=language_codes, vocabulary=vocabulary)
+    baseline_config, _ = _live_config(genai_types, system_prompt, tuned=False)
     buffer = _TranscriptBuffer()
     outcome = {"crashed": False, "handoff": False}
 
     async def run_session() -> None:
-        async with client.aio.live.connect(model=model_name, config=config) as session:
+        async with _connect_live(client, model_name, config, baseline_config) as session:
             await websocket.send_json({"type": "status", "status": "connected", "provider": "gemini", "model": model_name})
 
             stop = asyncio.Event()
@@ -261,8 +364,7 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
                             continue
                         if not opened["done"]:
                             opened["done"] = True
-                            text += ("\n\nGreet the customer by name, say you are taking over from the assistant, "
-                                     "and help with their request.")
+                            text += OPENING_ADDENDUM
                         await session.send_client_content(
                             turns=[genai_types.Content(role="user", parts=[genai_types.Part(text=text)])],
                             turn_complete=True,

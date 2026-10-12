@@ -22,6 +22,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { endpointDelayMs, nextRecognitionLang, downsampleToPcm16, pcm16ToBase64 } from "../lib/voiceEndpoint";
 
 type Props = {
   slug: string;
@@ -51,7 +52,13 @@ const wsBase = () => api().replace(/^http:/, "ws:").replace(/^https:/, "wss:");
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const SPECIALIST_ON = process.env.NEXT_PUBLIC_SPECIALIST_AI !== "off";
-const SR_DEBOUNCE_MS = 1300;      // merge speech fragments spoken within this gap
+const SR_DEBOUNCE_MS = 1300;      // fixed wait for speech fragments; only used when NEXT_PUBLIC_VOICE_FAST_ENDPOINT=off
+// Adaptive end-of-speech: read interim results (instead of waiting for the browser to finalise, which
+// takes 1-2 s on its own) and send as soon as the sentence sounds finished. A mid-sentence fragment
+// ("may I know") still waits the old 1.3 s. Set NEXT_PUBLIC_VOICE_FAST_ENDPOINT=off to go back.
+const FAST_ENDPOINT = process.env.NEXT_PUBLIC_VOICE_FAST_ENDPOINT !== "off";
+const HOLD_LINE_MAX_MS = 3500;    // never let the spoken hold line delay the specialist by more than this
+const PLAYBACK_CUSHION_S = 0.06;  // jitter cushion when specialist audio (re)starts after silence
 const SPECIALIST_FIRST_SPEECH_MS = 15000;
 
 // A customer asking for a person must never be answered by the booking flow.
@@ -80,20 +87,9 @@ const FEMALE_HINTS = ["female", "woman", "heera", "kalpana", "zira", "hazel", "n
 const MALE_HINTS = ["male", "man", "ravi", "david", "mark", "george", "guy", "ryan", "daniel", "alex"];
 
 function encodePcm16(input: Float32Array, inputRate: number, targetRate = 16000): string {
-  const ratio = inputRate / targetRate;
-  const length = Math.max(1, Math.round(input.length / ratio));
-  const pcm = new Int16Array(length);
-  for (let i = 0; i < length; i++) {
-    const idx = Math.min(input.length - 1, Math.floor(i * ratio));
-    const s = Math.max(-1, Math.min(1, input[idx]));
-    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-  const bytes = new Uint8Array(pcm.buffer);
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    bin += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
-  }
-  return btoa(bin);
+  // Area-averaged downsampling (see lib/voiceEndpoint.ts); the old "take every Nth sample" aliased
+  // high-frequency consonant energy into the speech band and hurt recognition.
+  return pcm16ToBase64(downsampleToPcm16(input, inputRate, targetRate));
 }
 
 function decodePcm16(b64: string): Int16Array {
@@ -231,6 +227,11 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   const pendingRef = useRef("");
   const debounceRef = useRef<number | null>(null);
   const lastReplyRef = useRef("");
+  const interimRef = useRef("");
+  const holdGateRef = useRef<Promise<void>>(Promise.resolve());   // resolves when the spoken hold line is over
+  const specialistRetriesRef = useRef(0);
+  const langCandidateRef = useRef<string | null>(null);
+  const ttsLangRef = useRef("en");     // language of the brain's last reply (voice for speech out)
   const repeatRef = useRef(0);
 
   const go = (p: Phase) => { phaseRef.current = p; setPhase(p); };
@@ -265,18 +266,33 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = null;
     pendingRef.current = "";
+    interimRef.current = "";
   };
-  const queueUtterance = (text: string) => {
+  // (Re)arm the "caller has finished" timer. Every new speech result restarts it, so it fires a
+  // short while after the LAST word; how short depends on whether the sentence sounds finished.
+  const scheduleFlush = () => {
+    const combined = (pendingRef.current + " " + interimRef.current).trim();
+    if (!combined) return;
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
+    const delay = FAST_ENDPOINT ? endpointDelayMs(combined) : SR_DEBOUNCE_MS;
+    debounceRef.current = window.setTimeout(() => {
+      const said = (pendingRef.current + " " + interimRef.current).trim();
+      pendingRef.current = "";
+      interimRef.current = "";
+      debounceRef.current = null;
+      void handleUtterance(said);
+    }, delay);
+  };
+  const queueUtterance = (text: string) => {   // a finalised fragment
     const t = text.trim();
     if (!t) return;
     pendingRef.current = (pendingRef.current + " " + t).trim();
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => {
-      const said = pendingRef.current;
-      pendingRef.current = "";
-      debounceRef.current = null;
-      void handleUtterance(said);
-    }, SR_DEBOUNCE_MS);
+    interimRef.current = "";
+    scheduleFlush();
+  };
+  const queueInterim = (text: string) => {     // not finalised yet; still counts as "caller is talking"
+    interimRef.current = text.trim();
+    scheduleFlush();
   };
 
   /* ---------- speech out (browser) ---------- */
@@ -334,13 +350,20 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     if (!recRef.current) {
       const rec = new SR();
       rec.continuous = true;
-      rec.interimResults = false;
+      rec.interimResults = FAST_ENDPOINT;
       rec.maxAlternatives = 1;
       rec.onresult = (ev: any) => {
+        // After we have sent an utterance (busy) or while the assistant talks, late results from
+        // the recogniser's own finalisation of the same speech must not be sent a second time.
+        if (busyRef.current || speakingRef.current) return;
+        let interim = "";
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
           const r = ev.results[i];
-          if (r.isFinal) queueUtterance(String(r[0]?.transcript || ""));
+          const text = String(r[0]?.transcript || "");
+          if (r.isFinal) queueUtterance(text);
+          else interim += text;
         }
+        if (interim.trim()) queueInterim(interim);
       };
       rec.onend = () => { window.setTimeout(startListening, 250); };
       rec.onerror = (ev: any) => {
@@ -417,7 +440,15 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       if (!res.ok) throw new Error(data.detail || "Voice answer failed.");
       failsRef.current = 0;
       convRef.current = data.conversation_id || convRef.current;
-      if (data.language) langRef.current = String(data.language);
+      if (data.language) {
+        // Speech OUT follows the language of the reply immediately; the recogniser only switches
+        // when the evidence is strong (see nextRecognitionLang), otherwise one mis-scripted
+        // "नो थैंक्स" flips it to Hindi and every later English sentence is mis-heard.
+        ttsLangRef.current = String(data.language);
+        const next = nextRecognitionLang(langRef.current, String(data.language), said, langCandidateRef.current);
+        langRef.current = next.lang;
+        langCandidateRef.current = next.candidate;
+      }
       const reply = String(data.reply || "").trim();
 
       // The brain's "we'll call you back" text is not shown: the ladder decides what happens next.
@@ -440,7 +471,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
       if (reply) {
         pushLine("ai", reply);
-        await speak(reply, langRef.current);
+        await speak(reply, ttsLangRef.current);
       }
     } catch {
       failsRef.current += 1;
@@ -502,7 +533,9 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     src.connect(ctx.destination);
     src.onended = () => playingRef.current.delete(src);
     playingRef.current.add(src);
-    nextPlayRef.current = Math.max(nextPlayRef.current, ctx.currentTime);
+    // If the queue has drained (start of a reply, or the network stalled), restart slightly in the
+    // future so the next chunk can arrive before playback reaches it; avoids clicks and gaps.
+    if (nextPlayRef.current < ctx.currentTime + 0.01) nextPlayRef.current = ctx.currentTime + PLAYBACK_CUSHION_S;
     src.start(nextPlayRef.current);
     nextPlayRef.current += buf.duration;
   };
@@ -514,7 +547,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
     audioCtxRef.current = ctx;
     await ctx.resume();
     const source = ctx.createMediaStreamSource(stream);
-    const proc = ctx.createScriptProcessor(4096, 1, 1);
+    const proc = ctx.createScriptProcessor(2048, 1, 1);
     proc.onaudioprocess = (ev) => {
       if (mutedRef.current || ws.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ type: "audio", data: encodePcm16(ev.inputBuffer.getChannelData(0), ctx.sampleRate, 16000) }));
@@ -568,7 +601,15 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
         window.clearTimeout(firstSpeechTimer);
         closeSpecialist();
         if (!settled) { settled = true; reject(new Error(why)); }
-        else if (activeRef.current) void humanHandoff();
+        else if (activeRef.current) {
+          // A drop in the middle of the call (server restart, network blip) should not turn into "our team is busy":
+          // reconnect once, handing the specialist the conversation so far, before falling back to a person.
+          if (/connection (closed|failed)/i.test(why) && specialistRetriesRef.current < 1) {
+            specialistRetriesRef.current += 1;
+            holdGateRef.current = Promise.resolve();
+            openSpecialist().catch(() => { if (activeRef.current) void humanHandoff(); });
+          } else void humanHandoff();
+        }
       };
       const firstSpeechTimer = window.setTimeout(() => {
         if (!spoke && activeRef.current) fail("Specialist did not answer in time.");
@@ -581,7 +622,6 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
       };
 
       ws.onopen = async () => {
-        try { await startMicStream(ws); } catch { /* mic denied: the specialist can still read the context */ }
         const recent = linesRef.current.slice(-8)
           .map((l) => `${l.role === "ai" ? "Assistant" : "Customer"}: ${l.text}`).join("\n");
         const latestCustomerRequest = [...linesRef.current].reverse().find((l) => l.role === "customer")?.text || "";
@@ -596,6 +636,10 @@ Latest customer request: ${latestCustomerRequest}
 Conversation in this call:
 ${recent}`,
         }));
+        // The microphone starts only once the hold line is over; otherwise it would hear the hold line coming out of
+        // the speakers and send it to the specialist as if the customer had said it.
+        await holdGateRef.current;
+        try { await startMicStream(ws); } catch { /* mic denied: the specialist can still read the context */ }
       };
       ws.onmessage = (ev) => {
         try {
@@ -633,12 +677,13 @@ ${recent}`,
           }
           if (msg.type === "audio" && msg.data) {
             markSpoke();
-            playPcm(String(msg.data), Number(msg.sample_rate) || 24000);
+            const pcm = String(msg.data), rate = Number(msg.sample_rate) || 24000;
+            void holdGateRef.current.then(() => playPcm(pcm, rate));
             return;
           }
           const parts = msg?.serverContent?.modelTurn?.parts || [];
           for (const p of parts) {
-            if (p?.inlineData?.data) { markSpoke(); playPcm(String(p.inlineData.data), 24000); }
+            if (p?.inlineData?.data) { markSpoke(); const pcm = String(p.inlineData.data); void holdGateRef.current.then(() => playPcm(pcm, 24000)); }
           }
         } catch {}
       };
@@ -654,9 +699,15 @@ ${recent}`,
     setError("");
     if (!SPECIALIST_ON) { await humanHandoff(); return; }
     go("specialist");
-    const hold = HOLD_LINE[langRef.current] || HOLD_LINE.en;
+    const hold = HOLD_LINE[ttsLangRef.current] || HOLD_LINE.en;
     pushLine("system", hold);
-    await speak(hold, langRef.current);
+    // Speak the hold line WHILE the specialist connection is set up. It used to connect only after the line had
+    // finished, and speak() can wait ~6 s for a browser that never reports the end of speech: ~10 s of dead air.
+    holdGateRef.current = Promise.race([
+      speak(hold, ttsLangRef.current),
+      new Promise<void>((resolve) => window.setTimeout(resolve, HOLD_LINE_MAX_MS)),
+    ]).then(() => undefined);
+    specialistRetriesRef.current = 0;
     if (!activeRef.current) return;
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
@@ -678,7 +729,7 @@ ${recent}`,
     go("human_wait");
     setError("");
     pushLine("system", "Connecting you to our team…");
-    void speak("Connecting you to our team. Please hold.", langRef.current);
+    void speak("Connecting you to our team. Please hold.", ttsLangRef.current);
 
     const callId = callRef.current?.call_id;
     if (!callId) { await requestCallback("No active call."); return; }
