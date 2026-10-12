@@ -12,6 +12,9 @@ const gameLabels:Record<string,string>={dino:"🦖 Dino Run",snake:"🐍 Snake",
 export default function Customer(){
  const [slug,setSlug]=useState(""),[business,setBusiness]=useState<any>(null),[context,setContext]=useState(""),[customerId,setCustomerId]=useState(""),[cart,setCart]=useState<Cart>({}),[order,setOrder]=useState<any>(null),[menuOpen,setMenuOpen]=useState(false),[game,setGame]=useState<string|null>(null),[gameScore,setGameScore]=useState(0),[waiter,setWaiter]=useState<any>(null),[feedback,setFeedback]=useState(0),[comment,setComment]=useState(""),[feedbackSent,setFeedbackSent]=useState(false),[status,setStatus]=useState(""),[active,setActive]=useState("home"),[gamePoints,setGamePoints]=useState(0),[gameData,setGameData]=useState<any>({bricks:Array(12).fill(true),target:0,moves:0});
  const [customerName,setCustomerName]=useState("");
+ const [visitorRequest,setVisitorRequest]=useState({name:"",phone:"",visitor_name:"",visitor_mobile:"",purpose:"",destination:"",vehicle_number:""});
+ const [visitorRequestBusy,setVisitorRequestBusy]=useState(false);
+ const [visitorRequestStatus,setVisitorRequestStatus]=useState("");
  const [callOpen,setCallOpen]=useState(false);
  const [storedCustomerId,setStoredCustomerId]=useState<string>("");
  const [callInstance,setCallInstance]=useState(0);
@@ -99,6 +102,17 @@ export default function Customer(){
 
  async function placeOrder(){if(!business||!cartItems.length)return;setStatus("Placing order…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:cartItems.map(x=>({menu_item_id:x.id,quantity:x.quantity})),context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(!r.ok){setStatus(d.detail||"Unable to place order");return}setOrder(d);setCart({});setActive("home");setStatus("Order placed successfully");}
 
+ async function submitVisitorRequest(e:React.FormEvent){
+  e.preventDefault(); if(!business)return;
+  setVisitorRequestBusy(true);setVisitorRequestStatus("");
+  try{
+   const r=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(business.slug)+"/security/requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(visitorRequest)});
+   const d=await r.json(); if(!r.ok)throw new Error(d.detail||"Unable to submit visitor request");
+   setVisitorRequestStatus("Request submitted and pending security approval. Entry is not yet authorized.");
+   setVisitorRequest(v=>({...v,visitor_name:"",visitor_mobile:"",purpose:"",destination:"",vehicle_number:""}));
+  }catch(e:any){setVisitorRequestStatus(e.message||"Unable to submit visitor request");}finally{setVisitorRequestBusy(false);}
+ }
+
  async function startTeamCall(){
   if(!business)return;
   setCallInstance(x=>x+1);
@@ -140,6 +154,7 @@ export default function Customer(){
    {business.features?.digital_menu&&<button className="card" onClick={()=>setActive("menu")}>📖 Menu</button>}
    {business.features?.games&&<button className="card" onClick={()=>setActive("games")}>🎮 Play</button>}
    {business.features?.ai_voice&&<button className="card" onClick={startTeamCall}>📞 Call Team</button>}
+   {business.features?.security_visitor_management&&<button className="card" onClick={()=>setActive("visitor")}>🛡️ Visitor request</button>}
    {business.features?.call_waiter&&<button className="card" onClick={()=>callWaiter("waiter")}>🔔 Call Waiter</button>}
    {order&&<button className="card" onClick={()=>setActive("bill")}>💳 Bill</button>}
    {delivered&&<button className="card" onClick={()=>setActive("feedback")}>⭐ Feedback</button>}
@@ -150,6 +165,22 @@ export default function Customer(){
    {business.features?.games&&<article className="card"><h2>🎮 Relax & play</h2><p>All six mini games run locally in your browser.</p><button onClick={()=>setActive("games")}>Play now</button></article>}
    {business.features?.digital_menu&&<article className="card"><h2>📖 Menu</h2><p>{items.length?items.length+" items available":"Menu is being prepared."}</p><button onClick={()=>setActive("menu")}>Browse menu</button></article>}
    {business.features?.ai_chat&&<article className="card"><h2>🤖 AI Assistant</h2><p>Ask about the menu, order, business or anything you need.</p><button onClick={()=>location.href="/customer/assistant?business="+encodeURIComponent(business.slug)}>Ask AI</button></article>}
+  </section>}
+
+  {active==="visitor"&&business.features?.security_visitor_management&&<section className="card">
+   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}><h2>🛡️ Visitor access request</h2><button onClick={()=>setActive("home")}>Back</button></div>
+   <p>Send a request to the security team. This does not approve entry.</p>
+   <form onSubmit={submitVisitorRequest} className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))"}}>
+    <label>Your name<input required maxLength={160} value={visitorRequest.name} onChange={e=>setVisitorRequest(v=>({...v,name:e.target.value}))}/></label>
+    <label>Your phone<input required minLength={5} maxLength={32} value={visitorRequest.phone} onChange={e=>setVisitorRequest(v=>({...v,phone:e.target.value}))}/></label>
+    <label>Visitor name<input required maxLength={160} value={visitorRequest.visitor_name} onChange={e=>setVisitorRequest(v=>({...v,visitor_name:e.target.value}))}/></label>
+    <label>Visitor mobile<input maxLength={32} value={visitorRequest.visitor_mobile} onChange={e=>setVisitorRequest(v=>({...v,visitor_mobile:e.target.value}))}/></label>
+    <label>Purpose<input required maxLength={240} value={visitorRequest.purpose} onChange={e=>setVisitorRequest(v=>({...v,purpose:e.target.value}))}/></label>
+    <label>Host / department<input required maxLength={240} value={visitorRequest.destination} onChange={e=>setVisitorRequest(v=>({...v,destination:e.target.value}))}/></label>
+    <label>Vehicle number<input maxLength={40} value={visitorRequest.vehicle_number} onChange={e=>setVisitorRequest(v=>({...v,vehicle_number:e.target.value}))}/></label>
+    <div><button disabled={visitorRequestBusy}>{visitorRequestBusy?"Submitting…":"Submit for approval"}</button></div>
+   </form>
+   {visitorRequestStatus&&<p role="status" aria-live="polite">{visitorRequestStatus}</p>}
   </section>}
 
   {active==="menu"&&<section className="card"><div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center"}}><h2>📖 Digital Menu</h2><button onClick={()=>setActive("home")}>Back</button></div>{cats.map((cat:any)=><div key={cat.id}><h3>{cat.name}</h3><div className="grid">{items.filter(x=>x.category_id===cat.id).map(x=><article className="card" key={x.id}><h3>{x.name}</h3><p>{x.description}</p><strong>₹{x.price}</strong><div><button onClick={()=>remove(x.id)}>-</button><span style={{padding:"0 12px"}}>{cart[x.id]||0}</span><button onClick={()=>add(x.id)}>+</button></div></article>)}</div></div>)}{items.filter(x=>!x.category_id).map(x=><article className="card" key={x.id}><h3>{x.name}</h3><p>{x.description}</p><strong>₹{x.price}</strong><button onClick={()=>add(x.id)}>Add</button></article>)}{cartItems.length>0&&<div className="card"><strong>Cart: ₹{total}</strong><button onClick={placeOrder}>Place order</button></div>}</section>}

@@ -13,6 +13,7 @@ export type NavItem = {
 export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard",           label: "Overview",             icon: "LayoutDashboard", exact: true, labelKey: "nav.tenant.overview" },
   { href: "/dashboard/calls",     label: "Calls & Transcripts",   icon: "Phone" },
+  { href: "/dashboard/security",   label: "Security & Visitors", icon: "ShieldCheck" },
   { href: "/dashboard/qr",        label: "QR codes",              icon: "QrCode", labelKey: "nav.tenant.qr" },
   { href: "/dashboard/orders",    label: "Orders",                icon: "ClipboardList", labelKey: "nav.tenant.orders" },
   { href: "/dashboard/bookings",  label: "Bookings",              icon: "CalendarDays", labelKey: "nav.tenant.bookings" },
