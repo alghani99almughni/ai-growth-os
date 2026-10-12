@@ -7,7 +7,9 @@ request endpoint only; approval and gate transitions require a human role.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 import secrets
 from datetime import datetime, timedelta
@@ -18,6 +20,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+import qrcode
 
 from .config import settings
 from .db import SessionLocal
@@ -214,6 +217,23 @@ def create_ai_request(tenant_id: str, body: VisitorRequestInput, user: User = De
     """Create a pending visitor request for AI chat/voice workflows. Never grants access."""
     tenant_access(tenant_id, user, db)
     return _create_pass(tenant_id, body, user, db, needs_approval=True)
+
+
+@router.post("/qr")
+def render_qr(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
+    """Render a QR image only for a token belonging to an unexpired pass in this tenant."""
+    tenant_access(tenant_id, user, db)
+    digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
+    if not p:
+        raise HTTPException(404, "Visitor token not found for this tenant")
+    if p.status not in {"pending", "approved"} or (p.expires_at and p.expires_at <= datetime.utcnow()):
+        raise HTTPException(409, "QR can only be rendered for a current visitor pass")
+    image = qrcode.make(body.token)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return {"image_data_url": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"),
+            "pass_id": p.id, "status": p.status}
 
 
 @router.post("/verify-token")
