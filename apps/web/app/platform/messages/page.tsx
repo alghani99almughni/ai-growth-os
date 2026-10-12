@@ -1,9 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
+import PlatformEmailPage from "../email/page";
+import PlatformWhatsAppPage from "../whatsapp/page";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function MessagesPage() {
+  const [activeTab, setActiveTab] = useState<"campaigns" | "whatsapp" | "email">("campaigns");
   const [items, setItems] = useState<any[]>([]);
   const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -159,6 +162,14 @@ export default function MessagesPage() {
 
   return (
     <div>
+      <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 18, marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: 26, color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
+        <p style={{ margin: "6px 0 14px", color: "#75839a", fontSize: 13 }}>Campaigns, WhatsApp and email in one dashboard workspace.</p>
+        <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {([{id:"campaigns",label:"Campaigns"},{id:"whatsapp",label:"WhatsApp"},{id:"email",label:"Email"}] as const).map(tab => <button key={tab.id} role="tab" aria-selected={activeTab===tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding:"9px 15px", borderRadius:9, border:"1px solid "+(activeTab===tab.id?"#5b5cf0":"#d7dce5"), background:activeTab===tab.id?"#5b5cf0":"#fff", color:activeTab===tab.id?"#fff":"#344054", fontWeight:650, cursor:"pointer" }}>{tab.label}</button>)}
+        </div>
+      </section>
+      {activeTab === "whatsapp" ? <PlatformWhatsAppPage /> : activeTab === "email" ? <PlatformEmailPage /> : <>
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
         <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for WhatsApp and email campaigns, prospect contacts, platform inboxes, replies, and delivery results. Campaigns use AI Growth OS platform-owned channels, not tenant credentials.</p>
@@ -337,6 +348,7 @@ export default function MessagesPage() {
           </table>
         </div>
       )}
+      </>}
     </div>
   );
 }
