@@ -396,7 +396,7 @@ def _feature_config(db,tenant_id):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
     tenant=db.get(Tenant,tenant_id)
     cfg=dict(FEATURE_DEFAULTS)
-    if tenant: cfg.update(INDUSTRY_FEATURES.get((tenant.industry or "").lower(),{}))
+    if tenant: cfg.update(INDUSTRY_FEATURES.get((getattr(tenant, "industry", "") or "").lower(),{}))
     platform=db.scalar(select(PlatformSetting).where(PlatformSetting.key=="feature_defaults"))
     if platform:
         try: cfg.update(json.loads(platform.value_json))
