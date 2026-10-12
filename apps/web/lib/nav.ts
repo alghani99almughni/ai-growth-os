@@ -27,6 +27,8 @@ export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard/agent",      label: "Voice agent",           icon: "Bot", labelKey: "nav.tenant.agent" },
   { href: "/dashboard/errors",     label: "Call errors",           icon: "AlertTriangle", labelKey: "nav.tenant.errors" },
   { href: "/dashboard/support",    label: "Support",               icon: "LifeBuoy", labelKey: "nav.tenant.support" },
+  { href: "/dashboard/email",      label: "Email",                 icon: "Mail" },
+  { href: "/dashboard/whatsapp",   label: "WhatsApp",              icon: "MessageCircle" },
 ];
 
 export const ADMIN_NAV: NavItem[] = [
@@ -42,5 +44,7 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/settings",    label: "Settings",            icon: "Settings2", labelKey: "nav.settings" },
   { href: "/platform/tickets",     label: "Tickets",              icon: "LifeBuoy", labelKey: "nav.tickets" },
   { href: "/platform/messages",    label: "Communications",       icon: "MessageSquare", labelKey: "nav.messages" },
+  { href: "/platform/email",      label: "Email",                 icon: "Mail" },
+  { href: "/platform/whatsapp",   label: "WhatsApp",              icon: "MessageCircle" },
   { href: "/platform/calendar",    label: "Calendar",              icon: "CalendarDays", labelKey: "nav.calendar" },
 ];
