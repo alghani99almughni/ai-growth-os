@@ -160,8 +160,8 @@ export default function MessagesPage() {
   return (
     <div>
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform Communications</h2>
-        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>Send outreach using AI Growth OS platform-owned WhatsApp and email credentials, not tenant channel credentials.</p>
+        <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
+        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for WhatsApp and email campaigns, prospect contacts, platform inboxes, replies, and delivery results. Campaigns use AI Growth OS platform-owned channels, not tenant credentials.</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
           <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Select tenant recipients
             <select multiple value={campaignTenants} onChange={e => setCampaignTenants(Array.from(e.target.selectedOptions, o => o.value))} style={{ ...inputStyle, minHeight: 130 }}>
