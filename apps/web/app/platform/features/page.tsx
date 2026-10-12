@@ -20,6 +20,7 @@ const FEATURE_LABELS: Record<string, string> = {
   google_review: "Google review",
   bookings: "Bookings",
   queue: "Queue",
+  security_visitor_management: "Security & Visitor Management",
 };
 
 export default function FeatureDefaultsPage() {
