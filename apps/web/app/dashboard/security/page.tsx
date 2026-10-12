@@ -12,7 +12,7 @@ export default function SecurityPage(){
  useEffect(()=>{try{const t=JSON.parse(localStorage.getItem("ago_tenant")||"null");if(t?.id)setTenantId(t.id)}catch{}setToken(localStorage.getItem("ago_access_token")||"")},[]);
  useEffect(()=>{load()},[load]);
  async function action(path:string,body?:unknown){setBusy(true);setError("");try{const r=await fetch(base()+path,{method:body?"POST":"POST",headers:headers(),body:body?JSON.stringify(body):undefined});const j=await r.json();if(!r.ok)throw new Error(j.detail||"Action failed");if(j.qr_token)setPassToken(j.qr_token);await load()}catch(e:any){setError(e.message||"Action failed")}finally{setBusy(false)}}
- async function create(e:React.FormEvent){e.preventDefault();await action("/passes",{visitor_name:name,visitor_mobile:mobile,purpose,destination,vehicle_number:vehicle,needs_approval:true,valid_hours:24});setName("");setMobile("");setPurpose("");setDestination("");setVehicle("")}
+ async function create(e:React.FormEvent){e.preventDefault();await action("/passes",{visitor_name:name,visitor_mobile:mobile,purpose,destination,vehicle_number:vehicle,industry,needs_approval:true,valid_hours:24});setName("");setMobile("");setPurpose("");setDestination("");setVehicle("")}
  if(!tenantId||!token)return <main style={{padding:32}}>Please sign in to your tenant dashboard to use Security & Visitor Management.</main>;
  const input={width:"100%",padding:"10px 12px",border:"1px solid #d7dce5",borderRadius:8,marginTop:5,boxSizing:"border-box" as const};
  const button={padding:"8px 12px",border:"1px solid #d7dce5",borderRadius:8,background:"#fff",cursor:"pointer" as const};
