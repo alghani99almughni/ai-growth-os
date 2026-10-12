@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi import HTTPException
 
+import app.routes_security as security_routes
 from app.routes_security import PassInput, VisitorRequestInput, tenant_access
 
 
@@ -50,3 +51,14 @@ def test_platform_admin_still_requires_module_enabled_for_target_tenant():
     ]
     user = SimpleNamespace(tenant_id="platform-tenant", role="platform_admin")
     tenant_access("tenant-a", user, db)
+
+
+def test_create_pass_rejects_approval_bypass(monkeypatch):
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(security_routes, "admin_only", lambda user: None)
+    user = SimpleNamespace(id="user-1", role="owner")
+    body = PassInput(visitor_name="Guest", needs_approval=False)
+    with pytest.raises(HTTPException) as exc:
+        security_routes.create_pass("tenant-a", body, user=user, db=Mock())
+    assert exc.value.status_code == 422
+    assert "human approval" in exc.value.detail.lower()
