@@ -55,8 +55,8 @@ async def upload_campaign_media(file: UploadFile = File(...), user=Depends(requi
         raise HTTPException(413, "Campaign media limit is 16 MB")
     # Basic signature checks prevent mismatched extensions/content-types.
     signatures = {
-        "image/jpeg": data.startswith(b"\\xff\\xd8\\xff"),
-        "image/png": data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"),
+        "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+        "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
         "image/webp": len(data) > 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP",
         "video/mp4": len(data) > 12 and data[4:8] == b"ftyp",
         "video/3gpp": len(data) > 12 and data[4:8] == b"ftyp",
