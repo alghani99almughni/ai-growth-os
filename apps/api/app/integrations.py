@@ -71,6 +71,25 @@ class WhatsAppAdapter:
                 r.raise_for_status(); return r.json()
         raise RuntimeError("Unsupported WhatsApp provider: " + provider)
 
+    async def send_media(self, to: str, media_url: str, media_type: str, caption: str = "") -> dict:
+        """Send a public image/video URL via Meta Cloud API. OpenWA media is intentionally unsupported until its API contract is verified."""
+        provider = (self.provider or "openwa").lower()
+        if provider != "meta":
+            raise RuntimeError("Media campaigns currently require the Meta WhatsApp Cloud API provider; OpenWA media endpoint is not verified")
+        if not self.access_token or not self.phone_number_id:
+            raise RuntimeError("WhatsApp Business Platform is not configured")
+        if media_type not in ("image", "video"):
+            raise RuntimeError("Only image and video media are supported")
+        media = {"link": media_url}
+        if caption:
+            media["caption"] = caption[:1024]
+        payload = {"messaging_product": "whatsapp", "to": to.lstrip("+"), "type": media_type, media_type: media}
+        url = "https://graph.facebook.com/" + (getattr(__import__("app.config", fromlist=["settings"]), "settings").meta_graph_api_version or "v23.0") + "/" + self.phone_number_id + "/messages"
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(url, headers={"Authorization": "Bearer " + self.access_token}, json=payload)
+            r.raise_for_status()
+            return r.json()
+
     @staticmethod
     def verify_webhook(raw_body: bytes, signature: str | None, secret: str) -> bool:
         if not secret: return True
