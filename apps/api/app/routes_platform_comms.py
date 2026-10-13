@@ -258,6 +258,8 @@ async def platform_whatsapp_configure(
                 )
                 r.raise_for_status()
                 session = r.json()
+                if str(session.get("status") or "").lower() != "ready":
+                    raise ValueError("OpenWA session is not ready (status=" + str(session.get("status") or "unknown") + ")")
                 connected_phone = session.get("phoneNumber") or session.get("phone")
         except Exception as exc:
             raise HTTPException(400, "OpenWA credentials could not be validated: " + str(exc))
@@ -365,10 +367,16 @@ async def platform_whatsapp_send(
         logger.exception("platform whatsapp send failed tenant=%s", tenant_id)
         raise HTTPException(502, "Send failed: " + str(exc))
 
+    if not result.get("ok"):
+        logger.warning("platform whatsapp provider did not accept send tenant=%s error=%s",
+                       tenant_id, result.get("error") or "unknown")
+        raise HTTPException(502, "WhatsApp send failed: " + str(result.get("error") or "provider error"))
+
     try:
         audit(db, tenant_id=tenant_id, actor_id=user.id,
               action="platform.whatsapp_sent", target_type="tenant",
-              target_id=tenant_id, detail={"phone": payload.phone, "len": len(payload.text)})
+              target_id=tenant_id, detail={"phone": payload.phone, "len": len(payload.text),
+                                           "channel": result.get("channel"), "fell_back": result.get("fell_back", False)})
     except Exception:
         pass
 
@@ -411,7 +419,7 @@ def platform_email_configure(
     if not tenant:
         raise HTTPException(404, "Tenant not found")
 
-    from .email_integration import build_config_from_input, create_account, test_connection_sync
+    from .email_integration import build_config_from_input, create_account, test_connection_sync, test_smtp_connection_sync
 
     cfg = build_config_from_input(payload.provider, payload.model_dump(exclude_none=True))
     missing = [k for k in ("imap_host", "imap_port", "imap_user", "imap_password",
@@ -423,6 +431,9 @@ def platform_email_configure(
     test = test_connection_sync(cfg)
     if not test.get("ok"):
         raise HTTPException(400, "IMAP connection failed: " + str(test.get("error")))
+    smtp_test = test_smtp_connection_sync(cfg)
+    if not smtp_test.get("ok"):
+        raise HTTPException(400, "SMTP connection failed: " + str(smtp_test.get("error")))
 
     result = create_account(
         db, tenant_id,
