@@ -19,7 +19,7 @@ class WhatsAppAdapter:
         provider = (self.provider or "openwa").lower()
         if provider == "openwa":
             if not self.openwa_base_url or not self.openwa_api_key or not self.openwa_session_id: raise RuntimeError("OpenWA WhatsApp is not configured")
-            chat_id = to if "@" in to else to.lstrip("+") + "@c.us"
+            chat_id = to if "@" in to else to.lstrip("+") + "@s.whatsapp.net"
             url = self.openwa_base_url.rstrip("/") + "/api/sessions/" + self.openwa_session_id + "/messages/send-text"
             with httpx.Client(timeout=20) as client:
                 r = client.post(url, headers={"X-API-Key": self.openwa_api_key}, json={"chatId": chat_id, "text": text}); r.raise_for_status(); return r.json()
@@ -35,7 +35,7 @@ class WhatsAppAdapter:
         if provider == "openwa":
             if not self.openwa_base_url or not self.openwa_api_key or not self.openwa_session_id:
                 raise RuntimeError("OpenWA WhatsApp is not configured")
-            chat_id = to if "@" in to else to.lstrip("+") + "@c.us"
+            chat_id = to if "@" in to else to.lstrip("+") + "@s.whatsapp.net"
             url = self.openwa_base_url.rstrip("/") + "/api/sessions/" + self.openwa_session_id + "/messages/send-text"
             async with httpx.AsyncClient(timeout=20) as client:
                 r = await client.post(url, headers={"X-API-Key": self.openwa_api_key}, json={"chatId": chat_id, "text": text})
@@ -55,7 +55,7 @@ class WhatsAppAdapter:
         if provider == "openwa":
             if not self.openwa_base_url or not self.openwa_api_key or not self.openwa_session_id:
                 raise RuntimeError("OpenWA WhatsApp is not configured")
-            chat_id = to if "@" in to else to.lstrip("+") + "@c.us"
+            chat_id = to if "@" in to else to.lstrip("+") + "@s.whatsapp.net"
             url = self.openwa_base_url.rstrip("/") + "/api/sessions/" + self.openwa_session_id + "/messages/send-template"
             async with httpx.AsyncClient(timeout=20) as client:
                 r = await client.post(url, headers={"X-API-Key": self.openwa_api_key}, json={"chatId": chat_id, "templateName": template_name, "vars": variables})
