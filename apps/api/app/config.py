@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     platform_email_smtp_user:str=""
     platform_email_smtp_password:str=""
     platform_email_smtp_starttls:bool=True; platform_email_smtp_use_tls:bool=False
+    media_s3_bucket:str=""
+    media_s3_region:str=""
+    media_s3_endpoint_url:str=""
+    media_s3_access_key_id:str=""
+    media_s3_secret_access_key:str=""
+    media_public_base_url:str=""
     model_config=SettingsConfigDict(env_file=".env",extra="ignore")
 
 settings=Settings()
