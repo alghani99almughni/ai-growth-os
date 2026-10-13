@@ -570,7 +570,7 @@ async def platform_communications_campaign(
             "tenant_id": None, "name": recipient.name.strip() or recipient.phone or recipient.email,
             "phone": recipient.phone, "email": str(recipient.email) if recipient.email else None,
         })
-    from .notifications import send_email, send_platform_whatsapp
+    from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
     from .models_email import PlatformContactPreference
     import re
     results = []
@@ -587,7 +587,10 @@ async def platform_communications_campaign(
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
             else:
                 whatsapp_body = body + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
-                result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
+                if payload.media_url:
+                    result["channels"]["whatsapp"] = await send_platform_whatsapp_media(target["phone"], payload.media_url, payload.media_type or "image", whatsapp_body)
+                else:
+                    result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
         if "email" in channels:
             if not target["email"]:
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
