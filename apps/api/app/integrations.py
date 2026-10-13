@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import hmac
 import httpx
+from .config import settings
 
 @dataclass
 class WhatsAppAdapter:
@@ -84,7 +85,7 @@ class WhatsAppAdapter:
         if caption:
             media["caption"] = caption[:1024]
         payload = {"messaging_product": "whatsapp", "to": to.lstrip("+"), "type": media_type, media_type: media}
-        url = "https://graph.facebook.com/" + (getattr(__import__("app.config", fromlist=["settings"]), "settings").meta_graph_api_version or "v23.0") + "/" + self.phone_number_id + "/messages"
+        url = "https://graph.facebook.com/" + (settings.meta_graph_api_version or "v23.0") + "/" + self.phone_number_id + "/messages"
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.post(url, headers={"Authorization": "Bearer " + self.access_token}, json=payload)
             r.raise_for_status()
