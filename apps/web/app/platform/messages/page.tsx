@@ -273,6 +273,7 @@ export default function MessagesPage() {
       )}
 
       {activeTab === "messages" && (
+      <>
       <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>Platform Messages</h1>
@@ -356,6 +357,7 @@ export default function MessagesPage() {
         </div>
       )}
 
+      </>
       )}
       </>}
     </div>
