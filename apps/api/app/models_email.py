@@ -70,6 +70,8 @@ class EmailLog(Base):
     error = Column(Text, nullable=True)
 
     ticket_id = Column(String, nullable=True, index=True)
+    in_reply_to = Column(String, nullable=True, index=True)
+    references_header = Column(Text, nullable=True)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
 
