@@ -75,6 +75,7 @@ from .voice_escalate import router as voice_escalate_router
 from .routes_onboarding import router as onboarding_router
 from .industry_catalog import router as industry_catalog_router
 from .routes_platform_comms import router as platform_comms_router
+from .routes_campaign_media import router as campaign_media_router
 from .voice_runtime import VoiceTurnController
 from .agent_training import AGENT_TRAINING_CONTEXT
 
@@ -108,6 +109,7 @@ app.include_router(voice_escalate_router)
 app.include_router(onboarding_router)
 app.include_router(industry_catalog_router)
 app.include_router(platform_comms_router)
+app.include_router(campaign_media_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[x.strip() for x in settings.allowed_origins.split(",") if x.strip()],
