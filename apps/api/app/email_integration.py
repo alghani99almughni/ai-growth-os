@@ -133,6 +133,8 @@ async def send_reply_smtp(
     msg = EmailMessage()
     msg["From"] = cfg["smtp_user"]
     msg["To"] = to_address
+    sender_domain = cfg["smtp_user"].rsplit("@", 1)[-1] if "@" in cfg["smtp_user"] else "localhost"
+    msg["Message-ID"] = f"<{uuid.uuid4()}@{sender_domain}>"
     clean_subject = (subject or "").strip()
     msg["Subject"] = clean_subject if clean_subject.lower().startswith("re:") else "Re: " + clean_subject
     if in_reply_to:
@@ -153,6 +155,7 @@ async def send_reply_smtp(
         use_tls=bool(cfg.get("smtp_use_tls", False) or int(cfg.get("smtp_port", 0)) == 465),
         start_tls=bool(cfg.get("smtp_starttls", True) and not (cfg.get("smtp_use_tls", False) or int(cfg.get("smtp_port", 0)) == 465)),
     )
+    return str(msg["Message-ID"])
 
 
 # ---------- Account CRUD helpers (used by main.py endpoints) ----------
