@@ -14,7 +14,6 @@ from .config import settings
 from .db import SessionLocal
 from .models import User
 from .security import decode_token_strict
-from . import jwt
 
 router = APIRouter()
 bearer = HTTPBearer(auto_error=False)
