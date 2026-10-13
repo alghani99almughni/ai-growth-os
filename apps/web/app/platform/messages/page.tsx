@@ -1,12 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import PlatformEmailPage from "../email/page";
-import PlatformWhatsAppPage from "../whatsapp/page";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function MessagesPage() {
-  const [activeTab, setActiveTab] = useState<"campaigns" | "whatsapp" | "email">("campaigns");
+  const [activeTab, setActiveTab] = useState<"whatsapp" | "whatsapp-promotional" | "email" | "messages">("whatsapp");
   const [items, setItems] = useState<any[]>([]);
   const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,10 +164,11 @@ export default function MessagesPage() {
         <h1 style={{ margin: 0, fontSize: 26, color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
         <p style={{ margin: "6px 0 14px", color: "#75839a", fontSize: 13 }}>Campaigns, WhatsApp and email in one dashboard workspace.</p>
         <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {([{id:"campaigns",label:"Campaigns"},{id:"whatsapp",label:"WhatsApp"},{id:"email",label:"Email"}] as const).map(tab => <button key={tab.id} role="tab" aria-selected={activeTab===tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding:"9px 15px", borderRadius:9, border:"1px solid "+(activeTab===tab.id?"#5b5cf0":"#d7dce5"), background:activeTab===tab.id?"#5b5cf0":"#fff", color:activeTab===tab.id?"#fff":"#344054", fontWeight:650, cursor:"pointer" }}>{tab.label}</button>)}
+          {([{id:"whatsapp",label:"WhatsApp Inbox"},{id:"whatsapp-promotional",label:"WhatsApp Promotional"},{id:"email",label:"Email Inbox"},{id:"messages",label:"Tenant Messages"}] as const).map(tab => <button key={tab.id} role="tab" aria-selected={activeTab===tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding:"9px 15px", borderRadius:9, border:"1px solid "+(activeTab===tab.id?"#5b5cf0":"#d7dce5"), background:activeTab===tab.id?"#5b5cf0":"#fff", color:activeTab===tab.id?"#fff":"#344054", fontWeight:650, cursor:"pointer" }}>{tab.label}</button>)}
         </div>
       </section>
-      {activeTab === "whatsapp" ? <PlatformWhatsAppPage /> : activeTab === "email" ? <PlatformEmailPage /> : <>
+      <>
+      {activeTab === "whatsapp-promotional" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
         <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for WhatsApp and email campaigns, prospect contacts, platform inboxes, replies, and delivery results. Campaigns use AI Growth OS platform-owned channels, not tenant credentials.</p>
@@ -182,9 +181,9 @@ export default function MessagesPage() {
           </label>
           <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
             <div style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Delivery channels</div>
-            {["whatsapp", "email"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
+            {["whatsapp"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
               <input type="checkbox" checked={campaignChannels.includes(channel)} onChange={e => setCampaignChannels(prev => e.target.checked ? [...prev, channel] : prev.filter(x => x !== channel))} />
-              {channel === "whatsapp" ? "Platform WhatsApp" : "Platform email"}
+              Platform WhatsApp
             </label>)}
             <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Email subject
               <input value={campaignSubject} onChange={e => setCampaignSubject(e.target.value)} style={inputStyle} />
@@ -212,6 +211,8 @@ export default function MessagesPage() {
           </div>)}
         </div>}
       </section>
+      )}
+      {activeTab === "whatsapp" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -238,6 +239,9 @@ export default function MessagesPage() {
             </div>}
           </div>)}
       </section>
+      )}
+
+      {activeTab === "email" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -266,6 +270,9 @@ export default function MessagesPage() {
               </div>}
           </div>)}
       </section>
+      )}
+
+      {activeTab === "messages" && (
       <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>Platform Messages</h1>
@@ -347,6 +354,8 @@ export default function MessagesPage() {
             </tbody>
           </table>
         </div>
+      )}
+
       )}
       </>}
     </div>
