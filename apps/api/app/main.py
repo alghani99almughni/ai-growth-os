@@ -36,6 +36,7 @@ from .website_templates import get_template as _get_site_template
 from .website_templates import merge_with_tenant as _merge_site_content
 from .routes_offline import router as offline_router
 from .routes_calls import router as calls_router
+from .routes_security import router as security_router
 from .config_validator import validate_environment
 from .logging_config import configure_logging
 from .middleware import RequestContextMiddleware
@@ -100,6 +101,7 @@ install_error_handlers(app)
 app.include_router(health_router)
 app.include_router(offline_router)
 app.include_router(calls_router)
+app.include_router(security_router)
 app.include_router(integration_router)
 app.include_router(social_router)
 app.include_router(voice_escalate_router)
@@ -377,7 +379,7 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     tenant=db.get(Tenant,u.tenant_id)
     if not tenant or tenant.status!="active": raise HTTPException(403,"Tenant is not active")
     return u
-FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True}
+FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True,"security_visitor_management":False}
 INDUSTRY_FEATURES={
     "restaurant":{"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},
     "cafe":{"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True},

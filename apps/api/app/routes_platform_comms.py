@@ -724,7 +724,10 @@ async def platform_email_inbox_reply(
         "smtp_use_tls": settings.platform_email_smtp_use_tls,
     }
     try:
-        await send_reply_smtp(cfg, row.from_address, row.subject, payload.body.strip())
+        await send_reply_smtp(
+            cfg, row.from_address, row.subject, payload.body.strip(),
+            in_reply_to=row.message_id, references=row.message_id,
+        )
     except Exception as exc:
         logger.warning("platform email reply failed message=%s: %s", message_id, exc)
         raise HTTPException(502, "Platform email reply failed; check SMTP configuration")

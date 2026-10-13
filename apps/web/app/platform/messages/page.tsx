@@ -1,12 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import PlatformEmailPage from "../email/page";
-import PlatformWhatsAppPage from "../whatsapp/page";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function MessagesPage() {
-  const [activeTab, setActiveTab] = useState<"campaigns" | "whatsapp" | "email">("campaigns");
+  const [activeTab, setActiveTab] = useState<"whatsapp" | "whatsapp-promotional" | "email" | "messages">("whatsapp");
   const [items, setItems] = useState<any[]>([]);
   const [tenants, setTenants] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,6 +113,20 @@ export default function MessagesPage() {
     setReplySending("");
   }
 
+  function importProspectCsv(file?: File) {
+    if (!file) return;
+    void file.text().then(text => {
+      setProspectLines(text.split(/\\r?\\n/).filter(Boolean).map(line => line.split(/[;,]/).map(v => v.trim()).join(",")).join("\\n"));
+      setStatus("Contact CSV loaded. Review the rows and confirm opt-in before sending.");
+    }).catch(() => setStatus("Could not read that CSV file."));
+  }
+
+  const whatsappTemplates: Record<string, string> = {
+    announcement: "Hello {{name}}, we have an update from AI Growth OS. Reply to this message if you would like more details.",
+    onboarding: "Hello {{name}}, your AI Growth OS workspace is ready. Reply if you need help getting started.",
+    support: "Hello {{name}}, our support team has an update on your request. Reply here if you still need assistance.",
+  };
+
   async function sendCampaign() {
     if (!campaignTenants.length && !prospectLines.trim()) { setStatus("Select tenants or paste prospect contacts."); return; }
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
@@ -166,10 +178,11 @@ export default function MessagesPage() {
         <h1 style={{ margin: 0, fontSize: 26, color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
         <p style={{ margin: "6px 0 14px", color: "#75839a", fontSize: 13 }}>Campaigns, WhatsApp and email in one dashboard workspace.</p>
         <div role="tablist" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {([{id:"campaigns",label:"Campaigns"},{id:"whatsapp",label:"WhatsApp"},{id:"email",label:"Email"}] as const).map(tab => <button key={tab.id} role="tab" aria-selected={activeTab===tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding:"9px 15px", borderRadius:9, border:"1px solid "+(activeTab===tab.id?"#5b5cf0":"#d7dce5"), background:activeTab===tab.id?"#5b5cf0":"#fff", color:activeTab===tab.id?"#fff":"#344054", fontWeight:650, cursor:"pointer" }}>{tab.label}</button>)}
+          {([{id:"whatsapp",label:"WhatsApp Inbox"},{id:"whatsapp-promotional",label:"WhatsApp Promotional"},{id:"email",label:"Email Inbox"},{id:"messages",label:"Tenant Messages"}] as const).map(tab => <button key={tab.id} role="tab" aria-selected={activeTab===tab.id} onClick={() => setActiveTab(tab.id)} style={{ padding:"9px 15px", borderRadius:9, border:"1px solid "+(activeTab===tab.id?"#5b5cf0":"#d7dce5"), background:activeTab===tab.id?"#5b5cf0":"#fff", color:activeTab===tab.id?"#fff":"#344054", fontWeight:650, cursor:"pointer" }}>{tab.label}</button>)}
         </div>
       </section>
-      {activeTab === "whatsapp" ? <PlatformWhatsAppPage /> : activeTab === "email" ? <PlatformEmailPage /> : <>
+      <>
+      {activeTab === "whatsapp-promotional" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
         <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for WhatsApp and email campaigns, prospect contacts, platform inboxes, replies, and delivery results. Campaigns use AI Growth OS platform-owned channels, not tenant credentials.</p>
@@ -182,9 +195,9 @@ export default function MessagesPage() {
           </label>
           <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
             <div style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Delivery channels</div>
-            {["whatsapp", "email"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
+            {["whatsapp"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
               <input type="checkbox" checked={campaignChannels.includes(channel)} onChange={e => setCampaignChannels(prev => e.target.checked ? [...prev, channel] : prev.filter(x => x !== channel))} />
-              {channel === "whatsapp" ? "Platform WhatsApp" : "Platform email"}
+              Platform WhatsApp
             </label>)}
             <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Email subject
               <input value={campaignSubject} onChange={e => setCampaignSubject(e.target.value)} style={inputStyle} />
@@ -194,6 +207,19 @@ export default function MessagesPage() {
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Prospect contact list (optional)
           <textarea value={prospectLines} onChange={e => setProspectLines(e.target.value)} rows={4} placeholder={"One contact per line: name,phone,email\nExample: Ayesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
           <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Paste only contacts who have opted in. You can send to selected tenants, prospects, or both.</span>
+        </label>
+        <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Import contacts from CSV
+          <input type="file" accept=".csv,text/csv" onChange={e => importProspectCsv(e.target.files?.[0])} style={{ ...inputStyle, padding: 8 }} />
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>Columns: name,phone,email. Imported rows remain editable above.</span>
+        </label>
+        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message template
+          <select defaultValue="" onChange={e => { if (e.target.value) setCampaignBody(whatsappTemplates[e.target.value] || ""); }} style={inputStyle}>
+            <option value="">Choose a starter template…</option>
+            <option value="announcement">Announcement</option>
+            <option value="onboarding">Tenant onboarding</option>
+            <option value="support">Support update</option>
+          </select>
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>These are editable text starters, not Meta-approved WhatsApp templates.</span>
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message
           <textarea value={campaignBody} onChange={e => setCampaignBody(e.target.value)} rows={4} maxLength={4000} placeholder="Write the message…" style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
@@ -212,6 +238,8 @@ export default function MessagesPage() {
           </div>)}
         </div>}
       </section>
+      )}
+      {activeTab === "whatsapp" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -238,6 +266,9 @@ export default function MessagesPage() {
             </div>}
           </div>)}
       </section>
+      )}
+
+      {activeTab === "email" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
@@ -266,6 +297,10 @@ export default function MessagesPage() {
               </div>}
           </div>)}
       </section>
+      )}
+
+      {activeTab === "messages" && (
+      <>
       <div style={{ marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>Platform Messages</h1>
@@ -348,7 +383,10 @@ export default function MessagesPage() {
           </table>
         </div>
       )}
-      </>}
+
+      </>
+      )}
+      </>
     </div>
   );
 }
