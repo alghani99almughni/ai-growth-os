@@ -109,6 +109,8 @@ def fetch_new_messages_sync(cfg: dict, limit: int = 20) -> list[dict]:
             out.append({
                 "uid": msg.uid,
                 "message_id": (msg.headers.get("message-id") or [""])[0],
+                "in_reply_to": (msg.headers.get("in-reply-to") or [""])[0],
+                "references": " ".join(msg.headers.get("references") or []),
                 "from": msg.from_,
                 "to": ", ".join(msg.to or []),
                 "subject": msg.subject or "",
@@ -118,12 +120,28 @@ def fetch_new_messages_sync(cfg: dict, limit: int = 20) -> list[dict]:
     return out
 
 
-async def send_reply_smtp(cfg: dict, to_address: str, subject: str, body: str) -> None:
-    """Send a plain-text reply over SMTP."""
+async def send_reply_smtp(
+    cfg: dict,
+    to_address: str,
+    subject: str,
+    body: str,
+    *,
+    in_reply_to: str | None = None,
+    references: str | None = None,
+) -> None:
+    """Send a plain-text reply, preserving RFC email thread headers when known."""
     msg = EmailMessage()
     msg["From"] = cfg["smtp_user"]
     msg["To"] = to_address
-    msg["Subject"] = "Re: " + subject if not subject.lower().startswith("re:") else subject
+    clean_subject = (subject or "").strip()
+    msg["Subject"] = clean_subject if clean_subject.lower().startswith("re:") else "Re: " + clean_subject
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to.strip()
+        chain = " ".join(x for x in ((references or "").strip(), in_reply_to.strip()) if x)
+        if chain:
+            msg["References"] = chain
+    elif references:
+        msg["References"] = references.strip()
     msg.set_content(body)
 
     await aiosmtplib.send(
