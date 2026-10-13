@@ -62,3 +62,29 @@ def test_create_pass_rejects_approval_bypass(monkeypatch):
         security_routes.create_pass("tenant-a", body, user=user, db=Mock())
     assert exc.value.status_code == 422
     assert "human approval" in exc.value.detail.lower()
+
+
+def test_verify_token_returns_stable_nested_pass_contract(monkeypatch):
+    """The dashboard consumes {valid: true, pass: {...}} from QR verification."""
+    from datetime import datetime
+    from app.routes_security import VerifyTokenInput
+
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    visitor_pass = SimpleNamespace(
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="approved", expires_at=None,
+        created_at=datetime(2026, 1, 1), checked_in_at=None, checked_out_at=None,
+    )
+    db = Mock()
+    db.scalar.return_value = visitor_pass
+    user = SimpleNamespace(id="user-1", role="security", tenant_id="tenant-a")
+
+    result = security_routes.verify_token(
+        "tenant-a", VerifyTokenInput(token="x" * 32), user=user, db=db
+    )
+
+    assert result["valid"] is True
+    assert result["pass"]["visitor_name"] == "Guest"
+    assert result["pass"]["status"] == "approved"
+    db.commit.assert_called_once()
