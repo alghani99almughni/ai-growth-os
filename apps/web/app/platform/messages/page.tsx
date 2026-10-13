@@ -113,6 +113,20 @@ export default function MessagesPage() {
     setReplySending("");
   }
 
+  function importProspectCsv(file?: File) {
+    if (!file) return;
+    void file.text().then(text => {
+      setProspectLines(text.split(/\\r?\\n/).filter(Boolean).map(line => line.split(/[;,]/).map(v => v.trim()).join(",")).join("\\n"));
+      setStatus("Contact CSV loaded. Review the rows and confirm opt-in before sending.");
+    }).catch(() => setStatus("Could not read that CSV file."));
+  }
+
+  const whatsappTemplates: Record<string, string> = {
+    announcement: "Hello {{name}}, we have an update from AI Growth OS. Reply to this message if you would like more details.",
+    onboarding: "Hello {{name}}, your AI Growth OS workspace is ready. Reply if you need help getting started.",
+    support: "Hello {{name}}, our support team has an update on your request. Reply here if you still need assistance.",
+  };
+
   async function sendCampaign() {
     if (!campaignTenants.length && !prospectLines.trim()) { setStatus("Select tenants or paste prospect contacts."); return; }
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
@@ -193,6 +207,19 @@ export default function MessagesPage() {
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Prospect contact list (optional)
           <textarea value={prospectLines} onChange={e => setProspectLines(e.target.value)} rows={4} placeholder={"One contact per line: name,phone,email\nExample: Ayesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
           <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Paste only contacts who have opted in. You can send to selected tenants, prospects, or both.</span>
+        </label>
+        <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Import contacts from CSV
+          <input type="file" accept=".csv,text/csv" onChange={e => importProspectCsv(e.target.files?.[0])} style={{ ...inputStyle, padding: 8 }} />
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>Columns: name,phone,email. Imported rows remain editable above.</span>
+        </label>
+        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message template
+          <select defaultValue="" onChange={e => { if (e.target.value) setCampaignBody(whatsappTemplates[e.target.value] || ""); }} style={inputStyle}>
+            <option value="">Choose a starter template…</option>
+            <option value="announcement">Announcement</option>
+            <option value="onboarding">Tenant onboarding</option>
+            <option value="support">Support update</option>
+          </select>
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>These are editable text starters, not Meta-approved WhatsApp templates.</span>
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message
           <textarea value={campaignBody} onChange={e => setCampaignBody(e.target.value)} rows={4} maxLength={4000} placeholder="Write the message…" style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
