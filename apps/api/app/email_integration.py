@@ -128,8 +128,8 @@ async def send_reply_smtp(
     *,
     in_reply_to: str | None = None,
     references: str | None = None,
-) -> None:
-    """Send a plain-text reply, preserving RFC email thread headers when known."""
+) -> str:
+    """Send a plain-text reply and return its outbound Message-ID."""
     msg = EmailMessage()
     msg["From"] = cfg["smtp_user"]
     msg["To"] = to_address
