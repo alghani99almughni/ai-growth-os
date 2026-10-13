@@ -3827,7 +3827,7 @@ def tenant_email_accounts_list(tenant_id, user: User = Depends(get_current_user)
 def tenant_email_accounts_create(tenant_id, payload: EmailAccountCreate,
                                   user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_tenant(user, tenant_id)
-    from .email_integration import build_config_from_input, create_account, test_connection_sync
+    from .email_integration import build_config_from_input, create_account, test_connection_sync, test_smtp_connection_sync
     cfg = build_config_from_input(payload.provider, payload.model_dump(exclude_none=True))
     missing = [k for k in ("imap_host", "imap_port", "imap_user", "imap_password", "smtp_host", "smtp_port", "smtp_user", "smtp_password") if not cfg.get(k)]
     if missing:
@@ -3835,6 +3835,9 @@ def tenant_email_accounts_create(tenant_id, payload: EmailAccountCreate,
     test = test_connection_sync(cfg)
     if not test.get("ok"):
         raise HTTPException(400, "IMAP connection failed: " + str(test.get("error")))
+    smtp_test = test_smtp_connection_sync(cfg)
+    if not smtp_test.get("ok"):
+        raise HTTPException(400, "SMTP connection failed: " + str(smtp_test.get("error")))
     return create_account(
         db, tenant_id,
         label=payload.label,
@@ -3861,7 +3864,7 @@ def tenant_email_accounts_test(tenant_id, account_id,
                                 user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     require_tenant(user, tenant_id)
     from .models_email import TenantEmailAccount
-    from .email_integration import decrypt_email_config, test_connection_sync
+    from .email_integration import decrypt_email_config, test_connection_sync, test_smtp_connection_sync
     row = db.scalar(select(TenantEmailAccount).where(
         TenantEmailAccount.id == account_id,
         TenantEmailAccount.tenant_id == tenant_id,
@@ -3869,7 +3872,10 @@ def tenant_email_accounts_test(tenant_id, account_id,
     if not row:
         raise HTTPException(404, "Email account not found")
     cfg = decrypt_email_config(row.config_encrypted)
-    return test_connection_sync(cfg)
+    imap_result = test_connection_sync(cfg)
+    smtp_result = test_smtp_connection_sync(cfg)
+    return {"ok": bool(imap_result.get("ok") and smtp_result.get("ok")),
+            "imap": imap_result, "smtp": smtp_result}
 
 
 @app.patch("/api/v1/tenants/{tenant_id}/email-accounts/{account_id}")
