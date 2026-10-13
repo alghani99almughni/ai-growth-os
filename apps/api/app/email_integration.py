@@ -98,6 +98,36 @@ def test_connection_sync(cfg: dict) -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def test_smtp_connection_sync(cfg: dict) -> dict:
+    """Verify SMTP TLS/authentication without sending an email."""
+    import smtplib
+    import ssl
+
+    host = str(cfg.get("smtp_host") or "").strip()
+    user = str(cfg.get("smtp_user") or "").strip()
+    password = str(cfg.get("smtp_password") or "")
+    port = int(cfg.get("smtp_port") or 0)
+    if not host or not user or not password or not port:
+        return {"ok": False, "error": "SMTP host, port, username and password are required"}
+
+    use_tls = bool(cfg.get("smtp_use_tls", False) or port == 465)
+    try:
+        if use_tls:
+            with smtplib.SMTP_SSL(host, port, timeout=12, context=ssl.create_default_context()) as smtp:
+                smtp.login(user, password)
+        else:
+            with smtplib.SMTP(host, port, timeout=12) as smtp:
+                smtp.ehlo()
+                if bool(cfg.get("smtp_starttls", True)):
+                    smtp.starttls(context=ssl.create_default_context())
+                    smtp.ehlo()
+                smtp.login(user, password)
+        return {"ok": True}
+    except Exception as exc:
+        # Never include the password in diagnostics.
+        return {"ok": False, "error": str(exc)[:240]}
+
+
 def fetch_new_messages_sync(cfg: dict, limit: int = 20) -> list[dict]:
     """Fetch unread messages from INBOX. Marks them as seen."""
     out: list[dict] = []
