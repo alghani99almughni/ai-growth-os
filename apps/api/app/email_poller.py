@@ -104,15 +104,34 @@ async def _process_message(db, account: TenantEmailAccount, cfg: dict, msg: dict
     if existing:
         return
 
+    message_id = (msg.get("message_id") or msg.get("uid") or str(uuid.uuid4())).strip()
+    in_reply_to = (msg.get("in_reply_to") or "").strip()
+    references_header = (msg.get("references") or "").strip()
+    thread_ids = set(references_header.split())
+    if in_reply_to:
+        thread_ids.add(in_reply_to)
+    parent_log = None
+    if thread_ids:
+        parent_log = db.scalar(
+            select(EmailLog).where(
+                EmailLog.tenant_id == account.tenant_id,
+                EmailLog.account_id == account.id,
+                EmailLog.message_id.in_(list(thread_ids)),
+            ).order_by(EmailLog.created_at.desc())
+        )
+
     log = EmailLog(
         id=str(uuid.uuid4()),
         tenant_id=account.tenant_id,
         account_id=account.id,
-        message_id=msg["message_id"] or msg["uid"],
+        message_id=message_id,
         from_address=msg["from"],
         to_address=msg["to"],
         subject=msg["subject"],
+        in_reply_to=in_reply_to or None,
+        references_header=references_header or None,
         outcome="skipped",
+        ticket_id=parent_log.ticket_id if parent_log else None,
     )
 
     try:
@@ -139,23 +158,30 @@ async def _process_message(db, account: TenantEmailAccount, cfg: dict, msg: dict
         log.outcome = "replied"
         log.reply_text = reply_text
 
-        # support@ -> auto-create a ticket
+        # Support replies with RFC threading headers update the existing ticket;
+        # only a genuinely new thread creates a new ticket.
         if account.role == "support":
             try:
-                from .tickets import create_ticket
-                ticket = create_ticket(
-                    db,
-                    tenant_id=account.tenant_id,
-                    subject=msg["subject"] or "(no subject)",
-                    body=body,
-                    category="support",
-                    priority="normal",
-                    created_by=None,
-                )
-                log.ticket_id = ticket["id"]
-                log.outcome = "ticket_created"
+                if parent_log and parent_log.ticket_id:
+                    from .tickets import reply
+                    reply(db, parent_log.ticket_id, body, from_tenant=True, actor_id=None)
+                    log.ticket_id = parent_log.ticket_id
+                    log.outcome = "ticket_updated"
+                else:
+                    from .tickets import create_ticket
+                    ticket = create_ticket(
+                        db,
+                        tenant_id=account.tenant_id,
+                        subject=msg["subject"] or "(no subject)",
+                        body=body,
+                        category="support",
+                        priority="normal",
+                        created_by=None,
+                    )
+                    log.ticket_id = ticket["id"]
+                    log.outcome = "ticket_created"
             except Exception as exc:
-                logger.warning("support ticket creation failed: %s", exc)
+                logger.warning("support ticket linkage failed: %s", exc)
 
     except Exception as exc:
         log.outcome = "failed"
