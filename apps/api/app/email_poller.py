@@ -153,7 +153,14 @@ async def _process_message(db, account: TenantEmailAccount, cfg: dict, msg: dict
         )
         reply_text = reply_result.get("reply") or "Thank you for your email. Our team will get back to you shortly."
 
-        await send_reply_smtp(cfg, msg["from"], msg["subject"], reply_text)
+        # Preserve RFC 5322 threading so the customer's next reply can be
+        # matched to this conversation and its support ticket.
+        original_message_id = (msg.get("message_id") or "").strip()
+        await send_reply_smtp(
+            cfg, msg["from"], msg["subject"], reply_text,
+            in_reply_to=original_message_id or None,
+            references=references_header or None,
+        )
 
         log.outcome = "replied"
         log.reply_text = reply_text
