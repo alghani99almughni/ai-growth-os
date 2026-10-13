@@ -36,6 +36,7 @@ from .website_templates import get_template as _get_site_template
 from .website_templates import merge_with_tenant as _merge_site_content
 from .routes_offline import router as offline_router
 from .routes_calls import router as calls_router
+from .routes_security import router as security_router
 from .config_validator import validate_environment
 from .logging_config import configure_logging
 from .middleware import RequestContextMiddleware
@@ -100,6 +101,7 @@ install_error_handlers(app)
 app.include_router(health_router)
 app.include_router(offline_router)
 app.include_router(calls_router)
+app.include_router(security_router)
 app.include_router(integration_router)
 app.include_router(social_router)
 app.include_router(voice_escalate_router)
