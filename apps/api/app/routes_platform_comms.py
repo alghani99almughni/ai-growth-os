@@ -514,6 +514,8 @@ class PlatformCampaignRequest(BaseModel):
     body: str = Field(min_length=1, max_length=4000)
     channels: list[str] = Field(min_length=1)
     consent_confirmed: bool = False
+    media_url: Optional[str] = Field(default=None, max_length=2000)
+    media_type: Optional[str] = Field(default=None, pattern="^(image|video)$")
 
 
 @router.post("/api/v1/platform/communications/campaign")
@@ -532,6 +534,10 @@ async def platform_communications_campaign(
         raise HTTPException(400, "channels must contain whatsapp and/or email")
     if not payload.consent_confirmed:
         raise HTTPException(400, "Confirm that every selected recipient has opted in before sending")
+    if payload.media_url and not payload.media_type:
+        raise HTTPException(400, "media_type must be image or video when media_url is supplied")
+    if payload.media_type and not payload.media_url:
+        raise HTTPException(400, "media_url is required when media_type is supplied")
     if not payload.tenant_ids and not payload.recipients:
         raise HTTPException(400, "Select tenant recipients or enter prospect contacts")
     body = payload.body.strip()
@@ -564,7 +570,7 @@ async def platform_communications_campaign(
             "tenant_id": None, "name": recipient.name.strip() or recipient.phone or recipient.email,
             "phone": recipient.phone, "email": str(recipient.email) if recipient.email else None,
         })
-    from .notifications import send_email, send_platform_whatsapp
+    from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
     from .models_email import PlatformContactPreference
     import re
     results = []
@@ -581,7 +587,10 @@ async def platform_communications_campaign(
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
             else:
                 whatsapp_body = body + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
-                result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
+                if payload.media_url:
+                    result["channels"]["whatsapp"] = await send_platform_whatsapp_media(target["phone"], payload.media_url, payload.media_type or "image", whatsapp_body)
+                else:
+                    result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
         if "email" in channels:
             if not target["email"]:
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}

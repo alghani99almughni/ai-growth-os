@@ -84,6 +84,16 @@ async def send_platform_whatsapp(to:str,text:str)->dict:
     except Exception as exc:
         return {"sent":False,"status":"failed","channel":"whatsapp","error":str(exc)}
 
+async def send_platform_whatsapp_media(to: str, media_url: str, media_type: str, caption: str = "") -> dict:
+    adapter = _platform_whatsapp()
+    if not adapter:
+        return {"sent": False, "status": "not_configured", "channel": "whatsapp"}
+    try:
+        result = await adapter.send_media(to, media_url, media_type, caption)
+        return {"sent": True, "status": "sent", "channel": "whatsapp", "provider_result": result}
+    except Exception as exc:
+        return {"sent": False, "status": "failed", "channel": "whatsapp", "error": str(exc)}
+
 async def send_owner_credentials(tenant,owner,temp_password:str)->dict:
     login_url=settings.public_app_url.rstrip("/")+"/login"
     body=(

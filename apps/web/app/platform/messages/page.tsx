@@ -20,6 +20,9 @@ export default function MessagesPage() {
   const [campaignBody, setCampaignBody] = useState("");
   const [consentConfirmed, setConsentConfirmed] = useState(false);
   const [campaignBusy, setCampaignBusy] = useState(false);
+  const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaType, setMediaType] = useState<"image" | "video" | "">("");
+  const [mediaUploading, setMediaUploading] = useState(false);
   const [campaignResult, setCampaignResult] = useState<any>(null);
   const [emailInbox, setEmailInbox] = useState<any>({ items: [], configured: false });
   const [emailInboxLoading, setEmailInboxLoading] = useState(false);
@@ -127,6 +130,27 @@ export default function MessagesPage() {
     support: "Hello {{name}}, our support team has an update on your request. Reply here if you still need assistance.",
   };
 
+  async function uploadCampaignMedia(file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/") && !file.type.startsWith("video/")) { setStatus("Choose an image or video file."); return; }
+    if (file.size > 16 * 1024 * 1024) { setStatus("Media upload limit is 16 MB."); return; }
+    const data = new FormData(); data.append("file", file);
+    setMediaUploading(true); setStatus("");
+    try {
+      const r = await fetch(api() + "/api/v1/platform/communications/media", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + (localStorage.getItem("ago_access_token") || "") },
+        body: data,
+      });
+      const x = await r.json();
+      if (!r.ok) throw new Error(x?.detail || "Media upload failed");
+      setMediaUrl(x.media_url);
+      setMediaType(file.type.startsWith("video/") ? "video" : "image");
+      setStatus("Media uploaded to durable storage. It will be sent with the WhatsApp campaign.");
+    } catch (e: any) { setStatus(e.message || "Media upload failed"); }
+    setMediaUploading(false);
+  }
+
   async function sendCampaign() {
     if (!campaignTenants.length && !prospectLines.trim()) { setStatus("Select tenants or paste prospect contacts."); return; }
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
@@ -142,7 +166,7 @@ export default function MessagesPage() {
     try {
       const r = await fetch(api() + "/api/v1/platform/communications/campaign", {
         method: "POST", headers: headers(),
-        body: JSON.stringify({ tenant_ids: campaignTenants, recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed }),
+        body: JSON.stringify({ tenant_ids: campaignTenants, recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed, media_url: mediaUrl || null, media_type: mediaType || null }),
       });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Campaign failed");
@@ -211,6 +235,11 @@ export default function MessagesPage() {
         <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Import contacts from CSV
           <input type="file" accept=".csv,text/csv" onChange={e => importProspectCsv(e.target.files?.[0])} style={{ ...inputStyle, padding: 8 }} />
           <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>Columns: name,phone,email. Imported rows remain editable above.</span>
+        </label>
+        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Optional WhatsApp image/video (max 16 MB)
+          <input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/3gpp" onChange={e => uploadCampaignMedia(e.target.files?.[0])} disabled={mediaUploading} style={{ ...inputStyle, padding: 8 }} />
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>{mediaUploading ? "Uploading…" : mediaUrl ? "Uploaded: " + mediaType + " · ready for WhatsApp campaign" : "Requires S3-compatible durable storage and Meta WhatsApp Cloud API credentials."}</span>
+          {mediaUrl && <button type="button" onClick={() => { setMediaUrl(""); setMediaType(""); }} style={{ marginTop: 6, border: "1px solid #d7dce5", borderRadius: 7, padding: "5px 9px", background: "#fff" }}>Remove media</button>}
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message template
           <select defaultValue="" onChange={e => { if (e.target.value) setCampaignBody(whatsappTemplates[e.target.value] || ""); }} style={inputStyle}>
