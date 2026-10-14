@@ -123,7 +123,7 @@ export default function PlatformCustomerMarketingPage() {
       <label style={{ display: "block", marginTop: 14, fontSize: 12, fontWeight: 700 }}>Message
         <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} placeholder={"Hi {{name}}, ..."} style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
       </label>
-      <p style={{ color: "#667085", fontSize: 12 }}>Personalization token supported: {{name}}. WhatsApp Business template rules may apply to business-initiated messages.</p>
+      <p style={{ color: "#667085", fontSize: 12 }}>Personalization token supported: {"{{name}}"}. WhatsApp Business template rules may apply to business-initiated messages.</p>
       <label style={{ display: "flex", gap: 9, alignItems: "flex-start", marginTop: 14, fontSize: 12, lineHeight: 1.5 }}>
         <input type="checkbox" checked={consentConfirmed} onChange={e => setConsentConfirmed(e.target.checked)} style={{ marginTop: 2 }} />
         I confirm these are my own contacts and the selected recipients have consented to receive the selected channel's messages.
