@@ -115,3 +115,17 @@ def test_public_registration_feature_is_opt_in_by_default():
     db = Mock()
     db.scalar.side_effect = [None, None]
     assert public_routes._tenant_feature_enabled(db, "tenant-uuid") is False
+
+
+def test_public_registration_fails_closed_until_full_lifecycle_sync():
+    with pytest.raises(HTTPException) as exc:
+        public_routes._require_lifecycle_ready({
+            "script_url": "https://script.google.com/macros/s/id/exec",
+            "legacy_tenant_code": "TNT-101",
+        })
+    assert exc.value.status_code == 503
+    assert "lifecycle" in exc.value.detail.lower()
+
+
+def test_public_registration_requires_explicit_lifecycle_ready_flag():
+    public_routes._require_lifecycle_ready({"visitor_lifecycle_sync_ready": True})
