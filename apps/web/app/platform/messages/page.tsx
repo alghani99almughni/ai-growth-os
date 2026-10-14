@@ -7,6 +7,7 @@ export default function MessagesPage() {
   const [activeTab, setActiveTab] = useState<"whatsapp" | "whatsapp-promotional" | "email" | "messages">("whatsapp");
   const [items, setItems] = useState<any[]>([]);
   const [tenants, setTenants] = useState<any[]>([]);
+  const [selectedInboxTenant, setSelectedInboxTenant] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
@@ -69,12 +70,12 @@ export default function MessagesPage() {
   async function loadWhatsAppInbox() {
     setWhatsappInboxLoading(true);
     try {
-      const r = await fetch(api() + "/api/v1/platform/communications/whatsapp/inbox", { headers: headers(), cache: "no-store" });
+      const r = await fetch(api() + "/api/v1/platform/tenant-comms/whatsapp/inbox?limit=200" + (selectedInboxTenant ? "&tenant_id=" + encodeURIComponent(selectedInboxTenant) : ""), { headers: headers(), cache: "no-store" });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Unable to load platform WhatsApp inbox");
       setWhatsappInbox(x);
       await loadReplyTemplates();
-      if (!x.configured || !x.webhook_secret_configured) setStatus("Platform WhatsApp inbox needs platform OpenWA credentials and webhook setup.");
+      
     } catch (e: any) { setStatus(e.message || "Unable to load platform WhatsApp inbox"); }
     setWhatsappInboxLoading(false);
   }
@@ -99,13 +100,12 @@ export default function MessagesPage() {
   async function loadEmailInbox() {
     setEmailInboxLoading(true);
     try {
-      const r = await fetch(api() + "/api/v1/platform/communications/email/inbox", { headers: headers(), cache: "no-store" });
+      const r = await fetch(api() + "/api/v1/platform/tenant-comms/email/inbox?limit=200" + (selectedInboxTenant ? "&tenant_id=" + encodeURIComponent(selectedInboxTenant) : ""), { headers: headers(), cache: "no-store" });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Unable to load platform inbox");
       setEmailInbox(x);
       await loadReplyTemplates();
-      if (x.poll_error) setStatus(x.poll_error);
-      else if (!x.configured) setStatus("Platform inbox needs platform-owned IMAP/SMTP credentials in Render environment settings.");
+      
     } catch (e: any) { setStatus(e.message || "Unable to load platform inbox"); }
     setEmailInboxLoading(false);
   }
@@ -283,8 +283,8 @@ export default function MessagesPage() {
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform WhatsApp Inbox</h2>
-            <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>Receive and reply to messages sent to the platform-owned WhatsApp number.</p>
+            <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Tenant WhatsApp Inbox</h2>
+            <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>View and reply using each tenant’s already-connected WhatsApp channel.</p>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <a href="/platform/templates" style={{background:"#f0efff",border:"1px solid #d9d5ff",borderRadius:9,padding:"9px 14px",color:"#4f46e5",fontSize:12,fontWeight:700,textDecoration:"none"}}>Reply templates & auto-reply</a>
@@ -293,12 +293,13 @@ export default function MessagesPage() {
             </button>
           </div>
         </div>
-        <p style={{ fontSize: 12, color: "#4b5563" }}>Webhook URL: <code>{whatsappInbox.webhook_url || (api() + "/api/v1/webhooks/platform/openwa")}</code></p>
-        {!whatsappInbox.configured || !whatsappInbox.webhook_secret_configured ? <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>Configure platform-owned OpenWA credentials and OPENWA_WEBHOOK_SECRET in Render, then set this webhook URL on the platform OpenWA session. Incoming messages will appear here after the provider sends webhook events.</p> : null}
-        {(whatsappInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No platform WhatsApp messages loaded yet.</p> :
+        <label style={{display:"block",marginTop:14,fontSize:12,color:"#344054"}}>Tenant filter (all tenants by default)<select value={selectedInboxTenant} onChange={e=>setSelectedInboxTenant(e.target.value)} style={inputStyle}><option value="">All tenants</option>{tenants.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+        <p style={{ fontSize: 12, color: "#4b5563" }}>Webhook URL: <code>{whatsappInbox.webhook_url || (api() + "/api/v1/webhooks/openwa/{tenant_id}")}</code></p>
+        {!whatsappInbox.configured || !whatsappInbox.webhook_secret_configured ? <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>The inbox uses existing tenant webhook connections; no separate platform WhatsApp credentials are required.</p> : null}
+        {(whatsappInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No tenant WhatsApp messages stored yet. New inbound messages appear after the tenant webhook receives them.</p> :
           whatsappInbox.items.map((m: any) => <div key={m.id} style={{ borderTop: "1px solid #edf0f5", marginTop: 14, paddingTop: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <strong style={{ color: "#17213a" }}>{m.contact_name || m.phone}</strong>
+              <strong style={{ color: "#17213a" }}>{m.contact_name || m.phone} · {m.tenant_name}</strong>
               <span style={{ color: "#75839a", fontSize: 11 }}>{m.created_at ? new Date(m.created_at).toLocaleString() : ""} · {m.direction} · {m.status}</span>
             </div>
             <div style={{ color: "#4b5563", fontSize: 12, margin: "5px 0" }}>{m.phone}</div>
@@ -316,8 +317,8 @@ export default function MessagesPage() {
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform Email Inbox</h2>
-            <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>Receive tenant emails and reply from the platform-owned mailbox.</p>
+            <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Tenant Email Inbox</h2>
+            <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>View and reply using each tenant’s connected mailbox.</p>
           </div>
           <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
             <a href="/platform/templates" style={{background:"#f0efff",border:"1px solid #d9d5ff",borderRadius:9,padding:"9px 14px",color:"#4f46e5",fontSize:12,fontWeight:700,textDecoration:"none"}}>Reply templates & auto-reply</a>
@@ -328,16 +329,17 @@ export default function MessagesPage() {
         </div>
         {emailInbox.from_address && <p style={{ fontSize: 12, color: "#4b5563" }}>Mailbox: {emailInbox.from_address}</p>}
         {emailInbox.poll_error && <p style={{ color: "#b6341f", fontSize: 12 }}>{emailInbox.poll_error}</p>}
-        {!emailInbox.configured && <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>Platform IMAP/SMTP credentials are not fully configured. Add PLATFORM_EMAIL_ADDRESS, PLATFORM_EMAIL_IMAP_HOST/PORT/USER/PASSWORD and PLATFORM_EMAIL_SMTP_HOST/PORT/USER/PASSWORD in Render API environment settings. No tenant credentials are used here.</p>}
-        {(emailInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No platform inbox messages loaded yet. Select “Refresh inbox” to check the configured mailbox.</p> :
+        {!emailInbox.configured && <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>This inbox reads existing tenant mailbox logs and replies through the selected tenant’s encrypted SMTP configuration.</p>}
+        <label style={{display:"block",marginTop:14,fontSize:12,color:"#344054"}}>Tenant filter (all tenants by default)<select value={selectedInboxTenant} onChange={e=>setSelectedInboxTenant(e.target.value)} style={inputStyle}><option value="">All tenants</option>{tenants.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+        {(emailInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No tenant email log entries yet. New messages appear after tenant mailbox polling processes them.</p> :
           emailInbox.items.map((m: any) => <div key={m.id} style={{ borderTop: "1px solid #edf0f5", marginTop: 14, paddingTop: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <strong style={{ color: "#17213a" }}>{m.subject || "(no subject)"}</strong>
-              <span style={{ color: "#75839a", fontSize: 11 }}>{m.received_at ? new Date(m.received_at).toLocaleString() : ""} · {m.status}</span>
+              <strong style={{ color: "#17213a" }}>{m.subject || "(no subject)"} · {m.tenant_name}</strong>
+              <span style={{ color: "#75839a", fontSize: 11 }}>{m.created_at ? new Date(m.created_at).toLocaleString() : ""} · {m.outcome}</span>
             </div>
             <div style={{ color: "#4b5563", fontSize: 12, margin: "5px 0" }}>From: {m.from_address}</div>
-            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "#4b5563", background: "#fafbfd", borderRadius: 8, padding: 12, maxHeight: 180, overflow: "auto" }}>{m.body}</pre>
-            {m.replied_at ? <p style={{ color: "#1d9c68", fontSize: 12 }}>Replied {new Date(m.replied_at).toLocaleString()}</p> :
+            <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "#4b5563", background: "#fafbfd", borderRadius: 8, padding: 12, maxHeight: 180, overflow: "auto" }}>{m.body || "(No stored body for older email log)"}</pre>
+            {m.outcome === "admin_replied" ? <p style={{ color: "#1d9c68", fontSize: 12 }}>Admin reply: {m.reply_text}</p> :
               <div style={{ display: "grid", gap: 8 }}>
                 <select defaultValue="" aria-label="Insert email reply template" onChange={e => { const t = replyTemplateItems.find((item: any) => item.id === e.target.value); if (t) setReplyDrafts(prev => ({ ...prev, [m.id]: t.body })); }} style={inputStyle}><option value="">Insert a saved email template…</option>{replyTemplateItems.filter((t: any) => t.channel === "email" && t.is_active).map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
                 <textarea value={replyDrafts[m.id] || ""} onChange={e => setReplyDrafts(prev => ({ ...prev, [m.id]: e.target.value }))} rows={3} placeholder={"Reply to " + m.from_address} style={{ ...inputStyle, fontFamily: "inherit" }} />
