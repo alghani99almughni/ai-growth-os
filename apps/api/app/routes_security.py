@@ -25,7 +25,7 @@ import qrcode
 from .config import settings
 from .db import SessionLocal
 from .models import Tenant, User
-from .models_growth import TenantSetting, PlatformSetting
+from .models_growth import TenantSetting
 from .models_security import SecuritySite, VisitorPass, VisitorEvent
 from .security import decode_token_strict
 
@@ -118,17 +118,12 @@ def tenant_access(tenant_id: str, user: User, db: Session, *, require_feature: b
         row = db.scalar(select(TenantSetting).where(
             TenantSetting.tenant_id == tenant_id, TenantSetting.key == "features"
         ))
-        defaults_row = db.scalar(select(PlatformSetting).where(PlatformSetting.key == "feature_defaults"))
         try:
             features = json.loads(row.value_json) if row else {}
         except (TypeError, ValueError):
             features = {}
-        try:
-            defaults = json.loads(defaults_row.value_json) if defaults_row else {}
-        except (TypeError, ValueError):
-            defaults = {}
-        # Tenant overrides take precedence; platform default is opt-in and false when absent.
-        enabled = features.get("security_visitor_management", defaults.get("security_visitor_management", False))
+        # This add-on is explicitly enabled per tenant. Platform defaults never grant access.
+        enabled = isinstance(features, dict) and features.get("security_visitor_management", False) is True
         if not enabled:
             raise HTTPException(403, "Security & Visitor Management is disabled for this tenant")
 
