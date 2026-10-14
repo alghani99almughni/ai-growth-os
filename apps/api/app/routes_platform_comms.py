@@ -552,6 +552,8 @@ async def platform_communications_campaign(
     from .models_email import PlatformContactPreference, PlatformMarketingContact
     import re
 
+    import uuid
+    campaign_id = str(uuid.uuid4())
     results = []
     for recipient in payload.recipients:
         phone = (recipient.phone or "").strip() or None
@@ -576,6 +578,8 @@ async def platform_communications_campaign(
             saved = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.email_norm == email_norm))
             if saved and all(saved.id != row.id for row in saved_matches):
                 saved_matches.append(saved)
+        if saved_matches:
+            result["contact_id"] = saved_matches[0].id
         whatsapp_contact_blocked = any(c.status != "active" or not c.whatsapp_opt_in for c in saved_matches)
         email_contact_blocked = any(c.status != "active" or not c.email_opt_in for c in saved_matches)
 
@@ -615,12 +619,47 @@ async def platform_communications_campaign(
         try:
             audit(db, tenant_id=None, actor_id=user.id,
                   action="platform.customer_communication_campaign",
-                  target_type="platform_customer_contact", target_id="manual-recipient",
-                  detail={"channels": sorted(channels), "consent_confirmed": True})
+                  target_type="platform_customer_contact", target_id=result.get("contact_id") or "manual-recipient",
+                  detail={"campaign_id": campaign_id, "name": name, "channels": sorted(channels),
+                          "delivery": {k:
+
+@router.get("/api/v1/platform/marketing/campaign-history")
+def platform_marketing_campaign_history(
+    limit: int = 100,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    """Return persisted per-recipient delivery outcomes from the platform audit ledger."""
+    import json
+    from .models_growth import AuditLog
+    rows = db.scalars(
+        select(AuditLog).where(AuditLog.action == "platform.customer_communication_campaign")
+        .order_by(AuditLog.created_at.desc()).limit(min(max(limit, 1), 500))
+    ).all()
+    items = []
+    for row in rows:
+        try:
+            detail = json.loads(row.detail_json or "{}")
         except Exception:
-            pass
+            detail = {}
+        items.append({
+            "id": row.id,
+            "campaign_id": detail.get("campaign_id"),
+            "contact_id": row.target_id if row.target_id != "manual-recipient" else None,
+            "name": detail.get("name", "External contact"),
+            "channels": detail.get("channels", []),
+            "delivery": detail.get("delivery", {}),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
+    return {"items": items, "count": len(items)}
+ {"sent": bool(v.get("sent")), "status": v.get("status", "unknown")}
+                                       for k, v in result["channels"].items()},
+                          "consent_confirmed": True})
+        except Exception:
+            logger.exception("could not persist platform campaign audit result")
 
     return {
+        "campaign_id": campaign_id,
         "selected": len(results),
         "sent": sum(1 for r in results for c in r["channels"].values() if c.get("sent")),
         "results": results,
