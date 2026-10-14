@@ -390,16 +390,20 @@ def get_current_user(request:Request,credentials:HTTPAuthorizationCredentials=De
         required=None
         if any(part in path for part in ("/staff","/roles","/departments")):
             required="team.manage"
-        elif "/services" in path:
+        elif any(part in path for part in ("/services","/products","/menu-items","/menu-categories")):
             required="services.view" if method in ("GET","HEAD") else "services.manage"
-        elif any(part in path for part in ("/appointments","/bookings","/queue")):
+        elif any(part in path for part in ("/appointments","/bookings","/queue","/service-requests","/calendar")):
             required="bookings.view" if method in ("GET","HEAD") else "bookings.manage"
-        elif any(part in path for part in ("/customers","/leads")):
+        elif any(part in path for part in ("/customers","/leads","/loyalty","/referrals")):
             required="customers.view" if method in ("GET","HEAD") else "customers.manage"
+        elif any(part in path for part in ("/orders","/bills","/payments")):
+            required="orders.view" if method in ("GET","HEAD") else "orders.manage"
         elif "/calls" in path:
             required="calls.view" if method in ("GET","HEAD") else "calls.manage"
         elif any(part in path for part in ("/email","/whatsapp","/messages")):
             required="communications.view" if method in ("GET","HEAD") else "communications.reply"
+        elif path.startswith("/api/v1/tenants/"):
+            required="dashboard.view" if method in ("GET","HEAD") else "settings.manage"
         if required:
             role_row=db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==u.tenant_id,RoleDefinition.name==u.role))
             try:
