@@ -42,9 +42,9 @@ This is a design/feature comparison, not a claim that each repository's current 
 
 ### P1 — Visitor-friendly QR entry
 
-- Implemented in this branch: tenant Security dashboard can generate a fixed registration QR pointing to `/visitor/{tenantSlug}`, and a mobile-first public web form is added without requiring PWA installation. The public endpoint posts to the existing SmartCheck Apps Script only when the tenant feature is enabled, an explicit legacy tenant mapping exists, and `AI_GROWTH_OS_BRIDGE_SECRET` is configured server-side.
+- Scaffolded in this branch: tenant Security dashboard can request a fixed registration QR pointing to `/visitor/{tenantSlug}`, and a mobile-first public web form is added without requiring PWA installation. The QR and public endpoint deliberately fail closed until a server-side `visitor_lifecycle_sync_ready=true` marker is set after list/approval/check-in/out/QR verification have all been integrated and tested. This prevents requests being written to Sheets where the existing dashboard cannot yet review them.
 - Collect only the fields required by that tenant's policy; default to visitor name and mobile, plus purpose, host/destination, and optional vehicle number where enabled.
-- Submit to SmartCheck as **Pending**; the API returns success only when Apps Script confirms a ticket ID. Never grant entry from public registration or an AI/chat/voice request. The bridge and UI changes still require tests and production configuration before being considered live.
+- Once the full lifecycle gate is implemented and verified, submit to SmartCheck as **Pending**; the API must return success only when Apps Script confirms a ticket ID. Never grant entry from public registration or an AI/chat/voice request. This submission path is intentionally not enabled in the current branch.
 - Offer PWA installation only as an optional convenience for repeat visitors.
 - Provide a reference/ticket and a status-check path that does not disclose another visitor's personal details.
 - Apply server-side rate limits, input limits, duplicate-submission protection, expiry, and tenant/site scoping.
