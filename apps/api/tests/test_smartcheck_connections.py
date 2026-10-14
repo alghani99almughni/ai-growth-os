@@ -66,3 +66,17 @@ class RoleValue:
 
 def test_normalized_role_supports_enum_backed_role_values():
     assert smartcheck.normalized_role(RoleValue()) == "super_admin"
+
+
+def test_validate_legacy_tenant_code_accepts_existing_code():
+    assert smartcheck.validate_legacy_tenant_code(" TNT-101 ") == "TNT-101"
+
+
+@pytest.mark.parametrize("code", ["TNT 101", "TNT/101", "TNT?101", "https://example.com"])
+def test_validate_legacy_tenant_code_rejects_unsafe_values(code):
+    with pytest.raises(HTTPException):
+        smartcheck.validate_legacy_tenant_code(code)
+
+
+def test_validate_legacy_tenant_code_allows_empty_mapping():
+    assert smartcheck.validate_legacy_tenant_code("  ") is None
