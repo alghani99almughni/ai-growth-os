@@ -4,7 +4,7 @@
 // Never put this secret in frontend code, QR codes, or URL query parameters.
 
 const TENANTS="MultipleTenantRegister", USERS="AuthorizedUsers", LOGS="GatePassLogs";
-const DRIVE_FOLDER="SmartCheckPasses";
+const DRIVE_FOLDER="SmartCheckPasses", ACTION_LOG="GatePassActionLog";
 
 function initialSetup(){
   const ss=SpreadsheetApp.getActiveSpreadsheet();
@@ -141,6 +141,7 @@ function visitorRequest_(d){
   const ticket="TKT-"+Utilities.getUuid().slice(0,12).toUpperCase(),now=new Date().toISOString();
   const row={"Date":cell_(d.date,80)||now,"Ticket ID":ticket,"Tenant Name":tenantName_(tenant),"Visitor Name":cell_(name,160),"Mobile":cell_(mobile,40),"Purpose":cell_(d.purpose,500),"Target Destination":cell_(d.targetDestination,200),"Vehicle Number":cell_(d.vehicleNumber,40),"Status":"PENDING","Approver Name":"","QR Token":"","Snapshot Link":snapshot_(d.imageBase64,d.vehicleNumber||name),"Tenant ID":tenant,"Updated At":now,"Updated By":"AI_GROWTH_OS","Notes":"Awaiting staff approval"};
   const headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0];s.appendRow(headers.map(h=>Object.prototype.hasOwnProperty.call(row,h)?row[h]:""));
+  auditVisitorAction_(tenant,ticket,"AI_GROWTH_OS","VISITOR_REQUEST","", "PENDING");
   return out_({status:"success",ticketId:ticket,statusLabel:"PENDING",message:"Request submitted for staff approval."});
 }
 function listVisitors_(d){
@@ -158,6 +159,7 @@ function visitorTransition_(d,next){
     const old=v[i][st],allowed=next==="APPROVED"||next==="REJECTED"?["PENDING"]:next==="CANCELLED"?["PENDING","APPROVED"]:next==="CHECKED_IN"?["APPROVED"]:["CHECKED_IN"];
     if(allowed.indexOf(old)<0)return out_({status:"error",message:"Invalid status transition: "+old+" → "+next});
     s.getRange(i+1,st+1).setValue(next);
+    auditVisitorAction_(tenant,ticket,actor,"VISITOR_"+next,old,next);
     let qrToken="";
     if(next==="APPROVED"){
       const qi=h.indexOf("QR Token");
@@ -185,6 +187,10 @@ function verifyVisitorToken_(d){
     return out_({status:"success",valid:true,pass:{ticketId:v[i][idx["Ticket ID"]],tenantId:tenant,visitorName:v[i][idx["Visitor Name"]],visitorMobile:v[i][idx["Mobile"]],purpose:v[i][idx["Purpose"]],destination:v[i][idx["Target Destination"]],vehicleNumber:v[i][idx["Vehicle Number"]],status:status,qrToken:token}});
   }
   return out_({status:"success",valid:false,message:"Invalid QR token for this tenant."});
+}
+function auditVisitorAction_(tenant,ticket,actor,action,fromStatus,toStatus){
+  const s=ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(),ACTION_LOG,["Timestamp","Tenant ID","Ticket ID","Actor","Action","From Status","To Status"]);
+  s.appendRow([new Date().toISOString(),clean_(tenant,100),clean_(ticket,100),clean_(actor,200),clean_(action,60),clean_(fromStatus,40),clean_(toStatus,40)]);
 }
 function tenantExists_(id){
   const v=ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(),TENANTS,["Tenant Code","Organization Name","Category","Assigned Role","Contact Person","Email ID","Mobile Number","Reception Clearance","Staff Details","App URL","Spreadsheet URL","Registered At","Status"]).getDataRange().getDisplayValues();
