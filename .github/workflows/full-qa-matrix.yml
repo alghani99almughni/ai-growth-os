@@ -1,7 +1,6 @@
-name: Full Multi-Tenant QA Matrix
+name: Legacy 15-Tenant QA Matrix (Manual Only)
 on:
-  push:
-    branches: [main]
+  # Run only when explicitly requested; normal pushes must not invoke the legacy matrix.
   workflow_dispatch:
 permissions:
   contents: read
