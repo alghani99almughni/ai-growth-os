@@ -549,7 +549,7 @@ async def platform_communications_campaign(
         raise HTTPException(400, "Message body is required")
 
     from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
-    from .models_email import PlatformContactPreference
+    from .models_email import PlatformContactPreference, PlatformMarketingContact
     import re
 
     results = []
@@ -564,12 +564,28 @@ async def platform_communications_campaign(
         email_norm = (email or "").strip().lower()
         phone_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
         email_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm)) if email_norm else None
+        # If the recipient exists in the saved contact book, its channel-specific
+        # consent is authoritative. The legacy manual-import path still requires
+        # the explicit campaign-level consent confirmation above.
+        saved_matches = []
+        if phone_norm:
+            saved = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.phone_norm == phone_norm))
+            if saved:
+                saved_matches.append(saved)
+        if email_norm:
+            saved = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.email_norm == email_norm))
+            if saved and all(saved.id != row.id for row in saved_matches):
+                saved_matches.append(saved)
+        whatsapp_contact_blocked = any(c.status != "active" or not c.whatsapp_opt_in for c in saved_matches)
+        email_contact_blocked = any(c.status != "active" or not c.email_opt_in for c in saved_matches)
 
         if "whatsapp" in channels:
             if not phone:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "no_phone"}
             elif phone_pref and phone_pref.whatsapp_opt_out:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
+            elif whatsapp_contact_blocked:
+                result["channels"]["whatsapp"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
                 msg = body.replace("{{name}}", name) + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
                 try:
@@ -584,6 +600,8 @@ async def platform_communications_campaign(
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
             elif email_pref and email_pref.email_opt_out:
                 result["channels"]["email"] = {"sent": False, "status": "opted_out"}
+            elif email_contact_blocked:
+                result["channels"]["email"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
                 msg = body.replace("{{name}}", name) + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
                 try:
