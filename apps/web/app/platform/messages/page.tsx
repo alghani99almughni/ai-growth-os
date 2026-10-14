@@ -32,6 +32,15 @@ export default function MessagesPage() {
   const [whatsappInboxLoading, setWhatsappInboxLoading] = useState(false);
   const [whatsappReplyDrafts, setWhatsappReplyDrafts] = useState<Record<string, string>>({});
   const [whatsappReplySending, setWhatsappReplySending] = useState<string>("");
+  const [replyTemplateItems, setReplyTemplateItems] = useState<any[]>([]);
+
+  async function loadReplyTemplates() {
+    try {
+      const r = await fetch(api() + "/api/v1/platform/communications/templates", { headers: headers(), cache: "no-store" });
+      const x = await r.json();
+      if (r.ok) setReplyTemplateItems(x.items || []);
+    } catch { /* templates remain optional; manual replies still work */ }
+  }
 
   function headers() {
     return {
@@ -64,6 +73,7 @@ export default function MessagesPage() {
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Unable to load platform WhatsApp inbox");
       setWhatsappInbox(x);
+      await loadReplyTemplates();
       if (!x.configured || !x.webhook_secret_configured) setStatus("Platform WhatsApp inbox needs platform OpenWA credentials and webhook setup.");
     } catch (e: any) { setStatus(e.message || "Unable to load platform WhatsApp inbox"); }
     setWhatsappInboxLoading(false);
@@ -93,6 +103,7 @@ export default function MessagesPage() {
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Unable to load platform inbox");
       setEmailInbox(x);
+      await loadReplyTemplates();
       if (x.poll_error) setStatus(x.poll_error);
       else if (!x.configured) setStatus("Platform inbox needs platform-owned IMAP/SMTP credentials in Render environment settings.");
     } catch (e: any) { setStatus(e.message || "Unable to load platform inbox"); }
@@ -293,6 +304,7 @@ export default function MessagesPage() {
             <div style={{ color: "#4b5563", fontSize: 12, margin: "5px 0" }}>{m.phone}</div>
             <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "#4b5563", background: "#fafbfd", borderRadius: 8, padding: 12 }}>{m.body}</pre>
             {m.direction === "inbound" && m.status !== "replied" && <div style={{ display: "grid", gap: 8 }}>
+              <select defaultValue="" aria-label="Insert WhatsApp reply template" onChange={e => { const t = replyTemplateItems.find((item: any) => item.id === e.target.value); if (t) setWhatsappReplyDrafts(prev => ({ ...prev, [m.id]: t.body })); }} style={inputStyle}><option value="">Insert a saved WhatsApp template…</option>{replyTemplateItems.filter((t: any) => t.channel === "whatsapp" && t.is_active).map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
               <textarea value={whatsappReplyDrafts[m.id] || ""} onChange={e => setWhatsappReplyDrafts(prev => ({ ...prev, [m.id]: e.target.value }))} rows={2} placeholder={"Reply to " + m.phone} style={{ ...inputStyle, fontFamily: "inherit" }} />
               <button onClick={() => replyToWhatsApp(m.id)} disabled={whatsappReplySending === m.id} style={{ justifySelf: "start", background: "#12805c", color: "#fff", border: 0, padding: "9px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>{whatsappReplySending === m.id ? "Sending…" : "Reply on WhatsApp"}</button>
             </div>}
@@ -327,6 +339,7 @@ export default function MessagesPage() {
             <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, color: "#4b5563", background: "#fafbfd", borderRadius: 8, padding: 12, maxHeight: 180, overflow: "auto" }}>{m.body}</pre>
             {m.replied_at ? <p style={{ color: "#1d9c68", fontSize: 12 }}>Replied {new Date(m.replied_at).toLocaleString()}</p> :
               <div style={{ display: "grid", gap: 8 }}>
+                <select defaultValue="" aria-label="Insert email reply template" onChange={e => { const t = replyTemplateItems.find((item: any) => item.id === e.target.value); if (t) setReplyDrafts(prev => ({ ...prev, [m.id]: t.body })); }} style={inputStyle}><option value="">Insert a saved email template…</option>{replyTemplateItems.filter((t: any) => t.channel === "email" && t.is_active).map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
                 <textarea value={replyDrafts[m.id] || ""} onChange={e => setReplyDrafts(prev => ({ ...prev, [m.id]: e.target.value }))} rows={3} placeholder={"Reply to " + m.from_address} style={{ ...inputStyle, fontFamily: "inherit" }} />
                 <button onClick={() => replyToEmail(m.id)} disabled={replySending === m.id} style={{ justifySelf: "start", background: "#4f46e5", color: "#fff", border: 0, padding: "9px 14px", borderRadius: 8, fontWeight: 700, cursor: "pointer" }}>{replySending === m.id ? "Sending…" : "Reply by email"}</button>
               </div>}
