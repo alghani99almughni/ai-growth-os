@@ -108,7 +108,9 @@ def test_check_in_requires_approved_unused_pass_and_records_audit_event(monkeypa
     events = []
     monkeypatch.setattr(security_routes, "event", lambda db, tenant, pass_id, actor, kind, details=None: events.append(kind))
     visitor_pass = SimpleNamespace(
-        id="pass-1", tenant_id="tenant-a", status="approved", expires_at=None,
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="approved", expires_at=None,
         checked_in_at=None, checked_out_at=None, created_at=datetime.utcnow(),
     )
     db = Mock()
@@ -128,7 +130,12 @@ def test_check_in_rejects_pending_pass_without_audit_success_event(monkeypatch):
     monkeypatch.setattr(security_routes, "gate_staff", lambda user: None)
     events = []
     monkeypatch.setattr(security_routes, "event", lambda db, tenant, pass_id, actor, kind, details=None: events.append(kind))
-    visitor_pass = SimpleNamespace(id="pass-1", tenant_id="tenant-a", status="pending", expires_at=None)
+    visitor_pass = SimpleNamespace(
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="pending", expires_at=None, created_at=None,
+        checked_in_at=None, checked_out_at=None,
+    )
     db = Mock()
     db.scalar.return_value = visitor_pass
     user = SimpleNamespace(id="guard-1", role="security", tenant_id="tenant-a")
@@ -148,7 +155,9 @@ def test_check_out_requires_checked_in_state_and_records_audit_event(monkeypatch
     events = []
     monkeypatch.setattr(security_routes, "event", lambda db, tenant, pass_id, actor, kind, details=None: events.append(kind))
     visitor_pass = SimpleNamespace(
-        id="pass-1", tenant_id="tenant-a", status="checked_in", expires_at=None,
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="checked_in", expires_at=None,
         checked_in_at=datetime.utcnow(), checked_out_at=None, created_at=datetime.utcnow(),
     )
     db = Mock()
