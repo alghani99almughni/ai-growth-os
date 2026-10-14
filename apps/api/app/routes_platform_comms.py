@@ -519,6 +519,7 @@ class PlatformCampaignRecipient(BaseModel):
 
 
 class PlatformCampaignRequest(BaseModel):
+    sender_tenant_id: Optional[str] = None
     tenant_ids: list[str] = Field(default_factory=list, max_length=500)
     recipients: list[PlatformCampaignRecipient] = Field(default_factory=list, max_length=1000)
     subject: str = Field(default="", max_length=300)
@@ -545,6 +546,8 @@ async def platform_communications_campaign(
         raise HTTPException(400, "channels must contain whatsapp and/or email")
     if not payload.consent_confirmed:
         raise HTTPException(400, "Confirm that every selected recipient has opted in before sending")
+    if payload.sender_tenant_id and payload.media_url:
+        raise HTTPException(400, "Media campaigns are not supported through tenant-owned channels yet; remove media or use platform-owned delivery.")
     if payload.media_url and not payload.media_type:
         raise HTTPException(400, "media_type must be image or video when media_url is supplied")
     if payload.media_type and not payload.media_url:
@@ -554,6 +557,9 @@ async def platform_communications_campaign(
     body = payload.body.strip()
     if not body:
         raise HTTPException(400, "Message body is required")
+    sender_tenant = db.get(Tenant, payload.sender_tenant_id) if payload.sender_tenant_id else None
+    if payload.sender_tenant_id and not sender_tenant:
+        raise HTTPException(404, "Sending tenant was not found")
     tenants = db.scalars(select(Tenant).where(Tenant.id.in_(set(payload.tenant_ids)))).all() if payload.tenant_ids else []
     by_id = {t.id: t for t in tenants}
     missing = [tid for tid in set(payload.tenant_ids) if tid not in by_id]
@@ -582,6 +588,9 @@ async def platform_communications_campaign(
             "phone": recipient.phone, "email": str(recipient.email) if recipient.email else None,
         })
     from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
+    from .email_integration import decrypt_email_config, send_email_smtp
+    from .models_email import TenantEmailAccount
+    from .whatsapp_channels import send_text_with_failover
     from .models_email import PlatformContactPreference
     import re
     results = []
@@ -598,7 +607,10 @@ async def platform_communications_campaign(
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
             else:
                 whatsapp_body = body + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
-                if payload.media_url:
+                if sender_tenant:
+                    delivery = await send_text_with_failover(db, sender_tenant.id, settings, target["phone"], whatsapp_body)
+                    result["channels"]["whatsapp"] = {"sent": bool(delivery.get("ok")), "status": delivery.get("channel") or delivery.get("error") or "failed", "provider": delivery.get("channel")}
+                elif payload.media_url:
                     result["channels"]["whatsapp"] = await send_platform_whatsapp_media(target["phone"], payload.media_url, payload.media_type or "image", whatsapp_body)
                 else:
                     result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
@@ -609,16 +621,32 @@ async def platform_communications_campaign(
                 result["channels"]["email"] = {"sent": False, "status": "opted_out"}
             else:
                 email_body = body + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
-                result["channels"]["email"] = await send_email(
-                    target["email"], payload.subject.strip() or "AI Growth OS", email_body
-                )
+                if sender_tenant:
+                    account = db.scalar(select(TenantEmailAccount).where(
+                        TenantEmailAccount.tenant_id == sender_tenant.id,
+                        TenantEmailAccount.is_active == True,  # noqa: E712
+                    ).order_by(TenantEmailAccount.created_at.desc()))
+                    if not account:
+                        result["channels"]["email"] = {"sent": False, "status": "sender_tenant_has_no_active_mailbox"}
+                    else:
+                        try:
+                            cfg = decrypt_email_config(account.config_encrypted)
+                            await send_email_smtp(cfg, target["email"], payload.subject.strip() or "Message from " + sender_tenant.name, email_body)
+                            result["channels"]["email"] = {"sent": True, "status": "sent", "from": account.email_address}
+                        except Exception as exc:
+                            logger.warning("tenant campaign email failed sender=%s: %s", sender_tenant.id, exc)
+                            result["channels"]["email"] = {"sent": False, "status": "smtp_failed"}
+                else:
+                    result["channels"]["email"] = await send_email(
+                        target["email"], payload.subject.strip() or "AI Growth OS", email_body
+                    )
         results.append(result)
         try:
             audit(db, tenant_id=target["tenant_id"], actor_id=user.id,
                   action="platform.communication_campaign",
                   target_type="tenant" if target["tenant_id"] else "prospect",
                   target_id=target["tenant_id"] or "manual-recipient",
-                  detail={"channels": sorted(channels), "consent_confirmed": True})
+                  detail={"channels": sorted(channels), "consent_confirmed": True, "sender_tenant_id": payload.sender_tenant_id})
         except Exception:
             pass
     return {
