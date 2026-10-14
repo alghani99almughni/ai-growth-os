@@ -1,8 +1,8 @@
 """Email integration: IMAP polling + SMTP sending + AI auto-reply.
 
 Provider presets:
-  gmail    -> imap.gmail.com:993,  smtp.gmail.com:587
-  outlook  -> outlook.office365.com:993, smtp.office365.com:587
+  gmail    -> imap.gmail.com:993,  smtp.gmail.com:465
+  outlook  -> outlook.office365.com:993, smtp.office365.com:465
   custom   -> caller supplies host/port for both
 
 All credentials are stored encrypted in TenantEmailAccount.config_encrypted
@@ -34,15 +34,15 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "imap_host": "imap.gmail.com",
         "imap_port": 993,
         "smtp_host": "smtp.gmail.com",
-        "smtp_port": 587,
-        "smtp_starttls": True,
+        "smtp_port": 465,
+        "smtp_starttls": False,
     },
     "outlook": {
         "imap_host": "outlook.office365.com",
         "imap_port": 993,
         "smtp_host": "smtp.office365.com",
-        "smtp_port": 587,
-        "smtp_starttls": True,
+        "smtp_port": 465,
+        "smtp_starttls": False,
     },
     "custom": {},
 }
@@ -297,3 +297,26 @@ def list_log(db: Session, tenant_id: str, limit: int = 100) -> list[dict]:
         "ticket_id": r.ticket_id,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     } for r in rows]
+def list_threads(db: Session, tenant_id: str, limit: int = 100) -> list[dict]:
+    from .email_threading import group_threads
+    from sqlalchemy import select as _select
+    rows = db.scalars(
+        _select(EmailLog)
+        .where(EmailLog.tenant_id == tenant_id)
+        .order_by(EmailLog.created_at.desc())
+        .limit(max(1, min(limit * 5, 1000)))
+    ).all()
+    threads = group_threads(rows)
+    return threads[:limit]
+
+
+def list_thread_messages(db: Session, tenant_id: str, thread_id: str) -> dict | None:
+    from .email_threading import group_threads
+    from sqlalchemy import select as _select
+    rows = db.scalars(
+        _select(EmailLog).where(EmailLog.tenant_id == tenant_id)
+    ).all()
+    for t in group_threads(rows):
+        if t["thread_id"] == thread_id:
+            return t
+    return None

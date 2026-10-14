@@ -33,6 +33,7 @@ export const TENANT_NAV: NavItem[] = [
 ];
 
 export const ADMIN_NAV: NavItem[] = [
+ feat/smartcheck-connection-center
   { href: "/platform/smartcheck-connections", label: "Security Connections", icon: "ShieldCheck" },
   { href: "/platform",               label: "Platform overview",     icon: "LayoutDashboard", exact: true, labelKey: "nav.overview" },
   { href: "/platform/inbox",         label: "Inbox",                 icon: "Inbox" },
