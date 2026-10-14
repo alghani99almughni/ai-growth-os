@@ -69,8 +69,10 @@ These are candidates, not approvals or claims that services have been deployed.
 - Verify WebRTC gateway connection, call state recovery, call history and callback flow.
 - Verify WhatsApp webhook ingress, sender configuration, delivery statuses, opt-outs and provider failure handling.
 - Keep platform-owner campaigns isolated from all tenant data and add durable contact/campaign history.
-- Implemented in the current draft branch: a platform-only external contact table, authenticated list/import/archive endpoints, per-channel opt-in fields, duplicate-identity checks, opt-out ledger synchronization, and a Super Admin contact-book view.
-- Still required before campaign use is considered complete: select saved contacts directly for a campaign, persist campaign and per-recipient delivery history, and test opt-out/unsubscribe reconciliation end to end. The send endpoint now blocks a saved contact when that channel lacks opt-in or the contact is archived. This is a foundation, not a completed marketing CRM.
+- Implemented in the current draft branch: a platform-only external contact table created by the startup schema routine, authenticated list/import/archive endpoints, per-channel opt-in fields, duplicate-identity checks, opt-out ledger synchronization, and a Super Admin contact-book view.
+- The campaign UI can target selected saved contacts; the send endpoint blocks a saved contact when that channel lacks opt-in or the contact is archived.
+- Per-recipient campaign outcomes are written to the existing platform audit ledger and exposed through a read-only campaign-history endpoint/UI. This is an initial history record, not provider delivery-receipt reconciliation.
+- Still required before production use: focused tests for deduplication, consent/opt-out and history; real sender smoke tests; provider delivery/bounce/unsubscribe reconciliation; and verification on the live deployment. This is not yet a completed marketing automation system.
 
 ### Phase C — Team collaboration
 - Audit current team UI, user/role lifecycle, file handling and notification patterns.
