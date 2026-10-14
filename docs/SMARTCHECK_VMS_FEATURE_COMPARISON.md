@@ -42,9 +42,9 @@ This is a design/feature comparison, not a claim that each repository's current 
 
 ### P1 — Visitor-friendly QR entry
 
-- Fixed tenant/site QR opens a mobile web form without requiring PWA installation.
+- Implemented in this branch: tenant Security dashboard can generate a fixed registration QR pointing to `/visitor/{tenantSlug}`, and a mobile-first public web form is added without requiring PWA installation. The public endpoint posts to the existing SmartCheck Apps Script only when the tenant feature is enabled, an explicit legacy tenant mapping exists, and `AI_GROWTH_OS_BRIDGE_SECRET` is configured server-side.
 - Collect only the fields required by that tenant's policy; default to visitor name and mobile, plus purpose, host/destination, and optional vehicle number where enabled.
-- Submit as **Pending**; never grant entry from public registration or an AI/chat/voice request.
+- Submit to SmartCheck as **Pending**; the API returns success only when Apps Script confirms a ticket ID. Never grant entry from public registration or an AI/chat/voice request. The bridge and UI changes still require tests and production configuration before being considered live.
 - Offer PWA installation only as an optional convenience for repeat visitors.
 - Provide a reference/ticket and a status-check path that does not disclose another visitor's personal details.
 - Apply server-side rate limits, input limits, duplicate-submission protection, expiry, and tenant/site scoping.
@@ -84,4 +84,4 @@ This is a design/feature comparison, not a claim that each repository's current 
 3. Cross-tenant tests for every endpoint and public QR entry.
 4. Existing Apps Script rows remain readable and unchanged except for explicitly requested operations.
 5. School, Apartment, and Hospital flows verified against the same shared engine and tenant-specific policy.
-6. API tests and frontend build pass; PR reviewed before release.
+6. API tests and frontend build pass; PR reviewed before release. The new public route tests are authored but have not yet been executed in this environment.
