@@ -25,6 +25,12 @@ router = APIRouter(prefix="/api/v1/platform/tenants", tags=["smartcheck-connecti
 PLATFORM_ROLES = {"platform_admin", "super_admin"}
 
 
+def normalized_role(value) -> str:
+    """Normalize both string roles and Enum-backed roles consistently."""
+    raw = getattr(value, "value", value)
+    return str(raw or "").strip().lower()
+
+
 def db_session():
     db = SessionLocal()
     try:
@@ -41,7 +47,7 @@ def platform_user(authorization: str | None = Header(default=None), db: Session 
     except Exception:
         raise HTTPException(401, "Invalid access token")
     user = db.get(User, payload.get("sub"))
-    if not user or not user.is_active or str(user.role).lower() not in PLATFORM_ROLES:
+    if not user or not user.is_active or normalized_role(user.role) not in PLATFORM_ROLES:
         raise HTTPException(403, "Platform administrator permission required")
     return user
 
