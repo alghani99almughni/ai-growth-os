@@ -53,6 +53,19 @@ def test_platform_admin_still_requires_module_enabled_for_target_tenant():
     tenant_access("tenant-a", user, db)
 
 
+def test_platform_default_cannot_enable_feature_for_tenant():
+    db = Mock()
+    db.get.return_value = SimpleNamespace(status="active")
+    # No tenant-specific features row exists. A platform-wide default must not be consulted.
+    db.scalar.return_value = None
+    user = SimpleNamespace(tenant_id="tenant-a", role="owner")
+    with pytest.raises(HTTPException) as exc:
+        tenant_access("tenant-a", user, db)
+    assert exc.value.status_code == 403
+    assert "disabled" in exc.value.detail.lower()
+    assert db.scalar.call_count == 1
+
+
 def test_create_pass_rejects_approval_bypass(monkeypatch):
     monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
     monkeypatch.setattr(security_routes, "admin_only", lambda user: None)
