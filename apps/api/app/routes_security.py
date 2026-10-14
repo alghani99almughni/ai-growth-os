@@ -261,6 +261,8 @@ def list_passes(tenant_id: str, user: User = Depends(principal), db: Session = D
 def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    if not body.needs_approval:
+        raise HTTPException(422, "New visitor passes must require human approval")
     smartcheck = lifecycle_config(db, tenant_id)
     if smartcheck:
         result = call_smartcheck(smartcheck, user, "VISITOR_REQUEST",
@@ -276,10 +278,7 @@ def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal)
             "vehicle_number": body.vehicle_number.strip().upper(), "industry": body.industry,
             "status": "pending", "expires_at": None, "created_at": None,
             "checked_in_at": None, "checked_out_at": None, "qr_token": None}
-    # Never allow a request payload to bypass human approval. Every new pass
-    # starts pending; the separate approve endpoint records the approving actor.
-    if not body.needs_approval:
-        raise HTTPException(422, "New visitor passes must require human approval")
+    # Every new pass starts pending; the separate approve endpoint records the approving actor.
     return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
