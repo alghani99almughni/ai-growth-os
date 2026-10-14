@@ -77,6 +77,24 @@ def test_create_pass_rejects_approval_bypass(monkeypatch):
     assert "human approval" in exc.value.detail.lower()
 
 
+def test_approver_role_can_approve_but_is_not_admin(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    visitor_pass = SimpleNamespace(
+        id="pass-1", tenant_id="tenant-a", status="pending", expires_at=None,
+        approved_by=None, visitor_name="Guest", visitor_mobile="", purpose="Meeting",
+        destination="", vehicle_number="", industry="school", site_id=None,
+        created_at=datetime(2026, 1, 1), checked_in_at=None, checked_out_at=None,
+    )
+    db = Mock()
+    db.scalar.return_value = visitor_pass
+    user = SimpleNamespace(id="approver-1", role="approver", tenant_id="tenant-a")
+    result = security_routes.approve_pass("tenant-a", "pass-1", user=user, db=db)
+    assert result["status"] == "approved"
+    assert visitor_pass.approved_by == "approver-1"
+    db.commit.assert_called_once()
+
+
 def test_verify_token_returns_stable_nested_pass_contract(monkeypatch):
     """The dashboard consumes {valid: true, pass: {...}} from QR verification."""
     from datetime import datetime
