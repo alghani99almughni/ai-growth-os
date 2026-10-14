@@ -153,6 +153,17 @@ export default function NewTenantPage() {
       <Field label="AI starter template (auto-mapped from subcategory)">
         <select value={industry} onChange={e=>setIndustry(e.target.value)} style={inp}>{STARTER_TEMPLATES.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}</select>
       </Field>
+      <section style={{ border: "1px solid #e8ecf3", borderRadius: 12, padding: 16, background: "#fff", display: "grid", gap: 14 }}>
+        <div><h2 style={{ margin: 0, fontSize: 16 }}>Assign services & features</h2><p style={{ margin: "5px 0 0", color: "#75839a", fontSize: 12 }}>Review platform defaults and select what this tenant can use. You can change these later.</p></div>
+        {SERVICE_GROUPS.map(group => <div key={group.title}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 13 }}>{group.title}</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
+            {group.items.map(([key, label]) => <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e8ecf3", borderRadius: 8, padding: "9px 10px", fontSize: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!features[key]} onChange={e => setFeatures(old => ({ ...old, [key]: e.target.checked }))} />{label}
+            </label>)}
+          </div>
+        </div>)}
+      </section>
       <Field label="Business name"><input value={businessName} onChange={e=>setBusinessName(e.target.value)} placeholder="Business name" style={inp}/></Field>
       <hr style={rule}/>
       <Field label="Owner name"><input value={ownerName} onChange={e=>setOwnerName(e.target.value)} placeholder="Owner name" style={inp}/></Field>
