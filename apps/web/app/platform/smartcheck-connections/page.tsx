@@ -92,7 +92,7 @@ export default function SmartCheckConnectionsPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "SmartCheck lifecycle verification failed");
-      setMessage("Lifecycle verification passed: PING, visitor listing, and QR token verification. Visitor sync is now enabled for this tenant.");
+      setMessage("Lifecycle verification passed: PING, active tenant mapping, visitor listing, and QR token verification. Visitor sync is now enabled for this tenant.");
       await loadConnection(tenantId);
     } catch (e) { setError(e instanceof Error ? e.message : "SmartCheck lifecycle verification failed"); }
     finally { setVerifyingLifecycle(false); }
@@ -142,7 +142,7 @@ export default function SmartCheckConnectionsPage() {
     </section>
     <section style={{ ...panel, background: "#f8fafc" }}>
       <div style={{ fontWeight: 700, fontSize: 14 }}>Sync readiness</div>
-      <div style={{ marginTop: 8, fontSize: 13, color: "#69778d" }}>The lifecycle check authenticates the server-side bridge and verifies PING, visitor listing, and QR token verification against the deployed Apps Script. Update the Apps Script deployment first; unsupported actions fail closed. Drive folder authorization is not verified by this check.</div>
+      <div style={{ marginTop: 8, fontSize: 13, color: "#69778d" }}>The lifecycle check authenticates the server-side bridge and verifies PING, that the mapped legacy tenant exists and is ACTIVE, visitor listing, and QR token verification against the deployed Apps Script. Update the Apps Script deployment first; unsupported actions fail closed. Drive folder authorization is not verified by this check.</div>
       <div style={{ marginTop: 12 }}>{badge(status?.visitor_lifecycle_sync_ready ? "lifecycle verified" : "sync pending")}</div>
       <button onClick={saveAndCheck} disabled={saving || loading || !tenantId} style={{ marginTop: 18, marginRight: 8, padding: "11px 16px", border: 0, borderRadius: 9, background: saving ? "#8b96a8" : "#1d4ed8", color: "#fff", fontWeight: 650, cursor: saving ? "wait" : "pointer" }}>{saving ? "Saving and checking…" : "Save & Check Connection"}</button>
       <button onClick={verifyLifecycle} disabled={verifyingLifecycle || saving || loading || !tenantId || !scriptUrl.trim() || !legacyTenantCode.trim()} style={{ marginTop: 18, padding: "11px 16px", border: "1px solid #cbd5e1", borderRadius: 9, background: "#fff", color: "#17213a", fontWeight: 650, cursor: verifyingLifecycle ? "wait" : "pointer" }}>{verifyingLifecycle ? "Verifying lifecycle…" : "Verify & Enable Visitor Sync"}</button>
