@@ -198,10 +198,14 @@ def verify_smartcheck_lifecycle(tenant_id: str, user: User = Depends(platform_us
     db.commit()
     try:
         ping = call_smartcheck(config, user, "PING")
+        tenant_check = call_smartcheck(config, user, "VALIDATE_TENANT")
         listed = call_smartcheck(config, user, "LIST_VISITORS")
         probe = call_smartcheck(config, user, "VERIFY_TOKEN", token="AI_GROWTH_OS_INVALID_PROBE_" + secrets.token_urlsafe(16))
-        if ping.get("status") != "ok" or not isinstance(listed.get("visitors"), list) or probe.get("valid") is not False:
-            raise HTTPException(409, "SmartCheck did not confirm PING, LIST_VISITORS, and VERIFY_TOKEN support")
+        if (ping.get("status") != "ok"
+                or tenant_check.get("valid") is not True
+                or not isinstance(listed.get("visitors"), list)
+                or probe.get("valid") is not False):
+            raise HTTPException(409, "SmartCheck did not confirm PING, active tenant mapping, LIST_VISITORS, and VERIFY_TOKEN support")
     except HTTPException as exc:
         config["visitor_lifecycle_sync_ready"] = False
         config["lifecycle_verification_error"] = str(exc.detail)[:240]
@@ -218,6 +222,6 @@ def verify_smartcheck_lifecycle(tenant_id: str, user: User = Depends(platform_us
         "tenant_id": tenant_id,
         "visitor_lifecycle_sync_ready": True,
         "lifecycle_status": "verified",
-        "checks": {"ping": "passed", "list_visitors": "passed", "verify_token": "passed"},
+        "checks": {"ping": "passed", "tenant_mapping": "passed", "list_visitors": "passed", "verify_token": "passed"},
         "note": "Visitor lifecycle bridge verified. Google Drive folder authorization remains a separate, unverified capability.",
     }
