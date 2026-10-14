@@ -40,7 +40,7 @@ Make AI Growth OS a single, integrated platform by reusing proven open-source co
 | Platform-owner external marketing | Campaign-only Marketing Hub and platform sender helpers | Persistent external contact book, segments, consent/opt-out, campaign history, delivery reconciliation | Add a platform-owned contact/campaign data layer; evaluate listmonk as a separate email-marketing service only after auth, deployment, sync and license review. Do not expose tenant contacts/senders here |
 | Email | Existing SMTP/Resend and email account models | Separate transactional notifications vs marketing subscriptions, bounce/unsubscribe handling | Keep transactional email native; marketing needs platform-only contacts and consent ledger; integrate rather than conflate |
 | Internal team chat / voice / files | Existing team roles/permissions foundation; chat capability needs code audit | Channels, DMs, mentions, unread state, file sharing, team calls, audit and tenant boundaries | Evaluate Rocket.Chat first for Slack-like team collaboration and voice/video; Zulip is a lower-complexity text-first alternative. Do not install both. Require SSO/user lifecycle and tenant-isolation proof before selecting |
-| Visitor management | Existing visitor implementation is not yet verified by this audit | Pre-registration, host approval, QR pass, reception/security check-in/out, deny list, audit and reports | Evaluate VisitorPass (FastAPI/Postgres/Redis/SQLAlchemy/Alembic) as the closest stack match. Reuse selected workflow patterns/code only after checking repository activity, license, auth and tenancy; do not import its separate tenant/billing system wholesale |
+| Visitor management | Existing `routes_security.py`, `models_security.py`, `/dashboard/security`, QR token verification, human approval, check-in/out and append-only visitor events are present | Audit actual workflow gaps: filters/search, deny/cancel path, host notifications, site/gate handling, expiry/reporting, QR scan reliability, and feature/role access | Do not add a parallel visitor schema or duplicate routes. First strengthen the existing visitor module. Compare VisitorPass (FastAPI/Postgres/Redis/SQLAlchemy/Alembic) only for specific missing patterns after checking its license, maintenance and security; reuse selectively |
 | Social publishing / analytics | Existing social routes and OAuth/provider integrations | Token refresh, provider permission errors, audit and retry behavior | Keep adapters; verify each provider's current API policy and test per capability |
 | Monitoring / diagnostics / backups | Existing health, monitoring, self-heal and backup models | Alert delivery, actionable diagnostics, restore drills and per-tenant audit trails | Keep native foundations; integrate mature monitoring only when a verified operational gap exists |
 | Loyalty / feedback / reviews | Existing loyalty, feedback and reward models | Append-only transactions, rule correctness, external review links and reporting | Keep native; protect balances with transaction and idempotency tests |
@@ -76,11 +76,11 @@ These are candidates, not approvals or claims that services have been deployed.
 - Do not expose the service until tenant-isolation and identity lifecycle tests pass.
 
 ### Phase D — Visitor management
-- Map existing visitor files and database schema before edits.
-- Compare existing code against the VisitorPass candidate and verify the license.
-- Add missing visit lifecycle steps incrementally: pre-register, host approval, QR pass, reception/security check-in/out, exceptions/deny list, notifications, search and reports.
-- Use existing tenant IDs and authorization middleware; no separate tenant registration or duplicate user system.
-- Add migration, tests, and rollback instructions before deployment.
+- Preserve the existing `routes_security.py`, `models_security.py`, and `/dashboard/security` implementation; do not create duplicate visitor tables or endpoints.
+- Test the current create → pending → human approval → QR verification → check-in → check-out lifecycle and tenant isolation first.
+- Improve the actual gaps in the existing page/API: search and status filters, clearer visit expiry and event history, deny/cancel handling, host/reception notifications, and useful operational reporting where required.
+- Compare VisitorPass only against specific gaps and reuse selected patterns if license and code quality pass review.
+- Add migrations only when a demonstrated gap requires new persisted fields; document rollback and test existing pass records before deployment.
 
 ### Phase E — Remaining capabilities
 - Audit each row in the capability map, prioritize by user impact and failure risk, then implement in small isolated changes.
