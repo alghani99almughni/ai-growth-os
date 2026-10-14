@@ -473,7 +473,8 @@ def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), d
     admin_only(user)
     smartcheck = lifecycle_config(db, tenant_id)
     if smartcheck:
-        raise HTTPException(409, "SmartCheck cancellation is not available yet; reject pending requests instead")
+        result = call_smartcheck(smartcheck, user, "CANCEL_VISITOR", ticketId=pass_id)
+        return {"id": pass_id, "tenant_id": tenant_id, "status": "cancelled"}
     p = db.scalar(select(VisitorPass).where(
         VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
     ))
