@@ -562,7 +562,7 @@ async def platform_communications_campaign(
             raise HTTPException(400, "Every customer contact needs a phone number and/or email address")
         name = recipient.name.strip() or phone or email or "Customer"
         result = {"contact_id": None, "name": name, "channels": {}}
-        phone_norm = re.sub(r"\\D", "", phone or "")
+        phone_norm = re.sub(r"\D", "", phone or "")
         email_norm = (email or "").strip().lower()
         phone_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
         email_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm)) if email_norm else None
@@ -588,7 +588,7 @@ async def platform_communications_campaign(
             elif whatsapp_contact_blocked:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
-                msg = body.replace("{{name}}", name) + "\\n\\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
+                msg = body.replace("{{name}}", name) + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
                 try:
                     delivery = await send_platform_whatsapp_media(phone, payload.media_url, payload.media_type or "image", msg) if payload.media_url else await send_platform_whatsapp(phone, msg)
                     result["channels"]["whatsapp"] = delivery if isinstance(delivery, dict) else {"sent": bool(delivery), "status": "sent" if delivery else "failed"}
@@ -604,7 +604,7 @@ async def platform_communications_campaign(
             elif email_contact_blocked:
                 result["channels"]["email"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
-                msg = body.replace("{{name}}", name) + "\\n\\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
+                msg = body.replace("{{name}}", name) + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
                 try:
                     delivery = await send_email(email, payload.subject.strip() or "AI Growth OS", msg)
                     result["channels"]["email"] = delivery if isinstance(delivery, dict) else {"sent": bool(delivery), "status": "sent" if delivery else "failed"}
