@@ -188,6 +188,27 @@ async def send_reply_smtp(
     return str(msg["Message-ID"])
 
 
+async def send_email_smtp(cfg: dict, to_address: str, subject: str, body: str) -> str:
+    """Send a new outbound email using a tenant mailbox's encrypted SMTP config."""
+    msg = EmailMessage()
+    msg["From"] = cfg["smtp_user"]
+    msg["To"] = to_address
+    msg["Subject"] = (subject or "").strip() or "Message from the business"
+    sender_domain = cfg["smtp_user"].rsplit("@", 1)[-1] if "@" in cfg["smtp_user"] else "localhost"
+    msg["Message-ID"] = f"<{uuid.uuid4()}@{sender_domain}>"
+    msg.set_content(body)
+    await aiosmtplib.send(
+        msg,
+        hostname=cfg["smtp_host"],
+        port=int(cfg["smtp_port"]),
+        username=cfg["smtp_user"],
+        password=cfg["smtp_password"],
+        use_tls=bool(cfg.get("smtp_use_tls", False) or int(cfg.get("smtp_port", 0)) == 465),
+        start_tls=bool(cfg.get("smtp_starttls", True) and not (cfg.get("smtp_use_tls", False) or int(cfg.get("smtp_port", 0)) == 465)),
+    )
+    return str(msg["Message-ID"])
+
+
 # ---------- Account CRUD helpers (used by main.py endpoints) ----------
 
 def list_accounts(db: Session, tenant_id: str) -> list[dict]:
