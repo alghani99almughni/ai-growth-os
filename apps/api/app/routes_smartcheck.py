@@ -6,6 +6,7 @@ It does not prove bridge authentication, tenant mapping, or Drive access.
 from __future__ import annotations
 
 import json
+import secrets
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
@@ -20,6 +21,7 @@ from .db import SessionLocal
 from .models import Tenant, User
 from .models_growth import TenantSetting
 from .security import decode_token_strict
+from .smartcheck_bridge import call_smartcheck
 
 router = APIRouter(prefix="/api/v1/platform/tenants", tags=["smartcheck-connections"])
 PLATFORM_ROLES = {"platform_admin", "super_admin"}
@@ -125,7 +127,9 @@ def get_smartcheck_connection(tenant_id: str, user: User = Depends(platform_user
         "script_status": config.get("script_status", "not_configured"),
         "drive_status": "link_saved_unverified" if config.get("drive_folder_url") else "not_configured",
         "authenticated_sync_ready": False,
-        "note": "Health reachability is not proof of bridge authentication or Drive access.",
+        "visitor_lifecycle_sync_ready": config.get("visitor_lifecycle_sync_ready") is True,
+        "lifecycle_status": "verified" if config.get("visitor_lifecycle_sync_ready") is True else "not_verified",
+        "note": "Drive authorization remains unverified; visitor lifecycle readiness is probed separately.",
     }
 
 
@@ -171,4 +175,49 @@ def save_smartcheck_connection(tenant_id: str, body: SmartCheckConnectionInput, 
         "drive_status": "link_saved_unverified" if drive_url else "not_configured",
         "authenticated_sync_ready": False,
         "note": "Authenticated bridge sync and Drive authorization have not been verified.",
+    }
+
+
+@router.post("/{tenant_id}/smartcheck-lifecycle/verify")
+def verify_smartcheck_lifecycle(tenant_id: str, user: User = Depends(platform_user), db: Session = Depends(db_session)):
+    """Enable visitor sync only after the deployed Apps Script proves each required action."""
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant:
+        raise HTTPException(404, "Tenant not found")
+    row = connection_setting(db, tenant_id)
+    try:
+        config = json.loads(row.value_json) if row else {}
+    except (TypeError, ValueError):
+        config = {}
+    if not config.get("script_url") or not config.get("legacy_tenant_code"):
+        raise HTTPException(409, "Save the Apps Script URL and legacy tenant code first")
+    config["visitor_lifecycle_sync_ready"] = False
+    row.value_json = json.dumps(config) if row else ""
+    if not row:
+        raise HTTPException(409, "Save the SmartCheck connection before running lifecycle verification")
+    db.commit()
+    try:
+        ping = call_smartcheck(config, user, "PING")
+        listed = call_smartcheck(config, user, "LIST_VISITORS")
+        probe = call_smartcheck(config, user, "VERIFY_TOKEN", token="AI_GROWTH_OS_INVALID_PROBE_" + secrets.token_urlsafe(16))
+        if ping.get("status") != "ok" or not isinstance(listed.get("visitors"), list) or probe.get("valid") is not False:
+            raise HTTPException(409, "SmartCheck did not confirm PING, LIST_VISITORS, and VERIFY_TOKEN support")
+    except HTTPException as exc:
+        config["visitor_lifecycle_sync_ready"] = False
+        config["lifecycle_verification_error"] = str(exc.detail)[:240]
+        row.value_json = json.dumps(config)
+        db.commit()
+        raise
+    config["visitor_lifecycle_sync_ready"] = True
+    config["lifecycle_verification_error"] = ""
+    config["lifecycle_verified_by"] = user.id
+    config["lifecycle_verified_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    row.value_json = json.dumps(config)
+    db.commit()
+    return {
+        "tenant_id": tenant_id,
+        "visitor_lifecycle_sync_ready": True,
+        "lifecycle_status": "verified",
+        "checks": {"ping": "passed", "list_visitors": "passed", "verify_token": "passed"},
+        "note": "Visitor lifecycle bridge verified. Google Drive folder authorization remains a separate, unverified capability.",
     }
