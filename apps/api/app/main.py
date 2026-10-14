@@ -401,9 +401,18 @@ def _feature_config(db,tenant_id):
     if platform:
         try: cfg.update(json.loads(platform.value_json))
         except Exception: pass
+    tenant_features = {}
     if row:
-        try: cfg.update(json.loads(row.value_json))
-        except Exception: pass
+        try:
+            parsed = json.loads(row.value_json)
+            if isinstance(parsed, dict):
+                tenant_features = parsed
+                cfg.update(parsed)
+        except Exception:
+            tenant_features = {}
+    # Security & Visitor Management is a tenant opt-in add-on, never inherited
+    # from industry settings or platform-wide defaults.
+    cfg["security_visitor_management"] = bool(tenant_features.get("security_visitor_management", False))
     return cfg
 def _set_setting(db,tenant_id,key,value):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key==key))
@@ -1032,15 +1041,20 @@ def platform_tenant_status(tenant_id,payload:TenantStatusUpdate,user=Depends(get
 def platform_feature_defaults(user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_platform_admin(user)
     row=db.scalar(select(PlatformSetting).where(PlatformSetting.key=="feature_defaults"))
-    try: return {"features":{**FEATURE_DEFAULTS,**(json.loads(row.value_json) if row else {})}}
-    except Exception: return {"features":FEATURE_DEFAULTS}
+    try: cfg={**FEATURE_DEFAULTS,**(json.loads(row.value_json) if row else {})}
+    except Exception: cfg=dict(FEATURE_DEFAULTS)
+    # This add-on is intentionally controlled per tenant, not as a platform default.
+    cfg["security_visitor_management"] = False
+    return {"features":cfg}
 
 @app.put("/api/v1/platform/feature-defaults")
 def update_platform_feature_defaults(payload:FeatureUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_platform_admin(user)
     cfg=dict(FEATURE_DEFAULTS)
     for key,value in payload.features.items():
-        if key in FEATURE_DEFAULTS: cfg[key]=bool(value)
+        if key in FEATURE_DEFAULTS and key != "security_visitor_management": cfg[key]=bool(value)
+    # Never let a platform-wide default enable this tenant-specific add-on.
+    cfg["security_visitor_management"] = False
     row=db.scalar(select(PlatformSetting).where(PlatformSetting.key=="feature_defaults"))
     if not row: row=PlatformSetting(key="feature_defaults",value_json=json.dumps(cfg)); db.add(row)
     else: row.value_json=json.dumps(cfg)
