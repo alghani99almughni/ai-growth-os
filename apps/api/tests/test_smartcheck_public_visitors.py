@@ -94,3 +94,24 @@ def test_public_request_does_not_claim_saved_without_ticket(monkeypatch):
             "server-only-secret", body,
         )
     assert exc.value.status_code == 502
+
+
+def test_public_registration_requires_server_side_bridge_secret(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.delenv("AI_GROWTH_OS_BRIDGE_SECRET", raising=False)
+    db = Mock()
+    db.scalar.return_value = SimpleNamespace(value_json=json.dumps({
+        "script_url": "https://script.google.com/macros/s/id/exec",
+        "legacy_tenant_code": "TNT-101",
+    }))
+    with pytest.raises(HTTPException) as exc:
+        public_routes._script_config(db, "tenant-uuid")
+    assert exc.value.status_code == 503
+    assert "credentials" in exc.value.detail.lower()
+
+
+def test_public_registration_feature_is_opt_in_by_default():
+    db = Mock()
+    db.scalar.side_effect = [None, None]
+    assert public_routes._tenant_feature_enabled(db, "tenant-uuid") is False
