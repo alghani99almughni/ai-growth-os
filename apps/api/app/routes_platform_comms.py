@@ -1148,10 +1148,12 @@ def import_platform_marketing_contacts(
         else:
             updated += 1
         contact.name = item.name.strip() or contact.name or phone or email or "External contact"
-        contact.phone = phone
-        contact.phone_norm = phone_norm
-        contact.email = email
-        contact.email_norm = email_norm
+        if phone:
+            contact.phone = phone
+            contact.phone_norm = phone_norm
+        if email:
+            contact.email = email
+            contact.email_norm = email_norm
         # Consent is opt-in only; import never clears an existing opt-in.
         contact.whatsapp_opt_in = bool(contact.whatsapp_opt_in or item.whatsapp_opt_in)
         contact.email_opt_in = bool(contact.email_opt_in or item.email_opt_in)
