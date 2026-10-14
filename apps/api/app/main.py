@@ -4010,6 +4010,72 @@ def tenant_email_log(tenant_id, limit: int = 100,
     from .email_integration import list_log
     return {"items": list_log(db, tenant_id, limit=limit)}
 
+class EmailThreadReply(BaseModel):
+    body: str = Field(min_length=1, max_length=8000)
+
+
+@app.get("/api/v1/tenants/{tenant_id}/email-threads")
+def tenant_email_threads(tenant_id, limit: int = 100,
+                         user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .email_integration import list_threads
+    items = list_threads(db, tenant_id, limit=limit)
+    return {"items": [{k: v for k, v in t.items() if k != "messages"} for t in items]}
+
+
+@app.get("/api/v1/tenants/{tenant_id}/email-threads/{thread_id}")
+def tenant_email_thread_detail(tenant_id, thread_id,
+                               user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .email_integration import list_thread_messages
+    t = list_thread_messages(db, tenant_id, thread_id)
+    if not t:
+        raise HTTPException(404, "Thread not found")
+    return t
+
+
+@app.post("/api/v1/tenants/{tenant_id}/email-threads/{thread_id}/reply")
+async def tenant_email_thread_reply(tenant_id, thread_id, payload: EmailThreadReply,
+                                     user: User = Depends(get_current_user),
+                                     db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .email_integration import list_thread_messages, decrypt_email_config, send_reply_smtp
+    from .models_email import TenantEmailAccount, EmailLog
+    t = list_thread_messages(db, tenant_id, thread_id)
+    if not t:
+        raise HTTPException(404, "Thread not found")
+    last = t["messages"][-1]
+    account = db.scalar(
+        select(TenantEmailAccount).where(
+            TenantEmailAccount.tenant_id == tenant_id,
+            TenantEmailAccount.is_active == True,  # noqa: E712
+        )
+    )
+    if not account:
+        raise HTTPException(409, "No active email account for this tenant")
+    cfg = decrypt_email_config(account.config_encrypted)
+    subject = last.get("subject") or "(no subject)"
+    if not subject.lower().startswith("re:"):
+        subject = "Re: " + subject
+    try:
+        await send_reply_smtp(
+            cfg, last["from_address"], subject, payload.body,
+            in_reply_to=last.get("message_id") or None,
+            references=last.get("references_header") or None,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Reply send failed: {exc}")
+    log = EmailLog(
+        id=str(uuid.uuid4()), tenant_id=tenant_id, account_id=account.id,
+        message_id=str(uuid.uuid4()) + "@outbound.local",
+        from_address=account.email_address, to_address=last["from_address"],
+        subject=subject, inbound_body="", reply_text=payload.body,
+        outcome="outbound",
+        in_reply_to=last.get("message_id") or None,
+        references_header=last.get("references_header") or None,
+    )
+    db.add(log); db.commit()
+    return {"sent": True, "message_id": log.message_id}
 # ============ END SESSION18_EMAIL ============
 
 
