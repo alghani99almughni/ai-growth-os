@@ -14,8 +14,6 @@ export default function MessagesPage() {
   const [showCompose, setShowCompose] = useState(false);
   const [form, setForm] = useState({ tenant_id: "", subject: "", body: "", send_email: true });
   const [sending, setSending] = useState(false);
-  const [campaignTenants, setCampaignTenants] = useState<string[]>([]);
-  const [campaignSenderTenant, setCampaignSenderTenant] = useState("");
   const [prospectLines, setProspectLines] = useState("");
   const [campaignChannels, setCampaignChannels] = useState<string[]>(["whatsapp"]);
   const [campaignSubject, setCampaignSubject] = useState("AI Growth OS update");
@@ -164,9 +162,7 @@ export default function MessagesPage() {
   }
 
   async function sendCampaign() {
-    if (!campaignSenderTenant) { setStatus("Select a tenant whose connected WhatsApp/email channels should send this campaign."); return; }
-    if (mediaUrl) { setStatus("Remove media for campaigns sent through tenant-owned channels; text campaigns are supported."); return; }
-    if (!campaignTenants.length && !prospectLines.trim()) { setStatus("Select tenants or paste prospect contacts."); return; }
+    if (!prospectLines.trim()) { setStatus("Import or paste your own customer contacts first."); return; }
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
     if (!campaignBody.trim()) { setStatus("Enter a campaign message."); return; }
     if (!consentConfirmed) { setStatus("Confirm opt-in/consent for every selected recipient."); return; }
@@ -174,18 +170,18 @@ export default function MessagesPage() {
       const parts = line.split(",").map(x => x.trim());
       return { name: parts[0] || "", phone: parts[1] || null, email: parts[2] || null };
     });
-    if (!campaignTenants.length && !recipients.length) { setStatus("Select tenants or paste prospect contacts."); return; }
+    if (!recipients.length) { setStatus("Add at least one customer contact."); return; }
     if (recipients.some(r => !r.phone && !r.email)) { setStatus("Each prospect line needs a phone and/or email: name,phone,email"); return; }
     setCampaignBusy(true); setStatus(""); setCampaignResult(null);
     try {
       const r = await fetch(api() + "/api/v1/platform/communications/campaign", {
         method: "POST", headers: headers(),
-        body: JSON.stringify({ sender_tenant_id: campaignSenderTenant, tenant_ids: campaignTenants, recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed, media_url: mediaUrl || null, media_type: mediaType || null }),
+        body: JSON.stringify({ recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed, media_url: mediaUrl || null, media_type: mediaType || null }),
       });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Campaign failed");
       setCampaignResult(x);
-      setStatus("Campaign processed: " + x.sent + " successful channel deliveries across " + x.selected + " selected tenants.");
+      setStatus("Campaign processed: " + x.sent + " successful channel deliveries across " + x.selected + " of your customer contacts.");
     } catch (e: any) { setStatus(e.message || "Campaign failed"); }
     setCampaignBusy(false);
   }
@@ -223,53 +219,44 @@ export default function MessagesPage() {
       {activeTab === "whatsapp-promotional" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
-        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for tenant-connected WhatsApp/email campaigns, prospect contacts, shared inboxes, replies, and delivery results.</p>
+        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>Send campaigns to your own customers using your platform-connected WhatsApp and email. Tenant businesses and tenant-owned channels are excluded.</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
-          <label style={{fontSize:12,color:"#17213a",fontWeight:600}}>Send from tenant’s connected channels
-            <select required value={campaignSenderTenant} onChange={e=>setCampaignSenderTenant(e.target.value)} style={inputStyle}>
-              <option value="">Select sending tenant…</option>
-              {tenants.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}
-            </select>
-            <span style={{display:"block",marginTop:5,color:"#75839a",fontWeight:400}}>Uses that tenant’s existing WhatsApp connection and active SMTP mailbox. No separate platform credentials.</span>
-          </label>
-          <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Select tenant recipients
-            <select multiple value={campaignTenants} onChange={e => setCampaignTenants(Array.from(e.target.selectedOptions, o => o.value))} style={{ ...inputStyle, minHeight: 130 }}>
-              {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}{t.email ? " · " + t.email : ""}</option>)}
-            </select>
-            <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Use Ctrl-click to select multiple tenants.</span>
-          </label>
+          <div style={{ padding: 14, background: "#f7f8ff", border: "1px solid #e0e4ff", borderRadius: 10 }}>
+            <strong style={{ fontSize: 13, color: "#17213a" }}>Sender: your AI Growth OS platform accounts</strong>
+            <p style={{ margin: "6px 0 0", fontSize: 12, lineHeight: 1.5, color: "#667085" }}>Uses your platform's own configured WhatsApp sender and email sender. Tenant-connected channels are never used for campaigns.</p>
+          </div>
           <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
             <div style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Delivery channels</div>
             {["whatsapp","email"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
               <input type="checkbox" checked={campaignChannels.includes(channel)} onChange={e => setCampaignChannels(prev => e.target.checked ? [...prev, channel] : prev.filter(x => x !== channel))} />
-              {channel === "whatsapp" ? "WhatsApp (selected tenant channel)" : "Email (selected tenant mailbox)"}
+              {channel === "whatsapp" ? "Your platform WhatsApp" : "Your platform email"}
             </label>)}
             <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Email subject
               <input value={campaignSubject} onChange={e => setCampaignSubject(e.target.value)} style={inputStyle} />
             </label>
           </div>
         </div>
-        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Prospect contact list (optional)
-          <textarea value={prospectLines} onChange={e => setProspectLines(e.target.value)} rows={4} placeholder={"One contact per line: name,phone,email\nExample: Ayesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
-          <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Paste only contacts who have opted in. You can send to selected tenants, prospects, or both.</span>
+        <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Your customer contact list
+          <textarea value={prospectLines} onChange={e => setProspectLines(e.target.value)} rows={5} placeholder={"One customer per line: name,phone,email\\nExample: Ayesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
+          <span style={{ display: "block", marginTop: 5, color: "#75839a", fontWeight: 400 }}>Paste or import your own opted-in contacts. Tenant businesses and tenant customer databases are not included.</span>
         </label>
-        <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Import contacts from CSV
+        <label style={{ display: "block", marginTop: 10, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Import your contacts from CSV
           <input type="file" accept=".csv,text/csv" onChange={e => importProspectCsv(e.target.files?.[0])} style={{ ...inputStyle, padding: 8 }} />
           <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>Columns: name,phone,email. Imported rows remain editable above.</span>
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Optional WhatsApp image/video (max 16 MB)
           <input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/3gpp" onChange={e => uploadCampaignMedia(e.target.files?.[0])} disabled={mediaUploading} style={{ ...inputStyle, padding: 8 }} />
-          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>{mediaUploading ? "Uploading…" : mediaUrl ? "Uploaded: " + mediaType + " · ready for WhatsApp campaign" : "Tenant-channel campaigns currently support text only; remove media before sending."}</span>
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>{mediaUploading ? "Uploading…" : mediaUrl ? "Uploaded: " + mediaType + " · ready for WhatsApp campaign" : "Media is sent using your platform WhatsApp connection."}</span>
           {mediaUrl && <button type="button" onClick={() => { setMediaUrl(""); setMediaType(""); }} style={{ marginTop: 6, border: "1px solid #d7dce5", borderRadius: 7, padding: "5px 9px", background: "#fff" }}>Remove media</button>}
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message template
           <select defaultValue="" onChange={e => { if (e.target.value) setCampaignBody(whatsappTemplates[e.target.value] || ""); }} style={inputStyle}>
             <option value="">Choose a starter template…</option>
             <option value="announcement">Announcement</option>
-            <option value="onboarding">Tenant onboarding</option>
+            <option value="onboarding">Customer welcome</option>
             <option value="support">Support update</option>
           </select>
-          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>These are editable text starters, not Meta-approved WhatsApp templates.</span>
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>Editable starter copy only; WhatsApp Business API template rules still apply where required.</span>
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message
           <textarea value={campaignBody} onChange={e => setCampaignBody(e.target.value)} rows={4} maxLength={4000} placeholder="Write the message…" style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
@@ -283,8 +270,8 @@ export default function MessagesPage() {
         </button>
         {campaignResult && <div style={{ marginTop: 14, borderTop: "1px solid #edf0f5", paddingTop: 12, fontSize: 12, color: "#4b5563" }}>
           <strong>Delivery results</strong>
-          {campaignResult.results?.map((r: any) => <div key={r.tenant_id} style={{ padding: "8px 0", borderBottom: "1px solid #f1f4f8" }}>
-            <strong>{r.tenant_name}</strong> — {Object.entries(r.channels || {}).map(([c, v]: any) => c + ": " + (v.status || (v.sent ? "sent" : "failed"))).join(" · ")}
+          {campaignResult.results?.map((r: any, i: number) => <div key={r.contact_id || (r.name + "-" + i)} style={{ padding: "8px 0", borderBottom: "1px solid #f1f4f8" }}>
+            <strong>{r.name || "Customer"}</strong> — {Object.entries(r.channels || {}).map(([c, v]: any) => c + ": " + (v.status || (v.sent ? "sent" : "failed"))).join(" · ")}
           </div>)}
         </div>}
       </section>
