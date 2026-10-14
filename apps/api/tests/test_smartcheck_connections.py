@@ -58,3 +58,11 @@ def test_health_check_does_not_claim_ready_for_unrecognized_payload(monkeypatch)
     response.read.return_value = json.dumps({"message": "hello"}).encode()
     monkeypatch.setattr(smartcheck, "urlopen", lambda *args, **kwargs: response)
     assert smartcheck.check_script_health("https://script.google.com/macros/s/id/exec")["status"] == "unverified"
+
+
+class RoleValue:
+    value = "SUPER_ADMIN"
+
+
+def test_normalized_role_supports_enum_backed_role_values():
+    assert smartcheck.normalized_role(RoleValue()) == "super_admin"
