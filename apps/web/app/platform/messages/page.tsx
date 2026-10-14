@@ -162,7 +162,7 @@ export default function PlatformCustomerMarketingPage() {
       </label>
       <p style={{ color: "#667085", fontSize: 12 }}>CSV columns: name,phone,email,whatsapp_opt_in,email_opt_in,consent_source,tags. Consent columns must explicitly be true/yes/1 to record opt-in; tags are separated with semicolons. Contacts are platform-owned external records, never read from tenant records.</p>
       <label style={{ display: "block", fontSize: 12, fontWeight: 700 }}>Contact rows
-        <textarea value={contactsCsv} onChange={e => setContactsCsv(e.target.value)} rows={7} placeholder={"name,phone,email\nAyesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
+        <textarea value={contactsCsv} onChange={e => setContactsCsv(e.target.value)} rows={7} placeholder={"name,phone,email,whatsapp_opt_in,email_opt_in,consent_source,tags\nAyesha,+919876543210,ayesha@example.com,true,false,website signup,prospect;hyderabad"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
       </label>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}><button onClick={saveExternalContacts} disabled={savingContacts} style={{ ...inputStyle, width: "auto", marginTop: 0, background: "#eef2ff", color: "#3730a3", fontWeight: 800, cursor: savingContacts ? "wait" : "pointer" }}>{savingContacts ? "Saving contacts…" : "Save to platform contact book"}</button><span style={{ color: "#667085", fontSize: 12 }}>{savedContacts.length} saved external contacts loaded</span></div>
     </section>
