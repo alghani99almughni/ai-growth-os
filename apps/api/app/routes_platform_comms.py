@@ -549,9 +549,11 @@ async def platform_communications_campaign(
         raise HTTPException(400, "Message body is required")
 
     from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
-    from .models_email import PlatformContactPreference
+    from .models_email import PlatformContactPreference, PlatformMarketingContact
     import re
+    import uuid
 
+    campaign_id = str(uuid.uuid4())
     results = []
     for recipient in payload.recipients:
         phone = (recipient.phone or "").strip() or None
@@ -564,12 +566,27 @@ async def platform_communications_campaign(
         email_norm = (email or "").strip().lower()
         phone_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
         email_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm)) if email_norm else None
+        saved_matches = []
+        if phone_norm:
+            saved = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.phone_norm == phone_norm))
+            if saved:
+                saved_matches.append(saved)
+        if email_norm:
+            saved = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.email_norm == email_norm))
+            if saved and all(saved.id != row.id for row in saved_matches):
+                saved_matches.append(saved)
+        if saved_matches:
+            result["contact_id"] = saved_matches[0].id
+        whatsapp_contact_blocked = any(c.status != "active" or not c.whatsapp_opt_in for c in saved_matches)
+        email_contact_blocked = any(c.status != "active" or not c.email_opt_in for c in saved_matches)
 
         if "whatsapp" in channels:
             if not phone:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "no_phone"}
             elif phone_pref and phone_pref.whatsapp_opt_out:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
+            elif whatsapp_contact_blocked:
+                result["channels"]["whatsapp"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
                 msg = body.replace("{{name}}", name) + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
                 try:
@@ -584,6 +601,8 @@ async def platform_communications_campaign(
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
             elif email_pref and email_pref.email_opt_out:
                 result["channels"]["email"] = {"sent": False, "status": "opted_out"}
+            elif email_contact_blocked:
+                result["channels"]["email"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
                 msg = body.replace("{{name}}", name) + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
                 try:
@@ -595,18 +614,62 @@ async def platform_communications_campaign(
 
         results.append(result)
         try:
-            audit(db, tenant_id=None, actor_id=user.id,
-                  action="platform.customer_communication_campaign",
-                  target_type="platform_customer_contact", target_id="manual-recipient",
-                  detail={"channels": sorted(channels), "consent_confirmed": True})
+            audit(
+                db, tenant_id=None, actor_id=user.id,
+                action="platform.customer_communication_campaign",
+                target_type="platform_customer_contact",
+                target_id=result.get("contact_id") or "manual-recipient",
+                detail={
+                    "campaign_id": campaign_id,
+                    "name": name,
+                    "channels": sorted(channels),
+                    "delivery": {
+                        channel: {"sent": bool(outcome.get("sent")), "status": outcome.get("status", "unknown")}
+                        for channel, outcome in result["channels"].items()
+                    },
+                    "consent_confirmed": True,
+                },
+            )
         except Exception:
-            pass
+            logger.exception("could not persist platform campaign audit result")
 
     return {
+        "campaign_id": campaign_id,
         "selected": len(results),
-        "sent": sum(1 for r in results for c in r["channels"].values() if c.get("sent")),
+        "sent": sum(1 for item in results for channel in item["channels"].values() if channel.get("sent")),
         "results": results,
     }
+
+
+@router.get("/api/v1/platform/marketing/campaign-history")
+def platform_marketing_campaign_history(
+    limit: int = 100,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    """Return persisted per-recipient delivery outcomes from the platform audit ledger."""
+    import json
+    from .models_growth import AuditLog
+    rows = db.scalars(
+        select(AuditLog).where(AuditLog.action == "platform.customer_communication_campaign")
+        .order_by(AuditLog.created_at.desc()).limit(min(max(limit, 1), 500))
+    ).all()
+    items = []
+    for row in rows:
+        try:
+            detail = json.loads(row.detail_json or "{}")
+        except Exception:
+            detail = {}
+        items.append({
+            "id": row.id,
+            "campaign_id": detail.get("campaign_id"),
+            "contact_id": row.target_id if row.target_id != "manual-recipient" else None,
+            "name": detail.get("name", "External contact"),
+            "channels": detail.get("channels", []),
+            "delivery": detail.get("delivery", {}),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
+    return {"items": items, "count": len(items)}
 
 # ===========================================================================
 # PLATFORM EMAIL INBOX — platform mailbox only (independent of tenant accounts).
@@ -1040,3 +1103,206 @@ async def tenant_whatsapp_inbox_reply(message_id: str, payload: PlatformWhatsApp
     inbound.status = "replied"
     db.commit()
     return {"sent": True, "phone": inbound.phone, "tenant_id": inbound.tenant_id, "provider": result.get("channel")}
+
+
+# ======================================================================
+# PLATFORM-OWNED EXTERNAL CONTACT BOOK
+# These contacts are independent of tenant customers, inboxes and senders.
+# ======================================================================
+
+class PlatformMarketingContactInput(BaseModel):
+    name: str = Field(default="", max_length=160)
+    phone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[EmailStr] = None
+    whatsapp_opt_in: bool = False
+    email_opt_in: bool = False
+    consent_source: Optional[str] = Field(default=None, max_length=160)
+    tags: list[str] = Field(default_factory=list, max_length=30)
+
+
+class PlatformMarketingContactImport(BaseModel):
+    contacts: list[PlatformMarketingContactInput] = Field(min_length=1, max_length=1000)
+
+
+@router.get("/api/v1/platform/marketing/contacts")
+def list_platform_marketing_contacts(
+    query: str = "",
+    limit: int = 200,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    from .models_email import PlatformMarketingContact
+    q = select(PlatformMarketingContact).where(PlatformMarketingContact.status == "active")
+    needle = query.strip().lower()
+    if needle:
+        like = "%" + needle.replace("%", "\\%").replace("_", "\\_") + "%"
+        q = q.where(
+            PlatformMarketingContact.name.ilike(like)
+            | PlatformMarketingContact.phone.ilike(like)
+            | PlatformMarketingContact.email.ilike(like)
+            | PlatformMarketingContact.tags.ilike(like)
+        )
+    rows = db.scalars(q.order_by(PlatformMarketingContact.created_at.desc()).limit(min(max(limit, 1), 1000))).all()
+    return {"items": [{
+        "id": c.id, "name": c.name, "phone": c.phone, "email": c.email,
+        "whatsapp_opt_in": c.whatsapp_opt_in, "email_opt_in": c.email_opt_in,
+        "consent_source": c.consent_source, "tags": c.tags, "status": c.status,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+    } for c in rows], "count": len(rows)}
+
+
+@router.post("/api/v1/platform/marketing/contacts/import")
+def import_platform_marketing_contacts(
+    payload: PlatformMarketingContactImport,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    """Import only platform-owned external contacts; consent is explicit per channel."""
+    import re
+    import uuid
+    from datetime import datetime
+    from .models_email import PlatformMarketingContact, PlatformContactPreference
+
+    imported = 0
+    updated = 0
+    rejected = []
+    seen = set()
+    for index, item in enumerate(payload.contacts):
+        phone = (item.phone or "").strip() or None
+        email = str(item.email).strip().lower() if item.email else None
+        phone_norm = re.sub(r"\D", "", phone or "") or None
+        email_norm = email or None
+        if not phone_norm and not email_norm:
+            rejected.append({"row": index + 1, "reason": "phone_or_email_required"})
+            continue
+        identities = [x for x in (("phone:" + phone_norm) if phone_norm else None, ("email:" + email_norm) if email_norm else None) if x]
+        if any(identity in seen for identity in identities):
+            rejected.append({"row": index + 1, "reason": "duplicate_in_import"})
+            continue
+        seen.update(identities)
+        phone_contact = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.phone_norm == phone_norm)) if phone_norm else None
+        email_contact = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.email_norm == email_norm)) if email_norm else None
+        if phone_contact and email_contact and phone_contact.id != email_contact.id:
+            rejected.append({"row": index + 1, "reason": "phone_and_email_belong_to_different_contacts"})
+            continue
+        contact = phone_contact or email_contact
+        if not contact:
+            contact = PlatformMarketingContact(id=str(uuid.uuid4()))
+            db.add(contact)
+            imported += 1
+        else:
+            updated += 1
+        contact.name = item.name.strip() or contact.name or phone or email or "External contact"
+        if phone:
+            contact.phone = phone
+            contact.phone_norm = phone_norm
+        if email:
+            contact.email = email
+            contact.email_norm = email_norm
+        # Consent is opt-in only; import never clears an existing opt-in.
+        contact.whatsapp_opt_in = bool(contact.whatsapp_opt_in or item.whatsapp_opt_in)
+        contact.email_opt_in = bool(contact.email_opt_in or item.email_opt_in)
+        contact.consent_source = item.consent_source.strip() if item.consent_source else contact.consent_source
+        contact.tags = ",".join(dict.fromkeys([t.strip() for t in item.tags if t.strip()])) or contact.tags or ""
+        contact.status = "active"
+        contact.updated_at = datetime.utcnow()
+        # Preserve the pre-existing opt-out ledger used by the sending endpoint.
+        # Apply explicit opt-ins to both matching opt-out ledger records, if present.
+        pref_rows = []
+        if phone_norm:
+            pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm))
+            if pref:
+                pref_rows.append(pref)
+        if email_norm:
+            pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm))
+            if pref and pref not in pref_rows:
+                pref_rows.append(pref)
+        for pref in pref_rows:
+            if item.whatsapp_opt_in:
+                pref.whatsapp_opt_out = False
+            if item.email_opt_in:
+                pref.email_opt_out = False
+            pref.updated_at = datetime.utcnow()
+    db.commit()
+    try:
+        audit(db, tenant_id=None, actor_id=user.id, action="platform.marketing_contacts_imported",
+              target_type="platform_marketing_contact", target_id="bulk-import",
+              detail={"imported": imported, "updated": updated, "rejected": len(rejected)})
+    except Exception:
+        pass
+    return {"imported": imported, "updated": updated, "rejected": rejected}
+
+
+@router.patch("/api/v1/platform/marketing/contacts/{contact_id}/consent")
+def update_platform_marketing_contact_consent(
+    contact_id: str,
+    payload: PlatformMarketingContactInput,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    import re
+    from datetime import datetime
+    from .models_email import PlatformMarketingContact, PlatformContactPreference
+    contact = db.get(PlatformMarketingContact, contact_id)
+    if not contact:
+        raise HTTPException(404, "Platform contact not found")
+    phone_norm = re.sub(r"\D", "", contact.phone or "") or None
+    email_norm = (contact.email or "").strip().lower() or None
+    contact.whatsapp_opt_in = payload.whatsapp_opt_in
+    contact.email_opt_in = payload.email_opt_in
+    contact.consent_source = payload.consent_source.strip() if payload.consent_source else contact.consent_source
+    contact.updated_at = datetime.utcnow()
+    pref_rows = []
+    if phone_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm))
+        if pref:
+            pref_rows.append(pref)
+    if email_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm))
+        if pref and pref not in pref_rows:
+            pref_rows.append(pref)
+    if not pref_rows:
+        pref_rows.append(PlatformContactPreference(
+            id=str(__import__("uuid").uuid4()), phone_norm=phone_norm, email_norm=email_norm,
+            whatsapp_opt_out=not payload.whatsapp_opt_in, email_opt_out=not payload.email_opt_in,
+        ))
+        db.add(pref_rows[0])
+    else:
+        for pref in pref_rows:
+            pref.whatsapp_opt_out = not payload.whatsapp_opt_in
+            pref.email_opt_out = not payload.email_opt_in
+            pref.updated_at = datetime.utcnow()
+    db.commit()
+    return {"id": contact.id, "whatsapp_opt_in": contact.whatsapp_opt_in,
+            "email_opt_in": contact.email_opt_in, "updated_at": contact.updated_at.isoformat()}
+
+
+@router.delete("/api/v1/platform/marketing/contacts/{contact_id}")
+def archive_platform_marketing_contact(
+    contact_id: str,
+    user=Depends(_require_platform_admin),
+    db: Session = Depends(_db),
+):
+    from .models_email import PlatformMarketingContact
+    contact = db.get(PlatformMarketingContact, contact_id)
+    if not contact:
+        raise HTTPException(404, "Platform contact not found")
+    contact.status = "archived"
+    contact.whatsapp_opt_in = False
+    contact.email_opt_in = False
+    import re
+    from .models_email import PlatformContactPreference
+    phone_norm = re.sub(r"\D", "", contact.phone or "") or None
+    email_norm = (contact.email or "").strip().lower() or None
+    if phone_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm))
+        if pref:
+            pref.whatsapp_opt_out = True
+            pref.email_opt_out = True
+    if email_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm))
+        if pref:
+            pref.whatsapp_opt_out = True
+            pref.email_opt_out = True
+    db.commit()
+    return {"archived": True, "id": contact.id}

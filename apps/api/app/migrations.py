@@ -125,6 +125,7 @@ def ensure_email_schema() -> None:
         models_email.PlatformEmailMessage.__table__,
         models_email.PlatformWhatsAppMessage.__table__,
         models_email.PlatformContactPreference.__table__,
+        models_email.PlatformMarketingContact.__table__,
     ])
 
 

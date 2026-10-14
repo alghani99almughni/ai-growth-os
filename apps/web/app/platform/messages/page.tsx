@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type Recipient = { name: string; phone: string; email: string };
+type ExternalContact = { id: string; name: string; phone: string | null; email: string | null; whatsapp_opt_in: boolean; email_opt_in: boolean; tags: string; status: string };
+type CampaignHistoryItem = { id: string; campaign_id: string | null; contact_id: string | null; name: string; channels: string[]; delivery: Record<string, { sent: boolean; status: string }>; created_at: string | null };
 
 export default function PlatformCustomerMarketingPage() {
   const [contactsCsv, setContactsCsv] = useState("");
@@ -15,12 +17,84 @@ export default function PlatformCustomerMarketingPage() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [result, setResult] = useState<any>(null);
+  const [savedContacts, setSavedContacts] = useState<ExternalContact[]>([]);
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
+  const [savingContacts, setSavingContacts] = useState(false);
+  const [campaignHistory, setCampaignHistory] = useState<CampaignHistoryItem[]>([]);
+
+  useEffect(() => { void loadSavedContacts(); void loadCampaignHistory(); }, []);
 
   function headers() {
     return {
       "Content-Type": "application/json",
       Authorization: "Bearer " + (localStorage.getItem("ago_access_token") || ""),
     };
+  }
+
+
+  async function loadSavedContacts() {
+    try {
+      const response = await fetch(api() + "/api/v1/platform/marketing/contacts?limit=1000", { headers: headers(), cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      setSavedContacts(data.items || []);
+      setSelectedContactIds(old => old.filter(id => (data.items || []).some((contact: ExternalContact) => contact.id === id && contact.status === "active")));
+    } catch { /* campaign sending remains available if contact-book loading fails */ }
+  }
+
+  async function loadCampaignHistory() {
+    try {
+      const response = await fetch(api() + "/api/v1/platform/marketing/campaign-history?limit=100", { headers: headers(), cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      setCampaignHistory(data.items || []);
+    } catch { /* history is a separate read-only view */ }
+  }
+
+  function parseExternalContacts(text: string) {
+    const rows = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (!rows.length) return [];
+    const hasHeader = /name/i.test(rows[0]) && (/phone/i.test(rows[0]) || /email/i.test(rows[0]));
+    return rows.slice(hasHeader ? 1 : 0).map(line => {
+      const p = line.split(",").map(v => v.trim());
+      return {
+        name: p[0] || "",
+        phone: p[1] || null,
+        email: p[2] || null,
+        whatsapp_opt_in: /^(true|yes|1|y)$/i.test(p[3] || ""),
+        email_opt_in: /^(true|yes|1|y)$/i.test(p[4] || ""),
+        consent_source: p[5] || "",
+        tags: (p[6] || "").split(";").map(v => v.trim()).filter(Boolean),
+      };
+    });
+  }
+
+  async function saveExternalContacts() {
+    const contacts = parseExternalContacts(contactsCsv);
+    if (!contacts.length) { setStatus("Add contact rows first."); return; }
+    if (contacts.some(c => !c.phone && !c.email)) { setStatus("Each saved contact needs a phone number and/or email address."); return; }
+    setSavingContacts(true); setStatus("");
+    try {
+      const response = await fetch(api() + "/api/v1/platform/marketing/contacts/import", {
+        method: "POST", headers: headers(), body: JSON.stringify({ contacts }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.detail || "Could not save contacts");
+      setStatus("Saved " + data.imported + " new contacts; updated " + data.updated + ". Rejected rows: " + (data.rejected || []).length + ".");
+      await loadSavedContacts();
+    } catch (error: any) {
+      setStatus(error?.message || "Could not save contacts");
+    } finally { setSavingContacts(false); }
+  }
+
+  async function archiveContact(id: string) {
+    if (!window.confirm("Archive this external contact and disable campaign opt-ins?")) return;
+    try {
+      const response = await fetch(api() + "/api/v1/platform/marketing/contacts/" + encodeURIComponent(id), { method: "DELETE", headers: headers() });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.detail || "Could not archive contact");
+      await loadSavedContacts();
+    } catch (error: any) { setStatus(error?.message || "Could not archive contact"); }
   }
 
   function parseContacts(text: string): Recipient[] {
@@ -46,8 +120,9 @@ export default function PlatformCustomerMarketingPage() {
   }
 
   async function sendCampaign() {
-    const recipients = parseContacts(contactsCsv);
-    if (!recipients.length) { setStatus("Import or paste your own customer contacts first."); return; }
+    const selectedSaved = savedContacts.filter(contact => selectedContactIds.includes(contact.id) && contact.status === "active");
+    const recipients = selectedSaved.length ? selectedSaved.map(contact => ({ name: contact.name, phone: contact.phone || "", email: contact.email || "" })) : parseContacts(contactsCsv);
+    if (!recipients.length) { setStatus("Select saved external contacts or paste/import external contact rows first."); return; }
     if (recipients.some(r => !r.phone && !r.email)) { setStatus("Every row needs a phone number and/or email: name,phone,email."); return; }
     if (!channels.length) { setStatus("Select WhatsApp and/or email."); return; }
     if (!body.trim()) { setStatus("Enter your campaign message."); return; }
@@ -66,7 +141,8 @@ export default function PlatformCustomerMarketingPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data?.detail || "Campaign failed");
       setResult(data);
-      setStatus("Processed " + data.selected + " of your contacts; " + data.sent + " channel deliveries reported successful.");
+      await loadCampaignHistory();
+      setStatus("Campaign " + (data.campaign_id || "") + ": processed " + data.selected + " contacts; " + data.sent + " channel deliveries reported successful.");
     } catch (error: any) {
       setStatus(error?.message || "Campaign failed");
     } finally {
@@ -99,11 +175,19 @@ export default function PlatformCustomerMarketingPage() {
       <label style={{ display: "block", fontSize: 12, fontWeight: 700 }}>Import CSV
         <input type="file" accept=".csv,text/csv" onChange={e => importCsv(e.target.files?.[0])} style={inputStyle} />
       </label>
-      <p style={{ color: "#667085", fontSize: 12 }}>CSV columns: name,phone,email. Or paste one contact per line below. Use international phone numbers. Contacts are not read from tenant records.</p>
+      <p style={{ color: "#667085", fontSize: 12 }}>CSV columns: name,phone,email,whatsapp_opt_in,email_opt_in,consent_source,tags. Consent columns must explicitly be true/yes/1 to record opt-in; tags are separated with semicolons. Contacts are platform-owned external records, never read from tenant records.</p>
       <label style={{ display: "block", fontSize: 12, fontWeight: 700 }}>Contact rows
-        <textarea value={contactsCsv} onChange={e => setContactsCsv(e.target.value)} rows={7} placeholder={"name,phone,email\nAyesha,+919876543210,ayesha@example.com"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
+        <textarea value={contactsCsv} onChange={e => setContactsCsv(e.target.value)} rows={7} placeholder={"name,phone,email,whatsapp_opt_in,email_opt_in,consent_source,tags\nAyesha,+919876543210,ayesha@example.com,true,false,website signup,prospect;hyderabad"} style={{ ...inputStyle, fontFamily: "monospace", resize: "vertical" }} />
       </label>
-      <p style={{ margin: "8px 0 0", color: "#8a5a00", fontSize: 12 }}>Current version: imported contacts are submitted with this campaign; a persistent contact CRM/list manager is the next integration step.</p>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}><button onClick={saveExternalContacts} disabled={savingContacts} style={{ ...inputStyle, width: "auto", marginTop: 0, background: "#eef2ff", color: "#3730a3", fontWeight: 800, cursor: savingContacts ? "wait" : "pointer" }}>{savingContacts ? "Saving contacts…" : "Save to platform contact book"}</button><span style={{ color: "#667085", fontSize: 12 }}>{savedContacts.length} saved external contacts loaded</span></div>
+    </section>
+
+
+    <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 18 }}>
+      <h2 style={{ margin: "0 0 12px", fontSize: 17 }}>Saved platform contacts ({savedContacts.length})</h2>
+      <p style={{ margin: "0 0 12px", color: "#667085", fontSize: 12 }}>Select saved contacts below to target them directly. Selected saved contacts take priority over pasted rows.</p>
+      <p style={{ margin: "0 0 12px", color: "#667085", fontSize: 12 }}>External contact book only. Saving a contact does not send a message. Campaign sends still require the explicit confirmation below and sender policy compliance.</p>
+      {savedContacts.length === 0 ? <p style={{ color: "#667085", fontSize: 13 }}>No saved external contacts yet.</p> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr>{["Select", "Contact", "Phone / email", "WhatsApp opt-in", "Email opt-in", "Status", ""].map(label => <th key={label} style={{ textAlign: "left", padding: 9, background: "#f7f9fc", borderBottom: "1px solid #e8ecf3" }}>{label}</th>)}</tr></thead><tbody>{savedContacts.map(contact => <tr key={contact.id}><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}><input type="checkbox" aria-label={"Select " + contact.name} disabled={contact.status !== "active"} checked={selectedContactIds.includes(contact.id)} onChange={e => setSelectedContactIds(old => e.target.checked ? [...old, contact.id] : old.filter(id => id !== contact.id))} /></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.name}<div style={{ color: "#667085" }}>{contact.tags}</div></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.phone || "—"}<div>{contact.email || "—"}</div></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.whatsapp_opt_in ? "Yes" : "No"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.email_opt_in ? "Yes" : "No"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.status}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}><button onClick={() => archiveContact(contact.id)} style={{ ...inputStyle, width: "auto", marginTop: 0, color: "#b42318", cursor: "pointer" }}>Archive</button></td></tr>)}</tbody></table></div>}
     </section>
 
     <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 18 }}>
@@ -130,6 +214,16 @@ export default function PlatformCustomerMarketingPage() {
       </label>
       <button onClick={sendCampaign} disabled={busy} style={{ marginTop: 18, background: "#4f46e5", color: "#fff", border: 0, padding: "12px 20px", borderRadius: 9, fontWeight: 800, cursor: busy ? "wait" : "pointer" }}>{busy ? "Sending campaign…" : "Send campaign to my customers"}</button>
       {status && <p role="status" style={{ marginTop: 14, fontSize: 13, color: status.includes("failed") ? "#b42318" : "#344054" }}>{status}</p>}
+    </section>
+
+
+    <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>Recent campaign delivery history</h2>
+        <button onClick={() => void loadCampaignHistory()} style={{ ...inputStyle, width: "auto", marginTop: 0, cursor: "pointer" }}>Refresh history</button>
+      </div>
+      <p style={{ color: "#667085", fontSize: 12 }}>Per-recipient outcomes are recorded in the platform audit ledger. Provider acceptance is not proof of final delivery to the recipient.</p>
+      {campaignHistory.length === 0 ? <p style={{ color: "#667085", fontSize: 13 }}>No campaign attempts recorded yet.</p> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr>{["Time (UTC)", "Contact", "Campaign ID", "Channel outcomes"].map(label => <th key={label} style={{ textAlign: "left", padding: 9, background: "#f7f9fc", borderBottom: "1px solid #e8ecf3" }}>{label}</th>)}</tr></thead><tbody>{campaignHistory.map(item => <tr key={item.id}><td style={{ padding: 9, borderBottom: "1px solid #edf0f5", whiteSpace: "nowrap" }}>{item.created_at ? new Date(item.created_at).toLocaleString() : "—"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{item.name}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5", fontFamily: "monospace" }}>{item.campaign_id || "—"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{Object.entries(item.delivery || {}).map(([channel, outcome]) => channel + ": " + (outcome.status || (outcome.sent ? "sent" : "failed"))).join(" · ") || "—"}</td></tr>)}</tbody></table></div>}
     </section>
 
     {result && <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22 }}>

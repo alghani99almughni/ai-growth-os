@@ -329,3 +329,41 @@ def list_events(tenant_id: str, user: User = Depends(principal), db: Session = D
     rows = db.scalars(select(VisitorEvent).where(VisitorEvent.tenant_id == tenant_id).order_by(VisitorEvent.created_at.desc()).limit(max(1, min(limit, 500)))).all()
     return {"items": [{"id": e.id, "pass_id": e.pass_id, "event_type": e.event_type, "actor_id": e.actor_id,
                        "details": json.loads(e.details_json or "{}"), "created_at": e.created_at.isoformat()} for e in rows]}
+
+@router.post("/passes/{pass_id}/deny")
+def deny_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
+    """Record an explicit human denial; a denied pass can never be admitted."""
+    tenant_access(tenant_id, user, db)
+    admin_only(user)
+    p = db.scalar(select(VisitorPass).where(
+        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
+    ))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status != "pending":
+        raise HTTPException(409, "Only pending passes can be denied")
+    p.status = "denied"
+    event(db, tenant_id, p.id, user.id, "pass_denied")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
+
+
+@router.post("/passes/{pass_id}/cancel")
+def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
+    """Cancel a pending or approved pass without altering completed gate history."""
+    tenant_access(tenant_id, user, db)
+    admin_only(user)
+    p = db.scalar(select(VisitorPass).where(
+        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
+    ))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status not in {"pending", "approved"}:
+        raise HTTPException(409, "Only pending or approved passes can be cancelled")
+    p.status = "cancelled"
+    event(db, tenant_id, p.id, user.id, "pass_cancelled")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
+
