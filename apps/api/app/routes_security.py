@@ -186,6 +186,15 @@ def entry_qr(tenant_id: str, user: User = Depends(principal), db: Session = Depe
     tenant = db.get(Tenant, tenant_id)
     if not tenant or not getattr(tenant, "slug", None):
         raise HTTPException(404, "Tenant public URL is not available")
+    connection_row = db.scalar(select(TenantSetting).where(
+        TenantSetting.tenant_id == tenant_id, TenantSetting.key == "smartcheck_connection"
+    ))
+    try:
+        connection_config = json.loads(connection_row.value_json) if connection_row else {}
+    except (TypeError, ValueError):
+        connection_config = {}
+    if connection_config.get("visitor_lifecycle_sync_ready") is not True:
+        raise HTTPException(503, "Visitor registration QR is unavailable until SmartCheck visitor lifecycle synchronization is verified")
     app_url = settings.public_app_url.strip().rstrip("/")
     parsed = urlparse(app_url)
     if parsed.hostname in {"localhost", "127.0.0.1", "::1"} and settings.environment.lower() != "development":
