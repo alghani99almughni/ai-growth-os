@@ -123,3 +123,14 @@ def test_migration_is_idempotent_for_existing_deterministic_pass_id(monkeypatch)
     expected_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"aigrowthos:smartcheck:tenant-a:{ticket_id}"))
     db.get.assert_called_once()
     assert db.get.call_args.args[1] == expected_id
+
+
+
+def test_smartcheck_shared_secret_is_encrypted_and_round_trips():
+    from app.routes_security import _decrypt_smartcheck_secret, _encrypt_smartcheck_secret
+
+    secret = "test-secret-value-with-at-least-24-characters"
+    encrypted = _encrypt_smartcheck_secret(secret)
+
+    assert secret not in encrypted
+    assert _decrypt_smartcheck_secret(encrypted) == secret
