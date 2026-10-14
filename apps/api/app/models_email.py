@@ -132,3 +132,22 @@ class TenantWhatsAppMessage(Base):
     direction = Column(String, nullable=False, default="inbound", index=True)
     status = Column(String, nullable=False, default="received", index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class PlatformMarketingContact(Base):
+    """External prospects/customers owned by the platform operator, never by a tenant."""
+    __tablename__ = "platform_marketing_contacts"
+
+    id = Column(String, primary_key=True)
+    name = Column(String(160), nullable=False, default="")
+    phone = Column(String(32), nullable=True, index=True)
+    phone_norm = Column(String(32), nullable=True, unique=True, index=True)
+    email = Column(String(320), nullable=True, index=True)
+    email_norm = Column(String(320), nullable=True, unique=True, index=True)
+    whatsapp_opt_in = Column(Boolean, nullable=False, default=False)
+    email_opt_in = Column(Boolean, nullable=False, default=False)
+    consent_source = Column(String(160), nullable=True)
+    tags = Column(Text, nullable=False, default="")
+    status = Column(String(24), nullable=False, default="active", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
