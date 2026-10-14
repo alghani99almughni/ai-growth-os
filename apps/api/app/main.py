@@ -2026,7 +2026,7 @@ class PublicVisitorRequest(BaseModel):
 def public_visitor_request(slug: str, payload: PublicVisitorRequest, db: Session=Depends(get_db)):
     """Public PWA/chat request endpoint; creates a pending request only, never grants entry."""
     tenant=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
-    if not tenant:
+    if not tenant or str(tenant.status).lower() != "active":
         raise HTTPException(404,"Business not found")
     if not _feature_config(db,tenant.id).get("security_visitor_management",False):
         raise HTTPException(403,"Security & Visitor Management is not enabled for this business")
