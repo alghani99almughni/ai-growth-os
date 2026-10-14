@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-type Staff = { id:string; name:string; user_id?:string|null; department_id?:string|null; department_name?:string|null; email?:string|null; role?:string|null; skills:string|null; is_active:boolean; is_available:boolean };
+type Staff = { id:string; name:string; user_id?:string|null; department_id?:string|null; department_name?:string|null; email?:string|null; role?:string|null; skills:string|null; service_ids?:string[]; is_active:boolean; is_available:boolean };
 type Department = {id:string;name:string;description?:string;skills:string;is_active:boolean};
-type Role = {id:string;name:string;permissions:string[];is_system:boolean};
+type Role = {id:string;name:string;permissions:string[];is_system:boolean};\ntype Service = {id:string;name:string;is_active:boolean};
 const PERMISSIONS = [
   ["dashboard.view","Dashboard"],["customers.view","Customers"],["customers.manage","Manage customers"],
   ["bookings.view","Bookings"],["bookings.manage","Manage bookings"],["services.view","Services"],
@@ -16,7 +16,7 @@ const PERMISSIONS = [
 export default function TeamPanel({tenantId,token}:{tenantId:string;token:string}) {
   const [items,setItems]=useState<Staff[]>([]);
   const [departments,setDepartments]=useState<Department[]>([]);
-  const [roles,setRoles]=useState<Role[]>([]);
+  const [roles,setRoles]=useState<Role[]>([]);\n  const [services,setServices]=useState<Service[]>([]);\n  const [selectedServiceIds,setSelectedServiceIds]=useState<string[]>([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
   const [status,setStatus]=useState("");
@@ -35,12 +35,12 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
   async function loadAll() {
     setLoading(true);setError("");
     try {
-      const [s,d,r]=await Promise.all([
+      const [s,d,r,sv]=await Promise.all([
         request(`/api/v1/tenants/${tenantId}/staff`),
         request(`/api/v1/tenants/${tenantId}/departments`),
         request(`/api/v1/tenants/${tenantId}/roles`)
       ]);
-      setItems(s.items||[]);setDepartments(d.items||[]);setRoles(r.items||[]);
+      setItems(s.items||[]);setDepartments(d.items||[]);setRoles(r.items||[]);setServices((sv.items||[]).filter((x:Service)=>x.is_active));
       if(!staff.role && (r.items||[]).length) setStaff(v=>({...v,role:r.items[0].name}));
     } catch(e:any){setError(e.message||"Could not load team configuration")}
     setLoading(false);
@@ -49,9 +49,9 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
   async function createStaff(e:any) {
     e.preventDefault();setBusy(true);setStatus("");setError("");
     try {
-      await request(`/api/v1/tenants/${tenantId}/staff`,{method:"POST",body:JSON.stringify({...staff,skills:staff.skills.split(",").map(x=>x.trim()).filter(Boolean).join(",")})});
+      await request(`/api/v1/tenants/${tenantId}/staff`,{method:"POST",body:JSON.stringify({...staff,service_ids:selectedServiceIds,skills:staff.skills.split(",").map(x=>x.trim()).filter(Boolean).join(",")})});
       setStatus("Team member created. They can sign in using the email and password you set.");
-      setStaff({name:"",email:"",password:"",role:roles[0]?.name||"",department_id:"",skills:""});await loadAll();
+      setStaff({name:"",email:"",password:"",role:roles[0]?.name||"",department_id:"",skills:""});setSelectedServiceIds([]);await loadAll();
     } catch(e:any){setError(e.message||"Could not create team member")} setBusy(false);
   }
   async function createRole(e:any) {
@@ -63,6 +63,12 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
     e.preventDefault();setBusy(true);setError("");setStatus("");
     try {await request(`/api/v1/tenants/${tenantId}/departments`,{method:"POST",body:JSON.stringify(dept)});setDept({name:"",description:"",skills:""});setStatus("Department created.");await loadAll();}
     catch(e:any){setError(e.message||"Could not create department")}setBusy(false);
+  }
+  async function toggleServiceAssignment(s:Staff,serviceId:string,checked:boolean) {
+    const current=s.service_ids||[];
+    const next=checked?[...new Set([...current,serviceId])]:current.filter(id=>id!==serviceId);
+    try {await request(`/api/v1/tenants/${tenantId}/staff/${s.id}`,{method:"PATCH",body:JSON.stringify({service_ids:next})});await loadAll();}
+    catch(e:any){setError(e.message||"Could not update service assignment")}
   }
   async function toggleStaff(s:Staff,field:"is_active"|"is_available",value:boolean) {
     try {await request(`/api/v1/tenants/${tenantId}/staff/${s.id}`,{method:"PATCH",body:JSON.stringify({[field]:value})});await loadAll();}
@@ -88,14 +94,20 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
         <label style={{display:"block",marginTop:10}}>Temporary password<input required minLength={8} type="password" value={staff.password} onChange={e=>setStaff({...staff,password:e.target.value})} style={input}/></label>
         <label style={{display:"block",marginTop:10}}>Role<select required value={staff.role} onChange={e=>setStaff({...staff,role:e.target.value})} style={input}><option value="">Select a role…</option>{roles.map(r=><option key={r.id} value={r.name}>{r.name}</option>)}</select></label>
         <label style={{display:"block",marginTop:10}}>Department<select value={staff.department_id} onChange={e=>setStaff({...staff,department_id:e.target.value})} style={input}><option value="">Unassigned</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-        <label style={{display:"block",marginTop:10}}>Services / skills (comma separated)<input value={staff.skills} onChange={e=>setStaff({...staff,skills:e.target.value})} placeholder="Consultation, bookings, sales" style={input}/></label>
+        <div style={{marginTop:12}}><strong style={{fontSize:13}}>Map services to this member</strong>
+          {services.length?services.map(s=><label key={s.id} style={{display:"flex",gap:8,alignItems:"center",marginTop:7,fontSize:13,color:"#344054"}}><input type="checkbox" checked={selectedServiceIds.includes(s.id)} onChange={e=>setSelectedServiceIds(ids=>e.target.checked?[...ids,s.id]:ids.filter(id=>id!==s.id))}/>{s.name}</label>):<p style={{fontSize:12,color:"#b54708"}}>Add services under Services first. You can still create a team member.</p>}
+        </div>
+        <label style={{display:"block",marginTop:10}}>Additional skills (optional, comma separated)<input value={staff.skills} onChange={e=>setStaff({...staff,skills:e.target.value})} placeholder="Customer support, follow-ups" style={input}/></label>
         <button disabled={busy||!roles.length} style={{...btn,marginTop:14,background:"#4f46e5",color:"#fff",borderColor:"#4f46e5"}}>{busy?"Saving…":"Create member & login"}</button>
         {!roles.length&&<p style={{fontSize:12,color:"#b54708"}}>Create a role first under Roles & permissions.</p>}
       </form>
       <div><h3 style={{marginTop:0}}>Current team ({items.length})</h3>{items.map(s=><article key={s.id} style={{border:"1px solid #e8ecf3",borderRadius:10,padding:13,marginBottom:10}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:8}}><strong>{s.name}</strong><span style={{fontSize:12,color:s.is_active?"#067647":"#b42318"}}>{s.is_active?"Active":"Inactive"}</span></div>
         <p style={{margin:"5px 0",fontSize:13,color:"#667085"}}>{s.email||"No login email"} · {s.role||"staff"}</p>
-        <p style={{margin:"5px 0",fontSize:12,color:"#667085"}}>{s.department_name||"No department"} · Services: {s.skills||"Not assigned"}</p>
+        <p style={{margin:"5px 0",fontSize:12,color:"#667085"}}>{s.department_name||"No department"} · Skills: {s.skills||"Not assigned"}</p>
+        <div style={{marginTop:9,paddingTop:8,borderTop:"1px solid #edf0f5"}}><strong style={{fontSize:12}}>Assigned services</strong>
+          {services.length?services.map(service=><label key={service.id} style={{display:"inline-flex",gap:5,alignItems:"center",margin:"7px 12px 0 0",fontSize:12,color:"#344054"}}><input type="checkbox" checked={(s.service_ids||[]).includes(service.id)} onChange={e=>void toggleServiceAssignment(s,service.id,e.target.checked)}/>{service.name}</label>):<p style={{fontSize:12,color:"#667085"}}>No active services configured.</p>}
+        </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:9}}><button style={btn} onClick={()=>void toggleStaff(s,"is_active",!s.is_active)}>{s.is_active?"Disable login":"Enable login"}</button><button style={btn} onClick={()=>void toggleStaff(s,"is_available",!s.is_available)}>{s.is_available?"Mark unavailable":"Mark available"}</button></div>
       </article>)}{!items.length&&!loading&&<p style={{color:"#75839a"}}>No team members yet. Create the first member using the form.</p>}</div>
     </div>}
