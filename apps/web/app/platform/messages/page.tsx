@@ -294,7 +294,6 @@ export default function MessagesPage() {
           </div>
         </div>
         <label style={{display:"block",marginTop:14,fontSize:12,color:"#344054"}}>Tenant filter (all tenants by default)<select value={selectedInboxTenant} onChange={e=>setSelectedInboxTenant(e.target.value)} style={inputStyle}><option value="">All tenants</option>{tenants.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
-        {!whatsappInbox.configured || !whatsappInbox.webhook_secret_configured ? <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>The inbox uses existing tenant webhook connections; no separate platform WhatsApp credentials are required.</p> : null}
         {(whatsappInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No tenant WhatsApp messages stored yet. New inbound messages appear after the tenant webhook receives them.</p> :
           whatsappInbox.items.map((m: any) => <div key={m.id} style={{ borderTop: "1px solid #edf0f5", marginTop: 14, paddingTop: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -328,7 +327,6 @@ export default function MessagesPage() {
         </div>
         {emailInbox.from_address && <p style={{ fontSize: 12, color: "#4b5563" }}>Mailbox: {emailInbox.from_address}</p>}
         {emailInbox.poll_error && <p style={{ color: "#b6341f", fontSize: 12 }}>{emailInbox.poll_error}</p>}
-        {!emailInbox.configured && <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>This inbox reads existing tenant mailbox logs and replies through the selected tenant’s encrypted SMTP configuration.</p>}
         <label style={{display:"block",marginTop:14,fontSize:12,color:"#344054"}}>Tenant filter (all tenants by default)<select value={selectedInboxTenant} onChange={e=>setSelectedInboxTenant(e.target.value)} style={inputStyle}><option value="">All tenants</option>{tenants.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
         {(emailInbox.items || []).length === 0 ? <p style={{ color: "#75839a", fontSize: 13, marginTop: 18 }}>No tenant email log entries yet. New messages appear after tenant mailbox polling processes them.</p> :
           emailInbox.items.map((m: any) => <div key={m.id} style={{ borderTop: "1px solid #edf0f5", marginTop: 14, paddingTop: 14 }}>
