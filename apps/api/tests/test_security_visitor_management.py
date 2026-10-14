@@ -66,6 +66,32 @@ def test_platform_default_cannot_enable_feature_for_tenant():
     assert db.scalar.call_count == 1
 
 
+def test_platform_toggle_requires_platform_admin():
+    from app.routes_security import TenantSecurityFeatureToggle
+    user = SimpleNamespace(id="user-1", role="tenant_admin")
+    db = Mock()
+    with pytest.raises(HTTPException) as exc:
+        security_routes.platform_set_security_feature(
+            "tenant-a", TenantSecurityFeatureToggle(enabled=True), user=user, db=db
+        )
+    assert exc.value.status_code == 403
+    db.get.assert_not_called()
+
+
+def test_platform_toggle_persists_tenant_entitlement():
+    from app.routes_security import TenantSecurityFeatureToggle
+    user = SimpleNamespace(id="platform-user", role="super_admin")
+    db = Mock()
+    db.get.return_value = SimpleNamespace(id="tenant-a", status="active")
+    db.scalar.return_value = None
+    result = security_routes.platform_set_security_feature(
+        "tenant-a", TenantSecurityFeatureToggle(enabled=True), user=user, db=db
+    )
+    assert result == {"tenant_id": "tenant-a", "security_visitor_management": True}
+    db.add.assert_called()
+    db.commit.assert_called()
+
+
 def test_create_pass_rejects_approval_bypass(monkeypatch):
     monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
     monkeypatch.setattr(security_routes, "admin_only", lambda user: None)
