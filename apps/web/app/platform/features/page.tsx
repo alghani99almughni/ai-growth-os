@@ -20,7 +20,6 @@ const FEATURE_LABELS: Record<string, string> = {
   google_review: "Google review",
   bookings: "Bookings",
   queue: "Queue",
-  security_visitor_management: "Security & Visitor Management",
 };
 
 export default function FeatureDefaultsPage() {
@@ -95,6 +94,9 @@ export default function FeatureDefaultsPage() {
           These apply to new tenants when they sign up. Existing tenants keep their own settings.
           Individual tenants can be overridden from their detail page.
         </p>
+        <div style={{ margin: "0 0 16px", padding: 12, borderRadius: 9, background: "#f5f7fb", color: "#4b5563", fontSize: 13 }}>
+          Security &amp; Visitor Management is an optional add-on. Enable it only for selected tenants from the Tenants page; it is never enabled platform-wide by these defaults.
+        </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
           {Object.keys(FEATURE_LABELS).map((k) => (
