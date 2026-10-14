@@ -30,8 +30,55 @@ from .models_security import SecuritySite, VisitorPass, VisitorEvent
 from .security import decode_token_strict
 
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/security", tags=["security-visitor-management"])
+platform_router = APIRouter(prefix="/api/v1/platform", tags=["platform-security-feature"])
 ADMIN_ROLES = {"owner", "admin", "tenant_admin", "manager", "security_admin", "platform_admin", "super_admin"}
 PLATFORM_ROLES = {"platform_admin", "super_admin"}
+
+
+class TenantSecurityFeatureToggle(BaseModel):
+    enabled: bool
+
+
+@platform_router.get("/security-visitor-management")
+def platform_security_feature_statuses(user: User = Depends(principal), db: Session = Depends(db_session)):
+    if str(user.role).lower() not in PLATFORM_ROLES:
+        raise HTTPException(403, "Platform administrator permission required")
+    rows = db.scalars(select(TenantSetting).where(TenantSetting.key == "features")).all()
+    enabled_tenant_ids = []
+    for row in rows:
+        try:
+            features = json.loads(row.value_json or "{}")
+        except (TypeError, ValueError):
+            features = {}
+        if isinstance(features, dict) and features.get("security_visitor_management") is True:
+            enabled_tenant_ids.append(row.tenant_id)
+    return {"enabled_tenant_ids": enabled_tenant_ids}
+
+
+@platform_router.put("/tenants/{tenant_id}/security-visitor-management")
+def platform_set_security_feature(tenant_id: str, body: TenantSecurityFeatureToggle,
+                                  user: User = Depends(principal), db: Session = Depends(db_session)):
+    if str(user.role).lower() not in PLATFORM_ROLES:
+        raise HTTPException(403, "Platform administrator permission required")
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant or str(tenant.status).lower() not in {"active", "trial", "pending"}:
+        raise HTTPException(404, "Tenant not found or inactive")
+    row = db.scalar(select(TenantSetting).where(
+        TenantSetting.tenant_id == tenant_id, TenantSetting.key == "features"
+    ))
+    try:
+        features = json.loads(row.value_json) if row else {}
+        if not isinstance(features, dict):
+            features = {}
+    except (TypeError, ValueError):
+        features = {}
+    features["security_visitor_management"] = body.enabled
+    if row:
+        row.value_json = json.dumps(features)
+    else:
+        db.add(TenantSetting(tenant_id=tenant_id, key="features", value_json=json.dumps(features)))
+    db.commit()
+    return {"tenant_id": tenant_id, "security_visitor_management": body.enabled}
 
 
 def db_session():
