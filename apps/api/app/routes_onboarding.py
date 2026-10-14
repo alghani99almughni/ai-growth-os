@@ -78,6 +78,15 @@ def _unique_slug(db: Session, base: str) -> str:
     return slug
 
 
+def _validated_template_key(industry: str) -> str:
+    """Resolve the selected AI starter template before creating a tenant."""
+    key = (industry or "").strip().lower()
+    supported = {item["key"] for item in available_industries()}
+    if key not in supported:
+        raise HTTPException(400, "Please select a supported AI starter template")
+    return key
+
+
 # ---------------------------------------------------------------------------
 # Public endpoints
 # ---------------------------------------------------------------------------
@@ -96,6 +105,7 @@ def public_onboard(payload: OnboardRequest):
     """
     db: Session = SessionLocal()
     try:
+        template_key = _validated_template_key(payload.industry)
         catalog_entry = None
         if payload.catalog_entry_id:
             catalog_entry = db.get(IndustryCatalogEntry, payload.catalog_entry_id)
@@ -107,7 +117,7 @@ def public_onboard(payload: OnboardRequest):
 
         slug = _unique_slug(db, _slugify(payload.business_name))
 
-        tenant = create_tenant(db, payload.business_name, slug, payload.industry)
+        tenant = create_tenant(db, payload.business_name, slug, template_key)
         tenant.phone = payload.phone
         tenant.whatsapp_number = payload.whatsapp_number
         tenant.address = payload.address
@@ -131,12 +141,13 @@ def public_onboard(payload: OnboardRequest):
             ensure_default_hours(db, tenant.id)
 
         # Seed industry defaults (services, menu, knowledge)
-        seed_industry_defaults(db, tenant, payload.industry)
+        seed_industry_defaults(db, tenant, template_key)
 
         if catalog_entry:
             import json as _catalog_json
             selection = {
                 "catalog_entry_id": catalog_entry.id,
+                "starter_template": template_key,
                 "category": catalog_entry.category,
                 "business_type": catalog_entry.business_type,
                 "roles": _catalog_json.loads(catalog_entry.roles_json or "[]"),
