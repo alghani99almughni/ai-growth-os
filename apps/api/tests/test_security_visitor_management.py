@@ -88,3 +88,85 @@ def test_verify_token_returns_stable_nested_pass_contract(monkeypatch):
     assert result["pass"]["visitor_name"] == "Guest"
     assert result["pass"]["status"] == "approved"
     db.commit.assert_called_once()
+
+
+
+def test_security_role_cannot_approve_a_pass(monkeypatch):
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    user = SimpleNamespace(id="guard-1", role="security", tenant_id="tenant-a")
+    db = Mock()
+    with pytest.raises(HTTPException) as exc:
+        security_routes.approve_pass("tenant-a", "pass-1", user=user, db=db)
+    assert exc.value.status_code == 403
+    db.scalar.assert_not_called()
+
+
+def test_check_in_requires_approved_unused_pass_and_records_audit_event(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(security_routes, "gate_staff", lambda user: None)
+    events = []
+    monkeypatch.setattr(security_routes, "event", lambda db, tenant, pass_id, actor, kind, details=None: events.append(kind))
+    visitor_pass = SimpleNamespace(
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="approved", expires_at=None,
+        checked_in_at=None, checked_out_at=None, created_at=datetime.utcnow(),
+    )
+    db = Mock()
+    db.scalar.return_value = visitor_pass
+    user = SimpleNamespace(id="guard-1", role="security", tenant_id="tenant-a")
+
+    result = security_routes.check_in("tenant-a", "pass-1", user=user, db=db)
+
+    assert result["status"] == "checked_in"
+    assert visitor_pass.checked_in_at is not None
+    assert events == ["visitor_checked_in"]
+    db.commit.assert_called_once()
+
+
+def test_check_in_rejects_pending_pass_without_audit_success_event(monkeypatch):
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(security_routes, "gate_staff", lambda user: None)
+    events = []
+    monkeypatch.setattr(security_routes, "event", lambda db, tenant, pass_id, actor, kind, details=None: events.append(kind))
+    visitor_pass = SimpleNamespace(
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="pending", expires_at=None, created_at=None,
+        checked_in_at=None, checked_out_at=None,
+    )
+    db = Mock()
+    db.scalar.return_value = visitor_pass
+    user = SimpleNamespace(id="guard-1", role="security", tenant_id="tenant-a")
+
+    with pytest.raises(HTTPException) as exc:
+        security_routes.check_in("tenant-a", "pass-1", user=user, db=db)
+
+    assert exc.value.status_code == 409
+    assert events == []
+    db.commit.assert_not_called()
+
+
+def test_check_out_requires_checked_in_state_and_records_audit_event(monkeypatch):
+    from datetime import datetime
+    monkeypatch.setattr(security_routes, "tenant_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(security_routes, "gate_staff", lambda user: None)
+    events = []
+    monkeypatch.setattr(security_routes, "event", lambda db, tenant, pass_id, actor, kind, details=None: events.append(kind))
+    visitor_pass = SimpleNamespace(
+        id="pass-1", tenant_id="tenant-a", site_id=None, visitor_name="Guest",
+        visitor_mobile="", purpose="Meeting", destination="Office", vehicle_number="",
+        industry="apartment", status="checked_in", expires_at=None,
+        checked_in_at=datetime.utcnow(), checked_out_at=None, created_at=datetime.utcnow(),
+    )
+    db = Mock()
+    db.scalar.return_value = visitor_pass
+    user = SimpleNamespace(id="guard-1", role="security", tenant_id="tenant-a")
+
+    result = security_routes.check_out("tenant-a", "pass-1", user=user, db=db)
+
+    assert result["status"] == "checked_out"
+    assert visitor_pass.checked_out_at is not None
+    assert events == ["visitor_checked_out"]
+    db.commit.assert_called_once()

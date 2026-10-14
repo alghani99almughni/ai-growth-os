@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -367,3 +368,305 @@ def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), d
     db.refresh(p)
     return pass_json(p)
 
+
+
+# ======================================================================
+# SMARTCHECK / SNAPSHEET GOOGLE SHEETS + DRIVE COMPATIBILITY
+# ======================================================================
+
+class SmartCheckConfigInput(BaseModel):
+    web_app_url: str = Field(min_length=1, max_length=2048)
+    shared_secret: str = Field(min_length=24, max_length=256)
+    enabled: bool = True
+
+
+class SmartCheckLegacyTicket(BaseModel):
+    ticket_id: str = Field(min_length=1, max_length=160)
+    tenant_id: str | None = Field(default=None, max_length=160)
+    visitor_name: str = Field(min_length=1, max_length=160)
+    visitor_mobile: str = Field(default="", max_length=32)
+    purpose: str = Field(default="", max_length=240)
+    target_destination: str = Field(default="", max_length=240)
+    vehicle_number: str = Field(default="", max_length=40)
+    industry: str = Field(default="apartment", pattern="^(school|apartment|hospital)$")
+    site_id: str | None = None
+    status: str = Field(default="PENDING_APPROVAL", max_length=40)
+
+
+class SmartCheckMigrationInput(BaseModel):
+    tickets: list[SmartCheckLegacyTicket] = Field(min_length=1, max_length=500)
+
+
+SMARTCHECK_CONFIG_KEY = "smartcheck_google_apps_script"
+
+
+def _smartcheck_fernet_key() -> bytes:
+    import base64
+    return base64.urlsafe_b64encode(hashlib.sha256(
+        (settings.jwt_secret + ":smartcheck-config:v1").encode("utf-8")
+    ).digest())
+
+
+def _encrypt_smartcheck_secret(secret: str) -> str:
+    from cryptography.fernet import Fernet
+    return Fernet(_smartcheck_fernet_key()).encrypt(secret.encode("utf-8")).decode("ascii")
+
+
+def _decrypt_smartcheck_secret(value: str) -> str:
+    from cryptography.fernet import Fernet
+    return Fernet(_smartcheck_fernet_key()).decrypt(value.encode("ascii")).decode("utf-8")
+
+
+def _validate_smartcheck_url(value: str) -> str:
+    from urllib.parse import urlsplit
+    parsed = urlsplit((value or "").strip())
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "script.google.com"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.startswith("/macros/s/")
+        or not parsed.path.endswith("/exec")
+    ):
+        raise HTTPException(
+            422,
+            "Use the HTTPS Google Apps Script deployment URL ending in /macros/s/{deployment-id}/exec",
+        )
+    return value.strip()
+
+
+def _smartcheck_config(db: Session, tenant_id: str) -> dict:
+    row = db.scalar(select(TenantSetting).where(
+        TenantSetting.tenant_id == tenant_id,
+        TenantSetting.key == SMARTCHECK_CONFIG_KEY,
+    ))
+    if not row:
+        return {"enabled": False, "web_app_url": "", "shared_secret": ""}
+    try:
+        value = json.loads(row.value_json or "{}")
+    except (TypeError, ValueError):
+        value = {}
+    encrypted_secret = str(value.get("shared_secret_encrypted") or "")
+    try:
+        shared_secret = _decrypt_smartcheck_secret(encrypted_secret) if encrypted_secret else ""
+    except Exception:
+        shared_secret = ""
+    return {
+        "enabled": bool(value.get("enabled")),
+        "web_app_url": str(value.get("web_app_url") or ""),
+        "shared_secret": shared_secret,
+    }
+
+
+def _require_smartcheck_config(db: Session, tenant_id: str) -> dict:
+    config = _smartcheck_config(db, tenant_id)
+    if not config["enabled"] or not config["web_app_url"]:
+        raise HTTPException(409, "SmartCheck Google Sheets sync is not configured for this tenant")
+    _validate_smartcheck_url(config["web_app_url"])
+    return config
+
+
+@router.get("/smartcheck/config")
+def get_smartcheck_config(
+    tenant_id: str,
+    user: User = Depends(principal),
+    db: Session = Depends(db_session),
+):
+    tenant_access(tenant_id, user, db, require_feature=False)
+    admin_only(user)
+    config = _smartcheck_config(db, tenant_id)
+    return {
+        "enabled": config["enabled"],
+        "web_app_url": config["web_app_url"],
+        "has_shared_secret": bool(config["shared_secret"]),
+    }
+
+
+@router.put("/smartcheck/config")
+def save_smartcheck_config(
+    tenant_id: str,
+    payload: SmartCheckConfigInput,
+    user: User = Depends(principal),
+    db: Session = Depends(db_session),
+):
+    tenant_access(tenant_id, user, db, require_feature=False)
+    admin_only(user)
+    url = _validate_smartcheck_url(payload.web_app_url)
+    row = db.scalar(select(TenantSetting).where(
+        TenantSetting.tenant_id == tenant_id,
+        TenantSetting.key == SMARTCHECK_CONFIG_KEY,
+    ))
+    value = json.dumps({
+        "enabled": payload.enabled,
+        "web_app_url": url,
+        "shared_secret_encrypted": _encrypt_smartcheck_secret(payload.shared_secret),
+    })
+    if row:
+        row.value_json = value
+    else:
+        db.add(TenantSetting(
+            id=str(uuid.uuid4()), tenant_id=tenant_id,
+            key=SMARTCHECK_CONFIG_KEY, value_json=value,
+        ))
+    db.commit()
+    return {"saved": True, "enabled": payload.enabled, "web_app_url": url}
+
+
+@router.post("/smartcheck/ping")
+async def ping_smartcheck(
+    tenant_id: str,
+    user: User = Depends(principal),
+    db: Session = Depends(db_session),
+):
+    tenant_access(tenant_id, user, db)
+    admin_only(user)
+    config = _require_smartcheck_config(db, tenant_id)
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.post(
+                config["web_app_url"],
+                json={
+                    "action": "PING", "tenantId": tenant_id, "type": "TEST_PING",
+                    "apiKey": config["shared_secret"],
+                },
+            )
+        response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError:
+            raise HTTPException(502, "Google Apps Script returned a non-JSON response")
+        if str(body.get("status", "")).lower() in {"error", "failed"}:
+            raise HTTPException(502, "Google Apps Script ping failed")
+        return {"connected": True, "response": body}
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(502, "Could not reach the configured Google Apps Script deployment")
+
+
+@router.post("/passes/{pass_id}/smartcheck-sync")
+async def sync_pass_to_smartcheck(
+    tenant_id: str,
+    pass_id: str,
+    user: User = Depends(principal),
+    db: Session = Depends(db_session),
+):
+    """Mirror one pass to the tenant's legacy sheet; AI Growth OS remains authoritative."""
+    tenant_access(tenant_id, user, db)
+    admin_only(user)
+    config = _require_smartcheck_config(db, tenant_id)
+    p = db.scalar(select(VisitorPass).where(
+        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
+    ))
+    if not p:
+        raise HTTPException(404, "Visitor pass not found")
+    status_map = {
+        "pending": "PENDING_APPROVAL", "approved": "APPROVED",
+        "denied": "REJECTED", "checked_in": "CHECKED_IN",
+        "checked_out": "CHECKED_OUT", "cancelled": "CANCELLED",
+        "expired": "EXPIRED",
+    }
+    payload = {
+        "action": "SYNC_TICKET",
+        "tenantId": tenant_id,
+        "apiKey": config["shared_secret"],
+        "ticketId": p.id,
+        "visitorName": p.visitor_name,
+        "visitorMobile": p.visitor_mobile or "",
+        "purpose": p.purpose or "",
+        "targetDestination": p.destination or "",
+        "vehicleNumber": p.vehicle_number or "",
+        "vehicleSnapshotUri": p.snapshot_url or "",
+        "status": status_map.get(p.status, "PENDING_APPROVAL"),
+        # Raw QR tokens are intentionally not stored in AI Growth OS and are never exported.
+        "qrToken": "",
+        "approverName": p.approved_by or "",
+        "gateEntryTime": p.checked_in_at.isoformat() if p.checked_in_at else "",
+        "gateExitTime": p.checked_out_at.isoformat() if p.checked_out_at else "",
+        "updatedAt": p.created_at.isoformat() if p.created_at else "",
+    }
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.post(config["web_app_url"], json=payload)
+        response.raise_for_status()
+        try:
+            body = response.json()
+        except ValueError:
+            raise HTTPException(502, "Google Apps Script returned a non-JSON response")
+        if str(body.get("status", "")).lower() in {"error", "failed"}:
+            raise HTTPException(502, "Google Apps Script rejected the visitor log")
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        raise HTTPException(502, "Could not sync visitor pass to Google Apps Script")
+    event(db, tenant_id, p.id, user.id, "smartcheck_sheet_sync", {"remote_status": body.get("status", "unknown")})
+    db.commit()
+    return {"synced": True, "pass_id": p.id, "remote_status": body.get("status", "unknown")}
+
+
+@router.post("/smartcheck/migrate-pending")
+def migrate_smartcheck_pending(
+    tenant_id: str,
+    payload: SmartCheckMigrationInput,
+    user: User = Depends(principal),
+    db: Session = Depends(db_session),
+):
+    """Import pending rows exported from a legacy Google Sheet.
+
+    Imports are idempotent. Existing approved/closed legacy rows are not auto-approved;
+    they are reported for archival/manual reconciliation rather than bypassing review.
+    """
+    tenant_access(tenant_id, user, db)
+    admin_only(user)
+    imported = 0
+    duplicates = 0
+    rejected = []
+    created = []
+    now = datetime.utcnow()
+    for index, row in enumerate(payload.tickets, start=1):
+        if row.tenant_id and row.tenant_id != tenant_id:
+            rejected.append({"row": index, "ticket_id": row.ticket_id, "reason": "tenant_mismatch"})
+            continue
+        if row.status.strip().lower() not in {"pending", "pending_approval", "pending approval", "awaiting_approval"}:
+            rejected.append({"row": index, "ticket_id": row.ticket_id, "reason": "non_pending_requires_manual_reconciliation"})
+            continue
+        deterministic_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"aigrowthos:smartcheck:{tenant_id}:{row.ticket_id.strip()}"))
+        if db.get(VisitorPass, deterministic_id):
+            duplicates += 1
+            continue
+        try:
+            site = _site_for_tenant(db, tenant_id, row.site_id)
+        except HTTPException:
+            rejected.append({"row": index, "ticket_id": row.ticket_id, "reason": "invalid_site"})
+            continue
+        raw_token = secrets.token_urlsafe(32)
+        p = VisitorPass(
+            id=deterministic_id,
+            tenant_id=tenant_id,
+            site_id=site.id if site else None,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            visitor_name=row.visitor_name.strip(),
+            visitor_mobile=row.visitor_mobile.strip(),
+            purpose=row.purpose.strip(),
+            destination=row.target_destination.strip(),
+            vehicle_number=row.vehicle_number.strip(),
+            industry=site.industry if site else row.industry,
+            status="pending",
+            expires_at=now + timedelta(hours=24),
+            created_by=user.id,
+        )
+        db.add(p)
+        db.flush()
+        event(db, tenant_id, p.id, user.id, "smartcheck_legacy_import", {
+            "source_ticket_id": row.ticket_id.strip(),
+            "original_status": row.status,
+            "requires_human_approval": True,
+        })
+        created.append({"pass_id": p.id, "source_ticket_id": row.ticket_id.strip(), "qr_token": raw_token})
+        imported += 1
+    db.commit()
+    return {"imported": imported, "duplicates": duplicates, "rejected": rejected, "created": created}
