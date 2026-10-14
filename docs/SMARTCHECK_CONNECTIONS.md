@@ -18,3 +18,7 @@ This feature adds a platform-admin-only connection settings page for each select
 5. Run API and frontend checks, review the pull request, then deploy only after release approval.
 
 No production environment variables or database settings are changed by this feature branch.
+
+
+## Public QR registration scaffold
+The tenant dashboard's fixed registration QR and the public `/visitor/{tenantSlug}` form are present in the branch, but deliberately fail closed. The QR/API requires `visitor_lifecycle_sync_ready=true` in the tenant's SmartCheck connection configuration. That flag must not be enabled until SmartCheck-backed list, approval/rejection, check-in/out, and QR verification are integrated and tested against the same data source. The current connection form does not expose this flag.
