@@ -1107,21 +1107,22 @@ def import_platform_marketing_contacts(
     for index, item in enumerate(payload.contacts):
         phone = (item.phone or "").strip() or None
         email = str(item.email).strip().lower() if item.email else None
-        phone_norm = re.sub(r"\\D", "", phone or "") or None
+        phone_norm = re.sub(r"\D", "", phone or "") or None
         email_norm = email or None
         if not phone_norm and not email_norm:
             rejected.append({"row": index + 1, "reason": "phone_or_email_required"})
             continue
-        identity = phone_norm or email_norm
-        if identity in seen:
+        identities = [x for x in (("phone:" + phone_norm) if phone_norm else None, ("email:" + email_norm) if email_norm else None) if x]
+        if any(identity in seen for identity in identities):
             rejected.append({"row": index + 1, "reason": "duplicate_in_import"})
             continue
-        seen.add(identity)
-        contact = None
-        if phone_norm:
-            contact = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.phone_norm == phone_norm))
-        if not contact and email_norm:
-            contact = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.email_norm == email_norm))
+        seen.update(identities)
+        phone_contact = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.phone_norm == phone_norm)) if phone_norm else None
+        email_contact = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.email_norm == email_norm)) if email_norm else None
+        if phone_contact and email_contact and phone_contact.id != email_contact.id:
+            rejected.append({"row": index + 1, "reason": "phone_and_email_belong_to_different_contacts"})
+            continue
+        contact = phone_contact or email_contact
         if not contact:
             contact = PlatformMarketingContact(id=str(uuid.uuid4()))
             db.add(contact)
@@ -1141,14 +1142,20 @@ def import_platform_marketing_contacts(
         contact.status = "active"
         contact.updated_at = datetime.utcnow()
         # Preserve the pre-existing opt-out ledger used by the sending endpoint.
-        pref = db.scalar(select(PlatformContactPreference).where(
-            (PlatformContactPreference.phone_norm == phone_norm) if phone_norm else
-            (PlatformContactPreference.email_norm == email_norm)
-        ))
-        if pref:
-            if contact.whatsapp_opt_in:
+        # Apply explicit opt-ins to both matching opt-out ledger records, if present.
+        pref_rows = []
+        if phone_norm:
+            pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm))
+            if pref:
+                pref_rows.append(pref)
+        if email_norm:
+            pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm))
+            if pref and pref not in pref_rows:
+                pref_rows.append(pref)
+        for pref in pref_rows:
+            if item.whatsapp_opt_in:
                 pref.whatsapp_opt_out = False
-            if contact.email_opt_in:
+            if item.email_opt_in:
                 pref.email_opt_out = False
             pref.updated_at = datetime.utcnow()
     db.commit()
@@ -1174,26 +1181,32 @@ def update_platform_marketing_contact_consent(
     contact = db.get(PlatformMarketingContact, contact_id)
     if not contact:
         raise HTTPException(404, "Platform contact not found")
-    phone_norm = re.sub(r"\\D", "", contact.phone or "") or None
+    phone_norm = re.sub(r"\D", "", contact.phone or "") or None
     email_norm = (contact.email or "").strip().lower() or None
     contact.whatsapp_opt_in = payload.whatsapp_opt_in
     contact.email_opt_in = payload.email_opt_in
     contact.consent_source = payload.consent_source.strip() if payload.consent_source else contact.consent_source
     contact.updated_at = datetime.utcnow()
-    pref = db.scalar(select(PlatformContactPreference).where(
-        (PlatformContactPreference.phone_norm == phone_norm) if phone_norm else
-        (PlatformContactPreference.email_norm == email_norm)
-    ))
-    if pref:
-        pref.whatsapp_opt_out = not payload.whatsapp_opt_in
-        pref.email_opt_out = not payload.email_opt_in
-        pref.updated_at = datetime.utcnow()
-    else:
-        pref = PlatformContactPreference(
+    pref_rows = []
+    if phone_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm))
+        if pref:
+            pref_rows.append(pref)
+    if email_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm))
+        if pref and pref not in pref_rows:
+            pref_rows.append(pref)
+    if not pref_rows:
+        pref_rows.append(PlatformContactPreference(
             id=str(__import__("uuid").uuid4()), phone_norm=phone_norm, email_norm=email_norm,
             whatsapp_opt_out=not payload.whatsapp_opt_in, email_opt_out=not payload.email_opt_in,
-        )
-        db.add(pref)
+        ))
+        db.add(pref_rows[0])
+    else:
+        for pref in pref_rows:
+            pref.whatsapp_opt_out = not payload.whatsapp_opt_in
+            pref.email_opt_out = not payload.email_opt_in
+            pref.updated_at = datetime.utcnow()
     db.commit()
     return {"id": contact.id, "whatsapp_opt_in": contact.whatsapp_opt_in,
             "email_opt_in": contact.email_opt_in, "updated_at": contact.updated_at.isoformat()}
@@ -1212,5 +1225,19 @@ def archive_platform_marketing_contact(
     contact.status = "archived"
     contact.whatsapp_opt_in = False
     contact.email_opt_in = False
+    import re
+    from .models_email import PlatformContactPreference
+    phone_norm = re.sub(r"\D", "", contact.phone or "") or None
+    email_norm = (contact.email or "").strip().lower() or None
+    if phone_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm))
+        if pref:
+            pref.whatsapp_opt_out = True
+            pref.email_opt_out = True
+    if email_norm:
+        pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm))
+        if pref:
+            pref.whatsapp_opt_out = True
+            pref.email_opt_out = True
     db.commit()
     return {"archived": True, "id": contact.id}
