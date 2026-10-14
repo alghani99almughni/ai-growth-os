@@ -397,6 +397,19 @@ INDUSTRY_FEATURES={
     "real-estate":{"digital_menu":False,"online_ordering":False,"order_tracking":False,"call_waiter":False,"service_requests":True,"games":False,"auto_bill":False,"online_payment":False,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":False}
 }
 GAME_CATALOG=[{"id":"dino","name":"Dino Run"},{"id":"snake","name":"Snake"},{"id":"brick","name":"Brick Breaker"},{"id":"flappy","name":"Flappy"},{"id":"tap","name":"Tap Target"},{"id":"2048","name":"2048"}]
+def _tenant_industry_context(db, tenant):
+    """Resolve the selected industry category and business subcategory for customer UX."""
+    row = db.scalar(select(TenantSetting).where(
+        TenantSetting.tenant_id == tenant.id, TenantSetting.key == "industry_selection"
+    )) if tenant else None
+    selection = {}
+    if row:
+        try: selection = json.loads(row.value_json or "{}")
+        except Exception: selection = {}
+    category = str(selection.get("category") or tenant.industry or "").strip()
+    business_type = str(selection.get("business_type") or "").strip()
+    return category, business_type
+
 def _feature_config(db,tenant_id):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key=="features"))
     tenant=db.get(Tenant,tenant_id)
@@ -409,6 +422,26 @@ def _feature_config(db,tenant_id):
     if row:
         try: cfg.update(json.loads(row.value_json))
         except Exception: pass
+
+    # Prevent restaurant/table operations leaking into unrelated tenant websites even
+    # if legacy global defaults or stale per-tenant flags accidentally enable them.
+    category, business_type = _tenant_industry_context(db, tenant)
+    profile = (category + " " + business_type + " " + (tenant.industry if tenant else "")).lower()
+    hospitality = any(x in profile for x in (
+        "hospitality", "restaurant", "cafe", "café", "hotel", "eatery", "eateries",
+        "bakery", "food service", "fine dining", "bar"
+    ))
+    hotel_only = "hotel" in profile and not any(x in profile for x in ("restaurant", "cafe", "café", "eatery", "bakery"))
+    if not hospitality:
+        for key in ("digital_menu", "online_ordering", "order_tracking", "call_waiter", "auto_bill"):
+            cfg[key] = False
+    if not hospitality or hotel_only:
+        # Games are a configured entertainment feature, but do not inherit the
+        # generic restaurant default for professional-service websites.
+        if not hospitality:
+            cfg["games"] = False
+    if not hospitality:
+        cfg["call_waiter"] = False
     return cfg
 def _set_setting(db,tenant_id,key,value):
     row=db.scalar(select(TenantSetting).where(TenantSetting.tenant_id==tenant_id,TenantSetting.key==key))
@@ -1874,7 +1907,8 @@ def public_business(slug:str,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower(),)); 
     if not t: raise HTTPException(404,"Business not found")
     services=db.scalars(select(Service).where(Service.tenant_id==t.id,Service.is_active==True)).all()
-    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"description":t.description,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"timezone":t.timezone,"features":_feature_config(db,t.id),"games":GAME_CATALOG,"menu":_public_menu(db,t),"services":[{"id":x.id,"name":x.name,"description":x.description,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"duration_minutes":x.duration_minutes} for x in services]}
+    industry_category, business_type = _tenant_industry_context(db, t)
+    return {"id":t.id,"name":t.name,"slug":t.slug,"industry":t.industry,"industry_category":industry_category,"business_type":business_type,"description":t.description,"phone":t.phone,"whatsapp_number":t.whatsapp_number,"address":t.address,"timezone":t.timezone,"features":_feature_config(db,t.id),"games":GAME_CATALOG,"menu":_public_menu(db,t),"services":[{"id":x.id,"name":x.name,"description":x.description,"price":float(x.price) if x.price is not None else None,"currency":x.currency,"duration_minutes":x.duration_minutes} for x in services]}
 def _public_menu(db,t):
     if not _feature_config(db,t.id).get("digital_menu",True): return {"enabled":False,"categories":[],"items":[]}
     cats=db.scalars(select(MenuCategory).where(MenuCategory.tenant_id==t.id,MenuCategory.is_active==True).order_by(MenuCategory.sort_order)).all()
