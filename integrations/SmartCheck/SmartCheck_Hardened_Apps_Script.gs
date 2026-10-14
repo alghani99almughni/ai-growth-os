@@ -66,6 +66,9 @@ function doPost(e){
       case "VISITOR_REQUEST":
         requireRole_(role,["PLATFORM_ADMIN","SUPER_ADMIN","TENANT_ADMIN","OWNER","APPROVER","RECEPTION","SECURITY","VISITOR"]);
         requireTenantScope_(role,actorTenant,targetTenant); return visitorRequest_(d);
+      case "VALIDATE_TENANT":
+        requireRole_(role,["PLATFORM_ADMIN","SUPER_ADMIN","TENANT_ADMIN","OWNER"]);
+        requireTenantScope_(role,actorTenant,targetTenant); return validateTenant_(d);
       case "LIST_VISITORS":
         requireRole_(role,["PLATFORM_ADMIN","SUPER_ADMIN","TENANT_ADMIN","OWNER","APPROVER","RECEPTION","SECURITY"]);
         requireTenantScope_(role,actorTenant,targetTenant); return listVisitors_(d);
@@ -143,6 +146,17 @@ function visitorRequest_(d){
   const headers=s.getRange(1,1,1,s.getLastColumn()).getDisplayValues()[0];s.appendRow(headers.map(h=>Object.prototype.hasOwnProperty.call(row,h)?row[h]:""));
   auditVisitorAction_(tenant,ticket,"AI_GROWTH_OS","VISITOR_REQUEST","", "PENDING");
   return out_({status:"success",ticketId:ticket,statusLabel:"PENDING",message:"Request submitted for staff approval."});
+}
+function validateTenant_(d){
+  const tenant=clean_(d.tenantId||d.tenantCode,100);
+  if(!tenant)return out_({status:"success",valid:false,message:"Tenant code is required."});
+  const s=ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(),TENANTS,["Tenant Code","Organization Name","Category","Assigned Role","Contact Person","Email ID","Mobile Number","Reception Clearance","Staff Details","App URL","Spreadsheet URL","Registered At","Status"]);
+  const v=s.getDataRange().getDisplayValues();
+  for(let i=1;i<v.length;i++){
+    const r=v[i],status=String(r[12]||"ACTIVE").toUpperCase();
+    if(r[0]===tenant&&status==="ACTIVE")return out_({status:"success",valid:true,tenant:{code:r[0],name:r[1],status:status}});
+  }
+  return out_({status:"success",valid:false,message:"Mapped SmartCheck tenant code was not found as ACTIVE."});
 }
 function listVisitors_(d){
   const tenant=clean_(d.tenantId,100);if(!tenant)return out_({status:"error",message:"Tenant ID required."});
