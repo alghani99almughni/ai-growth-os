@@ -75,6 +75,9 @@ function doPost(e){
       case "APPROVE_VISITOR": case "REJECT_VISITOR":
         requireRole_(role,["PLATFORM_ADMIN","SUPER_ADMIN","TENANT_ADMIN","OWNER","APPROVER"]);
         requireTenantScope_(role,actorTenant,targetTenant); return visitorTransition_(d,a==="APPROVE_VISITOR"?"APPROVED":"REJECTED");
+      case "CANCEL_VISITOR":
+        requireRole_(role,["PLATFORM_ADMIN","SUPER_ADMIN","TENANT_ADMIN","OWNER","APPROVER"]);
+        requireTenantScope_(role,actorTenant,targetTenant); return visitorTransition_(d,"CANCELLED");
       case "CHECK_IN": case "CHECK_OUT":
         requireRole_(role,["PLATFORM_ADMIN","SUPER_ADMIN","TENANT_ADMIN","OWNER","APPROVER","RECEPTION","SECURITY"]);
         requireTenantScope_(role,actorTenant,targetTenant); return visitorTransition_(d,a==="CHECK_IN"?"CHECKED_IN":"CHECKED_OUT");
@@ -152,7 +155,7 @@ function visitorTransition_(d,next){
   const s=ensureSheet_(SpreadsheetApp.getActiveSpreadsheet(),LOGS,["Date","Ticket ID","Tenant Name","Visitor Name","Mobile","Purpose","Target Destination","Vehicle Number","Status","Approver Name","QR Token","Snapshot Link","Tenant ID","Updated At","Updated By","Notes"]),v=s.getDataRange().getDisplayValues(),h=v[0],ti=h.indexOf("Ticket ID"),te=h.indexOf("Tenant ID"),st=h.indexOf("Status");
   for(let i=1;i<v.length;i++){
     if(v[i][ti]!==ticket||v[i][te]!==tenant)continue;
-    const old=v[i][st],allowed=next==="APPROVED"||next==="REJECTED"?["PENDING"]:next==="CHECKED_IN"?["APPROVED"]:["CHECKED_IN"];
+    const old=v[i][st],allowed=next==="APPROVED"||next==="REJECTED"?["PENDING"]:next==="CANCELLED"?["PENDING","APPROVED"]:next==="CHECKED_IN"?["APPROVED"]:["CHECKED_IN"];
     if(allowed.indexOf(old)<0)return out_({status:"error",message:"Invalid status transition: "+old+" → "+next});
     s.getRange(i+1,st+1).setValue(next);
     let qrToken="";
