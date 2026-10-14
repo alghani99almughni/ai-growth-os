@@ -35,7 +35,7 @@ This is a design/feature comparison, not a claim that each repository's current 
 
 1. Keep the existing Apps Script/Sheets records authoritative during the compatibility period.
 2. Store the bridge secret server-side only; never send it to the browser or put it in URLs/QR codes.
-3. Add a per-tenant mapping between AI Growth OS tenant UUID and existing SmartCheck tenant code. Require an explicit mapping for existing tenants; do not create duplicate SmartCheck tenant rows implicitly.
+3. Implemented in this branch: the Super Admin connection form stores a per-tenant legacy SmartCheck code mapping, validates allowed characters, and rejects a code already mapped to a different AI Growth OS tenant. The mapping is configuration only until authenticated bridge calls are implemented; it does not create or change SmartCheck tenant rows.
 4. Implement server-side authenticated `PING` and integration calls with timeouts, bounded responses, strict HTTPS host validation, and clear error states.
 5. Add bridge actions/contract for QR verification or use a signed opaque AI Growth OS token mapped to the SmartCheck ticket ID. Until one is implemented and tested, do not claim SmartCheck QR verification is integrated.
 6. Keep the current local API/dashboard contracts stable while the adapter is introduced. No automatic fallback that writes to a second database after a bridge failure.
