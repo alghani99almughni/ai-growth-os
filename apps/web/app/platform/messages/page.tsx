@@ -72,7 +72,7 @@ export default function MessagesPage() {
     try {
       const r = await fetch(api() + "/api/v1/platform/tenant-comms/whatsapp/inbox?limit=200" + (selectedInboxTenant ? "&tenant_id=" + encodeURIComponent(selectedInboxTenant) : ""), { headers: headers(), cache: "no-store" });
       const x = await r.json();
-      if (!r.ok) throw new Error(x?.detail || "Unable to load platform WhatsApp inbox");
+      if (!r.ok) throw new Error(x?.detail || "Unable to load tenant WhatsApp inbox");
       setWhatsappInbox(x);
       await loadReplyTemplates();
       
@@ -85,7 +85,7 @@ export default function MessagesPage() {
     if (!body) { setStatus("Enter a WhatsApp reply first."); return; }
     setWhatsappReplySending(id); setStatus("");
     try {
-      const r = await fetch(api() + "/api/v1/platform/communications/whatsapp/inbox/" + encodeURIComponent(id) + "/reply", {
+      const r = await fetch(api() + "/api/v1/platform/tenant-comms/whatsapp/inbox/" + encodeURIComponent(id) + "/reply", {
         method: "POST", headers: headers(), body: JSON.stringify({ body }),
       });
       const x = await r.json();
@@ -102,7 +102,7 @@ export default function MessagesPage() {
     try {
       const r = await fetch(api() + "/api/v1/platform/tenant-comms/email/inbox?limit=200" + (selectedInboxTenant ? "&tenant_id=" + encodeURIComponent(selectedInboxTenant) : ""), { headers: headers(), cache: "no-store" });
       const x = await r.json();
-      if (!r.ok) throw new Error(x?.detail || "Unable to load platform inbox");
+      if (!r.ok) throw new Error(x?.detail || "Unable to load tenant email inbox");
       setEmailInbox(x);
       await loadReplyTemplates();
       
@@ -115,13 +115,13 @@ export default function MessagesPage() {
     if (!body) { setStatus("Enter a reply first."); return; }
     setReplySending(id); setStatus("");
     try {
-      const r = await fetch(api() + "/api/v1/platform/communications/email/inbox/" + encodeURIComponent(id) + "/reply", {
+      const r = await fetch(api() + "/api/v1/platform/tenant-comms/email/inbox/" + encodeURIComponent(id) + "/reply", {
         method: "POST", headers: headers(), body: JSON.stringify({ body }),
       });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Email reply failed");
       setReplyDrafts(prev => ({ ...prev, [id]: "" }));
-      setStatus("Email reply sent to " + x.to);
+      setStatus("Email reply sent to " + x.to + " through the tenant mailbox.");
       await loadEmailInbox();
     } catch (e: any) { setStatus(e.message || "Email reply failed"); }
     setReplySending("");
