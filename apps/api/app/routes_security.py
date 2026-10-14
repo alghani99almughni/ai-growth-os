@@ -32,6 +32,7 @@ from .security import decode_token_strict
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/security", tags=["security-visitor-management"])
 platform_router = APIRouter(prefix="/api/v1/platform", tags=["platform-security-feature"])
 ADMIN_ROLES = {"owner", "admin", "tenant_admin", "manager", "security_admin", "platform_admin", "super_admin"}
+APPROVER_ROLES = ADMIN_ROLES | {"approver"}
 PLATFORM_ROLES = {"platform_admin", "super_admin"}
 
 
@@ -312,8 +313,9 @@ def verify_token(tenant_id: str, body: VerifyTokenInput, user: User = Depends(pr
 @router.post("/passes/{pass_id}/approve")
 def approve_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
-    admin_only(user)
-    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
+    if str(user.role).lower() not in APPROVER_ROLES:
+        raise HTTPException(403, "Approver permission required")
+    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id).with_for_update())
     if not p:
         raise HTTPException(404, "Pass not found")
     if p.status != "pending":
@@ -335,7 +337,7 @@ def approve_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), 
 def check_in(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
-    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
+    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id).with_for_update())
     if not p:
         raise HTTPException(404, "Pass not found")
     if p.status != "approved":
@@ -357,7 +359,7 @@ def check_in(tenant_id: str, pass_id: str, user: User = Depends(principal), db: 
 def check_out(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
-    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
+    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id).with_for_update())
     if not p:
         raise HTTPException(404, "Pass not found")
     if p.status != "checked_in":
