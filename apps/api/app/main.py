@@ -1224,7 +1224,12 @@ def update_features(tenant_id,payload:FeatureUpdate,user=Depends(get_current_use
     require_tenant(user,tenant_id)
     cfg=_feature_config(db,tenant_id)
     for key,value in payload.features.items():
-        if key in FEATURE_DEFAULTS: cfg[key]=bool(value)
+        if key in FEATURE_DEFAULTS and key != "security_visitor_management":
+            cfg[key]=bool(value)
+    # Only Super Admin may change this add-on entitlement; tenant feature saves
+    # preserve the existing platform-controlled value.
+    if user.role not in ("platform_admin", "super_admin"):
+        cfg["security_visitor_management"] = _feature_config(db,tenant_id).get("security_visitor_management", False)
     _set_setting(db,tenant_id,"features",cfg)
     return {"features":cfg,"games":GAME_CATALOG}
 
