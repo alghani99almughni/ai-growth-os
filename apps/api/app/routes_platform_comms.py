@@ -551,8 +551,8 @@ async def platform_communications_campaign(
     from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
     from .models_email import PlatformContactPreference, PlatformMarketingContact
     import re
-
     import uuid
+
     campaign_id = str(uuid.uuid4())
     results = []
     for recipient in payload.recipients:
@@ -562,13 +562,10 @@ async def platform_communications_campaign(
             raise HTTPException(400, "Every customer contact needs a phone number and/or email address")
         name = recipient.name.strip() or phone or email or "Customer"
         result = {"contact_id": None, "name": name, "channels": {}}
-        phone_norm = re.sub(r"\D", "", phone or "")
+        phone_norm = re.sub(r"\\D", "", phone or "")
         email_norm = (email or "").strip().lower()
         phone_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
         email_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm)) if email_norm else None
-        # If the recipient exists in the saved contact book, its channel-specific
-        # consent is authoritative. The legacy manual-import path still requires
-        # the explicit campaign-level consent confirmation above.
         saved_matches = []
         if phone_norm:
             saved = db.scalar(select(PlatformMarketingContact).where(PlatformMarketingContact.phone_norm == phone_norm))
@@ -591,7 +588,7 @@ async def platform_communications_campaign(
             elif whatsapp_contact_blocked:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
-                msg = body.replace("{{name}}", name) + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
+                msg = body.replace("{{name}}", name) + "\\n\\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
                 try:
                     delivery = await send_platform_whatsapp_media(phone, payload.media_url, payload.media_type or "image", msg) if payload.media_url else await send_platform_whatsapp(phone, msg)
                     result["channels"]["whatsapp"] = delivery if isinstance(delivery, dict) else {"sent": bool(delivery), "status": "sent" if delivery else "failed"}
@@ -607,7 +604,7 @@ async def platform_communications_campaign(
             elif email_contact_blocked:
                 result["channels"]["email"] = {"sent": False, "status": "contact_not_opted_in"}
             else:
-                msg = body.replace("{{name}}", name) + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
+                msg = body.replace("{{name}}", name) + "\\n\\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
                 try:
                     delivery = await send_email(email, payload.subject.strip() or "AI Growth OS", msg)
                     result["channels"]["email"] = delivery if isinstance(delivery, dict) else {"sent": bool(delivery), "status": "sent" if delivery else "failed"}
@@ -617,11 +614,32 @@ async def platform_communications_campaign(
 
         results.append(result)
         try:
-            audit(db, tenant_id=None, actor_id=user.id,
-                  action="platform.customer_communication_campaign",
-                  target_type="platform_customer_contact", target_id=result.get("contact_id") or "manual-recipient",
-                  detail={"campaign_id": campaign_id, "name": name, "channels": sorted(channels),
-                          "delivery": {k:
+            audit(
+                db, tenant_id=None, actor_id=user.id,
+                action="platform.customer_communication_campaign",
+                target_type="platform_customer_contact",
+                target_id=result.get("contact_id") or "manual-recipient",
+                detail={
+                    "campaign_id": campaign_id,
+                    "name": name,
+                    "channels": sorted(channels),
+                    "delivery": {
+                        channel: {"sent": bool(outcome.get("sent")), "status": outcome.get("status", "unknown")}
+                        for channel, outcome in result["channels"].items()
+                    },
+                    "consent_confirmed": True,
+                },
+            )
+        except Exception:
+            logger.exception("could not persist platform campaign audit result")
+
+    return {
+        "campaign_id": campaign_id,
+        "selected": len(results),
+        "sent": sum(1 for item in results for channel in item["channels"].values() if channel.get("sent")),
+        "results": results,
+    }
+
 
 @router.get("/api/v1/platform/marketing/campaign-history")
 def platform_marketing_campaign_history(
@@ -652,18 +670,6 @@ def platform_marketing_campaign_history(
             "created_at": row.created_at.isoformat() if row.created_at else None,
         })
     return {"items": items, "count": len(items)}
- {"sent": bool(v.get("sent")), "status": v.get("status", "unknown")}
-                                       for k, v in result["channels"].items()},
-                          "consent_confirmed": True})
-        except Exception:
-            logger.exception("could not persist platform campaign audit result")
-
-    return {
-        "campaign_id": campaign_id,
-        "selected": len(results),
-        "sent": sum(1 for r in results for c in r["channels"].values() if c.get("sent")),
-        "results": results,
-    }
 
 # ===========================================================================
 # PLATFORM EMAIL INBOX — platform mailbox only (independent of tenant accounts).
