@@ -6,6 +6,7 @@ const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 type Recipient = { name: string; phone: string; email: string };
 type ExternalContact = { id: string; name: string; phone: string | null; email: string | null; whatsapp_opt_in: boolean; email_opt_in: boolean; tags: string; status: string };
+type CampaignHistoryItem = { id: string; campaign_id: string | null; contact_id: string | null; name: string; channels: string[]; delivery: Record<string, { sent: boolean; status: string }>; created_at: string | null };
 
 export default function PlatformCustomerMarketingPage() {
   const [contactsCsv, setContactsCsv] = useState("");
@@ -19,8 +20,9 @@ export default function PlatformCustomerMarketingPage() {
   const [savedContacts, setSavedContacts] = useState<ExternalContact[]>([]);
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [savingContacts, setSavingContacts] = useState(false);
+  const [campaignHistory, setCampaignHistory] = useState<CampaignHistoryItem[]>([]);
 
-  useEffect(() => { void loadSavedContacts(); }, []);
+  useEffect(() => { void loadSavedContacts(); void loadCampaignHistory(); }, []);
 
   function headers() {
     return {
@@ -38,6 +40,15 @@ export default function PlatformCustomerMarketingPage() {
       setSavedContacts(data.items || []);
       setSelectedContactIds(old => old.filter(id => (data.items || []).some((contact: ExternalContact) => contact.id === id && contact.status === "active")));
     } catch { /* campaign sending remains available if contact-book loading fails */ }
+  }
+
+  async function loadCampaignHistory() {
+    try {
+      const response = await fetch(api() + "/api/v1/platform/marketing/campaign-history?limit=100", { headers: headers(), cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      setCampaignHistory(data.items || []);
+    } catch { /* history is a separate read-only view */ }
   }
 
   function parseExternalContacts(text: string) {
@@ -130,7 +141,8 @@ export default function PlatformCustomerMarketingPage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data?.detail || "Campaign failed");
       setResult(data);
-      setStatus("Processed " + data.selected + " of your contacts; " + data.sent + " channel deliveries reported successful.");
+      await loadCampaignHistory();
+      setStatus("Campaign " + (data.campaign_id || "") + ": processed " + data.selected + " contacts; " + data.sent + " channel deliveries reported successful.");
     } catch (error: any) {
       setStatus(error?.message || "Campaign failed");
     } finally {
@@ -202,6 +214,16 @@ export default function PlatformCustomerMarketingPage() {
       </label>
       <button onClick={sendCampaign} disabled={busy} style={{ marginTop: 18, background: "#4f46e5", color: "#fff", border: 0, padding: "12px 20px", borderRadius: 9, fontWeight: 800, cursor: busy ? "wait" : "pointer" }}>{busy ? "Sending campaign…" : "Send campaign to my customers"}</button>
       {status && <p role="status" style={{ marginTop: 14, fontSize: 13, color: status.includes("failed") ? "#b42318" : "#344054" }}>{status}</p>}
+    </section>
+
+
+    <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 17 }}>Recent campaign delivery history</h2>
+        <button onClick={() => void loadCampaignHistory()} style={{ ...inputStyle, width: "auto", marginTop: 0, cursor: "pointer" }}>Refresh history</button>
+      </div>
+      <p style={{ color: "#667085", fontSize: 12 }}>Per-recipient outcomes are recorded in the platform audit ledger. Provider acceptance is not proof of final delivery to the recipient.</p>
+      {campaignHistory.length === 0 ? <p style={{ color: "#667085", fontSize: 13 }}>No campaign attempts recorded yet.</p> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr>{["Time (UTC)", "Contact", "Campaign ID", "Channel outcomes"].map(label => <th key={label} style={{ textAlign: "left", padding: 9, background: "#f7f9fc", borderBottom: "1px solid #e8ecf3" }}>{label}</th>)}</tr></thead><tbody>{campaignHistory.map(item => <tr key={item.id}><td style={{ padding: 9, borderBottom: "1px solid #edf0f5", whiteSpace: "nowrap" }}>{item.created_at ? new Date(item.created_at).toLocaleString() : "—"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{item.name}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5", fontFamily: "monospace" }}>{item.campaign_id || "—"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{Object.entries(item.delivery || {}).map(([channel, outcome]) => channel + ": " + (outcome.status || (outcome.sent ? "sent" : "failed"))).join(" · ") || "—"}</td></tr>)}</tbody></table></div>}
     </section>
 
     {result && <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22 }}>
