@@ -14,6 +14,7 @@ import json
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import quote, urlparse
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -176,6 +177,36 @@ def _create_pass(tenant_id: str, body: VisitorRequestInput | PassInput, user: Us
     db.commit()
     db.refresh(p)
     return pass_json(p, raw)
+
+
+@router.get("/entry-qr")
+def entry_qr(tenant_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
+    """Create the fixed QR visitors scan to open the public registration form."""
+    tenant_access(tenant_id, user, db)
+    tenant = db.get(Tenant, tenant_id)
+    if not tenant or not getattr(tenant, "slug", None):
+        raise HTTPException(404, "Tenant public URL is not available")
+    app_url = settings.public_app_url.strip().rstrip("/")
+    parsed = urlparse(app_url)
+    if parsed.hostname in {"localhost", "127.0.0.1", "::1"} and settings.environment.lower() != "development":
+        allowed = [x.strip().rstrip("/") for x in settings.allowed_origins.split(",") if x.strip()]
+        public_origins = [x for x in allowed if urlparse(x).scheme == "https" and urlparse(x).hostname not in {"localhost", "127.0.0.1", "::1"}]
+        if public_origins:
+            app_url = public_origins[0]
+            parsed = urlparse(app_url)
+    if parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password:
+        raise HTTPException(503, "Configure the public application URL before generating visitor QR codes")
+    if settings.environment.lower() != "development" and (parsed.scheme != "https" or parsed.hostname in {"localhost", "127.0.0.1", "::1"}):
+        raise HTTPException(503, "A public HTTPS application URL is required for visitor QR codes")
+    entry_url = app_url + "/visitor/" + quote(str(tenant.slug), safe="")
+    image = qrcode.make(entry_url)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return {
+        "entry_url": entry_url,
+        "image_data_url": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"),
+        "note": "Public registration submits to SmartCheck and remains pending approval; QR scanning does not grant entry.",
+    }
 
 
 @router.get("/sites")
