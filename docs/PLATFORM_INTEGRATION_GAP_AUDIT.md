@@ -70,7 +70,7 @@ These are candidates, not approvals or claims that services have been deployed.
 - Verify WhatsApp webhook ingress, sender configuration, delivery statuses, opt-outs and provider failure handling.
 - Keep platform-owner campaigns isolated from all tenant data and add durable contact/campaign history.
 - Implemented in the current draft branch: a platform-only external contact table, authenticated list/import/archive endpoints, per-channel opt-in fields, duplicate-identity checks, opt-out ledger synchronization, and a Super Admin contact-book view.
-- Still required before campaign use: select saved contacts for a campaign, enforce per-channel contact opt-in in the send endpoint, persist campaign and per-recipient delivery history, and test opt-out/unsubscribe reconciliation end to end. This is a foundation, not a completed marketing CRM.
+- Still required before campaign use is considered complete: select saved contacts directly for a campaign, persist campaign and per-recipient delivery history, and test opt-out/unsubscribe reconciliation end to end. The send endpoint now blocks a saved contact when that channel lacks opt-in or the contact is archived. This is a foundation, not a completed marketing CRM.
 
 ### Phase C — Team collaboration
 - Audit current team UI, user/role lifecycle, file handling and notification patterns.
