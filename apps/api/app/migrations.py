@@ -1,5 +1,5 @@
 from .db import Base,engine
-from . import models,models_growth,models_ai,models_integrations,models_security
+from . import models,models_growth,models_ai,models_integrations,models_security,models_email
 from . import industry_catalog
 from sqlalchemy import text
 
@@ -12,6 +12,7 @@ def ensure_schema():
             # Add RFC email thread metadata to pre-existing mailbox log tables.
             conn.execute(text("ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS in_reply_to VARCHAR"))
             conn.execute(text("ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS references_header TEXT"))
+            conn.execute(text("ALTER TABLE email_logs ADD COLUMN IF NOT EXISTS inbound_body TEXT NOT NULL DEFAULT ''"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS ai_provider_usage (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36), provider VARCHAR(60) NOT NULL, model VARCHAR(120) NOT NULL, request_count INTEGER NOT NULL DEFAULT 0, success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, rate_limit_count INTEGER NOT NULL DEFAULT 0, estimated_input_tokens INTEGER NOT NULL DEFAULT 0, estimated_output_tokens INTEGER NOT NULL DEFAULT 0, last_error TEXT, last_used_at TIMESTAMP, cooldown_until TIMESTAMP, created_at TIMESTAMP NOT NULL)"))
             conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_provider_usage_tenant_provider ON ai_provider_usage(tenant_id, provider)"))
             conn.execute(text("CREATE TABLE IF NOT EXISTS idempotency_keys (id VARCHAR(36) PRIMARY KEY, tenant_id VARCHAR(36) NOT NULL, scope VARCHAR(80) NOT NULL, key VARCHAR(200) NOT NULL, payload_hash VARCHAR(64) NOT NULL, response_json TEXT NOT NULL DEFAULT '{}', created_at TIMESTAMP NOT NULL, expires_at TIMESTAMP NOT NULL)"))
