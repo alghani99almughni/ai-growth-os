@@ -10,12 +10,12 @@ This feature adds a platform-admin-only connection settings page for each select
 - `link_saved_unverified`: a Drive folder URL was saved for reference only; this does not prove the platform can access it.
 - `authenticated_sync_ready` remains false until a server-side bridge-secret handshake, legacy tenant-code mapping, and an authorized Drive read/write round-trip have been implemented and tested.
 
-## Not yet production-ready
-1. Configure the Apps Script bridge secret only in a server-side secret store; never expose it to the browser.
-2. The connection center now stores an explicit legacy SmartCheck tenant-code mapping (for example, TNT-101) per AI Growth OS tenant and rejects duplicate mappings. Authenticated PING and actual visitor-data sync remain unimplemented.
-3. Add authorized Google Drive OAuth access and verify read/write access to the chosen folder. A sharing URL is not an authorization grant.
-4. Add tests for platform role enforcement, tenant isolation, bridge authentication, provider failure, and the Drive round-trip.
-5. Run API and frontend checks, review the pull request, then deploy only after release approval.
+## Deployment and verification requirements
+1. Configure the same long random `AI_GROWTH_OS_BRIDGE_SECRET` in the Apps Script project properties and the API's server-side secret store. Never expose it to the browser.
+2. Deploy the updated `integrations/SmartCheck/SmartCheck_Hardened_Apps_Script.gs` source as a new Apps Script web-app version. The update adds secure QR-token issuance on approval, the authenticated `VERIFY_TOKEN` action, and explicit cancellation.
+3. In Super Admin → Security Connections, save the URL and exact legacy tenant code, then run **Verify & Enable Visitor Sync**. The server probes authenticated `PING`, `LIST_VISITORS`, and `VERIFY_TOKEN`; it only sets the lifecycle-ready flag if each contract responds correctly. A stale deployment fails closed.
+4. Google Drive folder authorization is still separate and unverified. A sharing URL is not an authorization grant.
+5. Run API and frontend checks, review the pull request, and perform a real end-to-end test against a test tenant before any release approval.
 
 No production environment variables or database settings are changed by this feature branch.
 
