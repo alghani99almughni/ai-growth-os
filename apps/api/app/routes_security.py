@@ -29,6 +29,7 @@ from .models import Tenant, User
 from .models_growth import TenantSetting, PlatformSetting
 from .models_security import SecuritySite, VisitorPass, VisitorEvent
 from .security import decode_token_strict
+from .smartcheck_bridge import lifecycle_config, call_smartcheck, pass_from_sheet
 
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/security", tags=["security-visitor-management"])
 ADMIN_ROLES = {"owner", "admin", "tenant_admin", "manager", "security_admin", "platform_admin", "super_admin"}
@@ -240,6 +241,16 @@ def create_site(tenant_id: str, body: SiteInput, user: User = Depends(principal)
 @router.get("/passes")
 def list_passes(tenant_id: str, user: User = Depends(principal), db: Session = Depends(db_session), status: str | None = None, limit: int = 100):
     tenant_access(tenant_id, user, db)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "LIST_VISITORS")
+        rows = result.get("visitors", [])
+        if not isinstance(rows, list):
+            raise HTTPException(502, "SmartCheck visitor list response was invalid")
+        items = [pass_from_sheet(row, tenant_id) for row in rows if isinstance(row, dict)]
+        if status:
+            items = [item for item in items if item["status"] == status.strip().lower()]
+        return {"items": items[:max(1, min(limit, 200))]}
     q = select(VisitorPass).where(VisitorPass.tenant_id == tenant_id).order_by(VisitorPass.created_at.desc()).limit(max(1, min(limit, 200)))
     if status:
         q = q.where(VisitorPass.status == status)
@@ -250,6 +261,21 @@ def list_passes(tenant_id: str, user: User = Depends(principal), db: Session = D
 def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "VISITOR_REQUEST",
+            visitorName=body.visitor_name.strip(), visitorMobile=body.visitor_mobile.strip(),
+            purpose=body.purpose.strip(), targetDestination=body.destination.strip(),
+            vehicleNumber=body.vehicle_number.strip().upper())
+        ticket = str(result.get("ticketId", "")).strip()
+        if not ticket:
+            raise HTTPException(502, "SmartCheck did not return a visitor ticket ID")
+        return {"id": ticket, "tenant_id": tenant_id, "site_id": None,
+            "visitor_name": body.visitor_name.strip(), "visitor_mobile": body.visitor_mobile.strip(),
+            "purpose": body.purpose.strip(), "destination": body.destination.strip(),
+            "vehicle_number": body.vehicle_number.strip().upper(), "industry": body.industry,
+            "status": "pending", "expires_at": None, "created_at": None,
+            "checked_in_at": None, "checked_out_at": None, "qr_token": None}
     # Never allow a request payload to bypass human approval. Every new pass
     # starts pending; the separate approve endpoint records the approving actor.
     if not body.needs_approval:
@@ -261,6 +287,18 @@ def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal)
 def create_ai_request(tenant_id: str, body: VisitorRequestInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Create a pending visitor request for AI chat/voice workflows. Never grants access."""
     tenant_access(tenant_id, user, db)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "VISITOR_REQUEST",
+            visitorName=body.visitor_name.strip(), visitorMobile=body.visitor_mobile.strip(),
+            purpose=body.purpose.strip(), targetDestination=body.destination.strip(), vehicleNumber="")
+        ticket = str(result.get("ticketId", "")).strip()
+        if not ticket:
+            raise HTTPException(502, "SmartCheck did not return a visitor ticket ID")
+        return {"id": ticket, "tenant_id": tenant_id, "visitor_name": body.visitor_name.strip(),
+            "visitor_mobile": body.visitor_mobile.strip(), "purpose": body.purpose.strip(),
+            "destination": body.destination.strip(), "vehicle_number": "", "status": "pending",
+            "qr_token": None, "expires_at": None, "created_at": None}
     return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
@@ -268,6 +306,16 @@ def create_ai_request(tenant_id: str, body: VisitorRequestInput, user: User = De
 def render_qr(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Render a QR image only for a token belonging to an unexpired pass in this tenant."""
     tenant_access(tenant_id, user, db)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "VERIFY_TOKEN", token=body.token)
+        if result.get("valid") is not True:
+            raise HTTPException(409, "SmartCheck token is invalid, unapproved, or already used")
+        image = qrcode.make(body.token)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return {"image_data_url": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"),
+                "pass_id": result.get("pass", {}).get("ticketId"), "status": "approved"}
     digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
     p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
     if not p:
@@ -285,6 +333,18 @@ def render_qr(tenant_id: str, body: VerifyTokenInput, user: User = Depends(princ
 def verify_token(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Validate a QR/token for the selected tenant; verification does not admit the visitor."""
     tenant_access(tenant_id, user, db)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "VERIFY_TOKEN", token=body.token)
+        if result.get("valid") is not True:
+            raise HTTPException(409, str(result.get("message", "Invalid or unused visitor token")))
+        p = result.get("pass") or {}
+        return {"valid": True, "pass": {
+            "id": p.get("ticketId"), "tenant_id": tenant_id,
+            "visitor_name": p.get("visitorName", ""), "visitor_mobile": p.get("visitorMobile", ""),
+            "purpose": p.get("purpose", ""), "destination": p.get("destination", ""),
+            "vehicle_number": p.get("vehicleNumber", ""), "status": "approved", "qr_token": p.get("qrToken")
+        }}
     digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
     p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
     if not p:
@@ -306,6 +366,11 @@ def verify_token(tenant_id: str, body: VerifyTokenInput, user: User = Depends(pr
 def approve_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "APPROVE_VISITOR", ticketId=pass_id)
+        return {"id": pass_id, "tenant_id": tenant_id, "status": "approved",
+                "qr_token": result.get("qrToken") or None}
     p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
     if not p:
         raise HTTPException(404, "Pass not found")
@@ -328,6 +393,10 @@ def approve_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), 
 def check_in(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "CHECK_IN", ticketId=pass_id)
+        return {"id": pass_id, "tenant_id": tenant_id, "status": "checked_in"}
     p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
     if not p:
         raise HTTPException(404, "Pass not found")
@@ -350,6 +419,10 @@ def check_in(tenant_id: str, pass_id: str, user: User = Depends(principal), db: 
 def check_out(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "CHECK_OUT", ticketId=pass_id)
+        return {"id": pass_id, "tenant_id": tenant_id, "status": "checked_out"}
     p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
     if not p:
         raise HTTPException(404, "Pass not found")
@@ -375,6 +448,10 @@ def deny_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db:
     """Record an explicit human denial; a denied pass can never be admitted."""
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        result = call_smartcheck(smartcheck, user, "REJECT_VISITOR", ticketId=pass_id)
+        return {"id": pass_id, "tenant_id": tenant_id, "status": "denied"}
     p = db.scalar(select(VisitorPass).where(
         VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
     ))
@@ -394,6 +471,9 @@ def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), d
     """Cancel a pending or approved pass without altering completed gate history."""
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    smartcheck = lifecycle_config(db, tenant_id)
+    if smartcheck:
+        raise HTTPException(409, "SmartCheck cancellation is not available yet; reject pending requests instead")
     p = db.scalar(select(VisitorPass).where(
         VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
     ))
