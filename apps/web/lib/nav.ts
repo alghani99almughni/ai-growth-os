@@ -39,6 +39,7 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/inbox/channels", label: "Channels",             icon: "Megaphone" },
   { href: "/platform/inbox/contacts", label: "Contacts",             icon: "Users" },
   { href: "/platform/tenants",       label: "Tenants",               icon: "Building2", labelKey: "nav.tenants" },
+  { href: "/platform/tenant-services", label: "Tenant services", icon: "ToggleRight" },
   { href: "/platform/calls",          label: "Calls & Transcripts",   icon: "Phone" },
   { href: "/platform/bookings",       label: "Bookings",              icon: "CalendarDays" },
   { href: "/platform/orders",         label: "Orders",                icon: "ClipboardList" },
