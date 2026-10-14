@@ -374,7 +374,7 @@ def health():
     out = enrich_health()
     out["commit"] = __import__("os").environ.get("RENDER_GIT_COMMIT", "unknown")
     return out
-def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),db:Session=Depends(get_db))->User:
+def get_current_user(request:Request,credentials:HTTPAuthorizationCredentials=Depends(security),db:Session=Depends(get_db))->User:
     if not credentials: raise HTTPException(401,"Authentication required")
     try:
         p=decode_token_strict(credentials.credentials,settings.jwt_secret,settings.jwt_algorithm); uid=p.get("sub")
@@ -383,6 +383,31 @@ def get_current_user(credentials:HTTPAuthorizationCredentials=Depends(security),
     if not u or not u.is_active or p.get("tenant_id")!=u.tenant_id: raise HTTPException(401,"Invalid tenant context")
     tenant=db.get(Tenant,u.tenant_id)
     if not tenant or tenant.status!="active": raise HTTPException(403,"Tenant is not active")
+    # Enforce tenant role permissions at the API boundary, not only in the UI.
+    if u.role not in ("owner","admin","tenant_admin","platform_admin","super_admin"):
+        path=request.url.path.lower()
+        method=request.method.upper()
+        required=None
+        if any(part in path for part in ("/staff","/roles","/departments")):
+            required="team.manage"
+        elif "/services" in path:
+            required="services.view" if method in ("GET","HEAD") else "services.manage"
+        elif any(part in path for part in ("/appointments","/bookings","/queue")):
+            required="bookings.view" if method in ("GET","HEAD") else "bookings.manage"
+        elif any(part in path for part in ("/customers","/leads")):
+            required="customers.view" if method in ("GET","HEAD") else "customers.manage"
+        elif "/calls" in path:
+            required="calls.view" if method in ("GET","HEAD") else "calls.manage"
+        elif any(part in path for part in ("/email","/whatsapp","/messages")):
+            required="communications.view" if method in ("GET","HEAD") else "communications.reply"
+        if required:
+            role_row=db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==u.tenant_id,RoleDefinition.name==u.role))
+            try:
+                role_permissions=json.loads(role_row.permissions_json or "[]") if role_row else []
+            except Exception:
+                role_permissions=[]
+            if required not in role_permissions and "*" not in role_permissions:
+                raise HTTPException(403,"Role permission required: "+required)
     return u
 FEATURE_DEFAULTS={"digital_menu":True,"online_ordering":True,"order_tracking":True,"call_waiter":True,"service_requests":True,"games":True,"auto_bill":True,"online_payment":True,"ai_chat":True,"ai_voice":True,"loyalty":False,"referrals":False,"feedback":True,"google_review":True,"bookings":True,"queue":True,"security_visitor_management":False}
 INDUSTRY_FEATURES={
