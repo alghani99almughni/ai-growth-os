@@ -109,7 +109,31 @@ export default function Customer(){
  async function placeOrder(){if(!business||!cartItems.length)return;setStatus("Placing order…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:cartItems.map(x=>({menu_item_id:x.id,quantity:x.quantity})),context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(!r.ok){setStatus(d.detail||"Unable to place order");return}setOrder(d);setCart({});setActive("home");setStatus("Order placed successfully");}
 
  async function startTeamCall(){
-  if(!business)return <main className="shell" style={{minHeight:"100vh",padding:"clamp(16px,4vw,44px)",background:"linear-gradient(145deg,#eef4ff 0%,#f8f5ff 48%,#effcf7 100%)"}}><section className="hero" style={{background:"linear-gradient(120deg,#172554,#4338ca 60%,#0f766e)",minHeight:280,display:"flex",flexDirection:"column",justifyContent:"center"}}><p style={{letterSpacing:".16em",fontWeight:800,fontSize:11}}>YOUR NEXT GREAT EXPERIENCE</p><h1>{slug||"Welcome"}</h1><p>{status||"Loading your business website…"}</p><div style={{display:"flex",gap:8,marginTop:24,alignItems:"center"}}><span style={{background:"rgba(255,255,255,.16)",padding:"8px 12px",borderRadius:999,fontSize:12}}>Personalised for you</span><span style={{fontSize:12,opacity:.8}}>One place. Everything you need.</span></div></section><div style={{padding:16,color:"#65718b",fontSize:12}}>Loading your business experience securely…</div></main>;
+  if(!business)return;
+  setCallInstance(x=>x+1);
+  setCallOpen(true);
+ }
+
+ async function callWaiter(type="waiter"){if(!business)return;const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/service-requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({request_type:type,context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(r.ok){setWaiter(d);setStatus("Request sent to the team");}else setStatus(d.detail||"Unable to send request")}
+
+ async function submitFeedback(){if(!business||!feedback)return;const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({order_id:order?.id,customer_id:customerId||undefined,rating:feedback,comment})});const d=await r.json();if(r.ok){setFeedbackSent(true);if(d.google_review_url)window.open(d.google_review_url,"_blank","noopener,noreferrer");}}
+
+ async function payBill(){if(!business||!order?.bill)return;setStatus("Preparing secure payment…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/bills/"+order.bill.id+"/payment-order",{method:"POST"});const d=await r.json();if(!r.ok){setStatus(d.detail||"Payment unavailable");return}const s=document.createElement("script");s.src="https://checkout.razorpay.com/v1/checkout.js";s.onload=()=>{const rz=new (window as any).Razorpay({key:d.key_id,amount:d.amount,currency:d.currency,name:business.name,order_id:d.razorpay_order_id,handler:async(res:any)=>{const v=await fetch(api()+"/api/v1/public/business/"+business.slug+"/bills/"+order.bill.id+"/verify-payment",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({razorpay_order_id:res.razorpay_order_id,razorpay_payment_id:res.razorpay_payment_id,razorpay_signature:res.razorpay_signature})});const vd=await v.json();setStatus(v.ok?"Payment successful":"Payment verification failed");if(v.ok)setOrder({...order,bill:{...order.bill,status:"paid"}})}});rz.open()};document.body.appendChild(s)}
+
+ async function saveGame(){if(!business||!game)return;const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/games/"+game+"/score?score="+Math.max(0,Math.floor(gameScore))+(customerId?"&customer_id="+encodeURIComponent(customerId):""),{method:"POST"});if(r.ok){const d=await r.json();setGamePoints(d.reward_points||0)}}
+
+ function playGame(name:string){setGame(name);setGameScore(0);setGamePoints(0);setGameData({bricks:Array(12).fill(true),target:Math.floor(Math.random()*9),moves:0,board:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]})}
+
+ function gameAction(action:string){
+  if(!game)return;
+  if(game==="tap"){setGameData((d:any)=>({...d,target:Math.floor(Math.random()*9)}));setGameScore(s=>s+1);return}
+  if(game==="dino"||game==="flappy"){setGameScore(s=>s+1);setGameData((d:any)=>({...d,moves:d.moves+1}));return}
+  if(game==="brick"){setGameData((d:any)=>{const b=[...d.bricks];const i=Number(action);if(b[i]){b[i]=false;setGameScore(s=>s+10)}return {...d,bricks:b}});return}
+  if(game==="snake"){setGameScore(s=>s+1);return}
+  if(game==="2048"){setGameData((d:any)=>({...d,moves:d.moves+1}));setGameScore(s=>s+2);return}
+ }
+
+ if(!business)return <main className="shell" style={{minHeight:"100vh",padding:"clamp(16px,4vw,44px)",background:"linear-gradient(145deg,#eef4ff 0%,#f8f5ff 48%,#effcf7 100%)"}}><section className="hero" style={{background:"linear-gradient(120deg,#172554,#4338ca 60%,#0f766e)",minHeight:280,display:"flex",flexDirection:"column",justifyContent:"center"}}><p style={{letterSpacing:".16em",fontWeight:800,fontSize:11}}>YOUR NEXT GREAT EXPERIENCE</p><h1>{slug||"Welcome"}</h1><p>{status||"Loading your business website…"}</p><div style={{display:"flex",gap:8,marginTop:24,alignItems:"center"}}><span style={{background:"rgba(255,255,255,.16)",padding:"8px 12px",borderRadius:999,fontSize:12}}>Personalised for you</span><span style={{fontSize:12,opacity:.8}}>One place. Everything you need.</span></div></section><div style={{padding:16,color:"#65718b",fontSize:12}}>Loading your business experience securely…</div></main>;
 
  const delivered=order&&["served","completed"].includes(order.status);
  return <main className="shell" style={{maxWidth:1240,padding:"clamp(14px,3vw,34px)",background:"linear-gradient(180deg,#f1f5ff 0%,#fafbff 360px,#f7f9fc 100%)",minHeight:"100vh"}}>
