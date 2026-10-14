@@ -67,6 +67,15 @@ class StaffMember(Base):
     max_concurrent_calls: Mapped[int] = mapped_column(Integer, default=1)
 
 
+class StaffServiceAssignment(Base):
+    __tablename__ = "staff_service_assignments"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    staff_id: Mapped[str] = mapped_column(ForeignKey("staff_members.id"), index=True)
+    service_id: Mapped[str] = mapped_column(ForeignKey("services.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class RoleDefinition(Base):
     __tablename__ = "role_definitions"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uid)
