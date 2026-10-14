@@ -1043,6 +1043,10 @@ async def tenant_whatsapp_inbox_reply(message_id: str, payload: PlatformWhatsApp
         raise HTTPException(404, "Tenant inbound WhatsApp message not found")
     try:
         result = await send_text_with_failover(db, inbound.tenant_id, settings, inbound.phone, payload.body.strip())
+        if not result.get("ok"):
+            raise HTTPException(502, "Tenant WhatsApp delivery failed: " + str(result.get("error") or "provider error"))
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("admin tenant WhatsApp reply failed message=%s: %s", message_id, exc)
         raise HTTPException(502, "Reply failed using the tenant's configured WhatsApp channel")
@@ -1054,4 +1058,4 @@ async def tenant_whatsapp_inbox_reply(message_id: str, payload: PlatformWhatsApp
     db.add(outbound)
     inbound.status = "replied"
     db.commit()
-    return {"sent": True, "phone": inbound.phone, "tenant_id": inbound.tenant_id, "provider": result.get("provider")}
+    return {"sent": True, "phone": inbound.phone, "tenant_id": inbound.tenant_id, "provider": result.get("channel")}
