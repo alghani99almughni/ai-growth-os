@@ -65,7 +65,16 @@ def call_smartcheck(config: dict, user, action: str, **fields) -> dict:
         raise HTTPException(503, "SmartCheck bridge credentials are not configured")
     tenant_code = str(config.get("legacy_tenant_code", "")).strip()
     role = str(getattr(user.role, "value", user.role) or "").strip().upper().replace("-", "_").replace(" ", "_")
-    role = {"ADMIN": "TENANT_ADMIN", "MANAGER": "TENANT_ADMIN", "GUARD": "SECURITY", "SECURITY_GUARD": "SECURITY"}.get(role, role)
+    role = {"ADMIN": "TENANT_ADMIN", "MANAGER": "TENANT_ADMIN", "GUARD": "SECURITY",
+            "SECURITY_GUARD": "SECURITY", "SECURITY_OFFICER": "SECURITY",
+            "RECEPTIONIST": "RECEPTION", "STAFF": "RECEPTION"}.get(role, role)
+    # These operations only create pending requests or read the tenant's own
+    # visitor list. Preserve the existing API's permission boundary without
+    # granting approval or gate-transition roles to arbitrary callers.
+    if action == "VISITOR_REQUEST" and role not in {"PLATFORM_ADMIN", "SUPER_ADMIN", "TENANT_ADMIN", "OWNER", "APPROVER", "RECEPTION", "SECURITY", "VISITOR"}:
+        role = "VISITOR"
+    if action in {"LIST_VISITORS", "VERIFY_TOKEN"} and role not in {"PLATFORM_ADMIN", "SUPER_ADMIN", "TENANT_ADMIN", "OWNER", "APPROVER", "RECEPTION", "SECURITY"}:
+        role = "RECEPTION"
     payload = {
         "action": action,
         "bridgeSecret": secret,
