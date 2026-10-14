@@ -41,7 +41,8 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
       const [s,d,r,sv]=await Promise.all([
         request(`/api/v1/tenants/${tenantId}/staff`),
         request(`/api/v1/tenants/${tenantId}/departments`),
-        request(`/api/v1/tenants/${tenantId}/roles`)
+        request(`/api/v1/tenants/${tenantId}/roles`),
+        request(`/api/v1/tenants/${tenantId}/services`)
       ]);
       setItems(s.items||[]);setDepartments(d.items||[]);setRoles(r.items||[]);setServices((sv.items||[]).filter((x:Service)=>x.is_active));
       if(!staff.role && (r.items||[]).length) setStaff(v=>({...v,role:r.items[0].name}));
