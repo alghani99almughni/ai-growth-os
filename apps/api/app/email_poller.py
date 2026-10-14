@@ -128,6 +128,7 @@ async def _process_message(db, account: TenantEmailAccount, cfg: dict, msg: dict
         from_address=msg["from"],
         to_address=msg["to"],
         subject=msg["subject"],
+        inbound_body=(msg.get("text") or ""),
         in_reply_to=in_reply_to or None,
         references_header=references_header or None,
         outcome="skipped",
