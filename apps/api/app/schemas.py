@@ -263,6 +263,7 @@ class StaffCreate(BaseModel):
     role: str = "staff"
     department_id: Optional[str] = None
     skills: str = ""
+    service_ids: list[str] = []
 
 class StaffUpdate(BaseModel):
     role: Optional[str] = None
@@ -270,6 +271,7 @@ class StaffUpdate(BaseModel):
     skills: Optional[str] = None
     is_active: Optional[bool] = None
     is_available: Optional[bool] = None
+    service_ids: Optional[list[str]] = None
 
 
 class PasswordResetRequest(BaseModel):
