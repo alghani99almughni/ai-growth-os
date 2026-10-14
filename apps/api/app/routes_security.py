@@ -27,7 +27,7 @@ from .db import SessionLocal
 from .models import Tenant, User
 from .models_growth import TenantSetting
 from .models_security import SecuritySite, VisitorPass, VisitorEvent
-from .security import decode_token_strict
+from .security import decode_token_strict, audit
 
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/security", tags=["security-visitor-management"])
 platform_router = APIRouter(prefix="/api/v1/platform", tags=["platform-security-feature"])
@@ -79,6 +79,15 @@ def platform_set_security_feature(tenant_id: str, body: TenantSecurityFeatureTog
     else:
         db.add(TenantSetting(tenant_id=tenant_id, key="features", value_json=json.dumps(features)))
     db.commit()
+    audit(
+        db,
+        tenant_id=tenant_id,
+        actor_id=user.id,
+        action="tenant.feature.security_visitor_management.enabled" if body.enabled else "tenant.feature.security_visitor_management.disabled",
+        target_type="tenant",
+        target_id=tenant_id,
+        detail={"enabled": body.enabled},
+    )
     return {"tenant_id": tenant_id, "security_visitor_management": body.enabled}
 
 
