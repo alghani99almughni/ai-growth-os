@@ -55,6 +55,16 @@ def platform_user(authorization: str | None = Header(default=None), db: Session 
 class SmartCheckConnectionInput(BaseModel):
     script_url: str = Field(min_length=1, max_length=1000)
     drive_folder_url: str | None = Field(default=None, max_length=1000)
+    legacy_tenant_code: str | None = Field(default=None, max_length=100)
+
+
+def validate_legacy_tenant_code(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    code = value.strip()
+    if not all(char.isalnum() or char in "-_" for char in code):
+        raise HTTPException(422, "Legacy SmartCheck tenant code may contain only letters, numbers, hyphens, and underscores")
+    return code
 
 
 def validate_script_url(value: str) -> str:
@@ -111,6 +121,7 @@ def get_smartcheck_connection(tenant_id: str, user: User = Depends(platform_user
         "tenant_id": tenant_id,
         "script_url": config.get("script_url", ""),
         "drive_folder_url": config.get("drive_folder_url", ""),
+        "legacy_tenant_code": config.get("legacy_tenant_code", ""),
         "script_status": config.get("script_status", "not_configured"),
         "drive_status": "link_saved_unverified" if config.get("drive_folder_url") else "not_configured",
         "authenticated_sync_ready": False,
@@ -125,10 +136,23 @@ def save_smartcheck_connection(tenant_id: str, body: SmartCheckConnectionInput, 
         raise HTTPException(404, "Tenant not found")
     script_url = validate_script_url(body.script_url)
     drive_url = validate_drive_url(body.drive_folder_url)
+    legacy_code = validate_legacy_tenant_code(body.legacy_tenant_code)
+    if legacy_code:
+        rows = db.scalars(select(TenantSetting).where(TenantSetting.key == "smartcheck_connection")).all()
+        for existing in rows:
+            if existing.tenant_id == tenant_id:
+                continue
+            try:
+                existing_config = json.loads(existing.value_json or "{}")
+            except (TypeError, ValueError):
+                continue
+            if str(existing_config.get("legacy_tenant_code", "")).strip().casefold() == legacy_code.casefold():
+                raise HTTPException(409, "This SmartCheck tenant code is already mapped to another AI Growth OS tenant")
     health = check_script_health(script_url)
     config = {
         "script_url": script_url,
         "drive_folder_url": drive_url,
+        "legacy_tenant_code": legacy_code,
         "script_status": health["status"],
         "last_checked_by": user.id,
         "last_checked_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
@@ -141,6 +165,7 @@ def save_smartcheck_connection(tenant_id: str, body: SmartCheckConnectionInput, 
     db.commit()
     return {
         "tenant_id": tenant_id,
+        "legacy_tenant_code": legacy_code or "",
         "script_status": health["status"],
         "script_detail": health["detail"],
         "drive_status": "link_saved_unverified" if drive_url else "not_configured",
