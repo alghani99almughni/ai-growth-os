@@ -68,7 +68,7 @@ These are candidates, not approvals or claims that services have been deployed.
 - Fix and prove booking persistence from voice/customer UI through the database and dashboard.
 - Verify WebRTC gateway connection, call state recovery, call history and callback flow.
 - Verify WhatsApp webhook ingress, sender configuration, delivery statuses, opt-outs and provider failure handling.
-- Keep platform-owner campaigns isolated from all tenant data and add durable contact/campaign history.
+- Keep platform-owner campaigns isolated from all tenant data and add durable contact/campaign history.\n- Implemented in the current draft branch: a platform-only external contact table, authenticated list/import/archive endpoints, per-channel opt-in fields, duplicate-identity checks, opt-out ledger synchronization, and a Super Admin contact-book view.\n- Still required before campaign use: select saved contacts for a campaign, enforce per-channel contact opt-in in the send endpoint, persist campaign and per-recipient delivery history, and test opt-out/unsubscribe reconciliation end to end. This is a foundation, not a completed marketing CRM.
 
 ### Phase C — Team collaboration
 - Audit current team UI, user/role lifecycle, file handling and notification patterns.
