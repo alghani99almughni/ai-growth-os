@@ -1,5 +1,4 @@
 import json
-from io import BytesIO
 from unittest.mock import Mock
 
 import pytest
@@ -48,10 +47,7 @@ def test_health_check_reports_ok_payload(monkeypatch):
     response.__exit__ = lambda *args: None
     response.read.return_value = json.dumps({"status": "ok"}).encode()
     monkeypatch.setattr(smartcheck, "urlopen", lambda *args, **kwargs: response)
-
-    result = smartcheck.check_script_health("https://script.google.com/macros/s/id/exec")
-
-    assert result["status"] == "reachable"
+    assert smartcheck.check_script_health("https://script.google.com/macros/s/id/exec")["status"] == "reachable"
 
 
 def test_health_check_does_not_claim_ready_for_unrecognized_payload(monkeypatch):
@@ -61,7 +57,4 @@ def test_health_check_does_not_claim_ready_for_unrecognized_payload(monkeypatch)
     response.__exit__ = lambda *args: None
     response.read.return_value = json.dumps({"message": "hello"}).encode()
     monkeypatch.setattr(smartcheck, "urlopen", lambda *args, **kwargs: response)
-
-    result = smartcheck.check_script_health("https://script.google.com/macros/s/id/exec")
-
-    assert result["status"] == "unverified"
+    assert smartcheck.check_script_health("https://script.google.com/macros/s/id/exec")["status"] == "unverified"
