@@ -1,4 +1,9 @@
-"""Persistent platform-owned inbox templates and automation settings."""
+"""Persistent platform-owned inbox templates and automation settings.
+
+Auto-replies are opt-in per template. Non-empty keyword lists match when any
+comma-separated keyword appears in the inbound subject/body; an empty keyword
+list is a fallback and should only be enabled intentionally.
+"""
 from datetime import datetime
 from sqlalchemy import Column, String, Boolean, DateTime, Text
 from .db import Base
