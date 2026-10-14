@@ -13,6 +13,8 @@ type Connection = {
   script_status: string;
   drive_status: string;
   authenticated_sync_ready: boolean;
+  visitor_lifecycle_sync_ready?: boolean;
+  lifecycle_status?: string;
   note?: string;
 };
 
@@ -28,6 +30,7 @@ export default function SmartCheckConnectionsPage() {
   const [status, setStatus] = useState<Connection | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [verifyingLifecycle, setVerifyingLifecycle] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -73,11 +76,26 @@ export default function SmartCheckConnectionsPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Could not save connection");
-      setStatus({ tenant_id: tenantId, script_url: scriptUrl.trim(), drive_folder_url: driveUrl.trim(), legacy_tenant_code: legacyTenantCode.trim(), ...data });
+      setStatus({ tenant_id: tenantId, script_url: scriptUrl.trim(), drive_folder_url: driveUrl.trim(), legacy_tenant_code: legacyTenantCode.trim(), visitor_lifecycle_sync_ready: false, lifecycle_status: "not_verified", ...data });
       setLegacyTenantCode(data.legacy_tenant_code || legacyTenantCode.trim());
       setMessage("Settings saved. Review the statuses below; full sync is not yet enabled.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save connection"); }
     finally { setSaving(false); }
+  }
+
+  async function verifyLifecycle() {
+    if (!tenantId) { setError("Select a tenant first."); return; }
+    setVerifyingLifecycle(true); setError(""); setMessage("");
+    try {
+      const response = await fetch(api() + "/api/v1/platform/tenants/" + encodeURIComponent(tenantId) + "/smartcheck-lifecycle/verify", {
+        method: "POST", headers: { Authorization: "Bearer " + token() },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "SmartCheck lifecycle verification failed");
+      setMessage("Lifecycle verification passed: PING, visitor listing, and QR token verification. Visitor sync is now enabled for this tenant.");
+      await loadConnection(tenantId);
+    } catch (e) { setError(e instanceof Error ? e.message : "SmartCheck lifecycle verification failed"); }
+    finally { setVerifyingLifecycle(false); }
   }
 
   const badge = (value: string) => {
@@ -124,9 +142,10 @@ export default function SmartCheckConnectionsPage() {
     </section>
     <section style={{ ...panel, background: "#f8fafc" }}>
       <div style={{ fontWeight: 700, fontSize: 14 }}>Sync readiness</div>
-      <div style={{ marginTop: 8, fontSize: 13, color: "#69778d" }}>Authenticated bridge handshake, tenant-code mapping, and authorized Drive read/write verification are not implemented in this stage.</div>
-      <div style={{ marginTop: 12 }}>{badge("sync pending")}</div>
-      <button onClick={saveAndCheck} disabled={saving || loading || !tenantId} style={{ marginTop: 18, padding: "11px 16px", border: 0, borderRadius: 9, background: saving ? "#8b96a8" : "#1d4ed8", color: "#fff", fontWeight: 650, cursor: saving ? "wait" : "pointer" }}>{saving ? "Saving and checking…" : "Save & Check Connection"}</button>
+      <div style={{ marginTop: 8, fontSize: 13, color: "#69778d" }}>The lifecycle check authenticates the server-side bridge and verifies PING, visitor listing, and QR token verification against the deployed Apps Script. Update the Apps Script deployment first; unsupported actions fail closed. Drive folder authorization is not verified by this check.</div>
+      <div style={{ marginTop: 12 }}>{badge(status?.visitor_lifecycle_sync_ready ? "lifecycle verified" : "sync pending")}</div>
+      <button onClick={saveAndCheck} disabled={saving || loading || !tenantId} style={{ marginTop: 18, marginRight: 8, padding: "11px 16px", border: 0, borderRadius: 9, background: saving ? "#8b96a8" : "#1d4ed8", color: "#fff", fontWeight: 650, cursor: saving ? "wait" : "pointer" }}>{saving ? "Saving and checking…" : "Save & Check Connection"}</button>
+      <button onClick={verifyLifecycle} disabled={verifyingLifecycle || saving || loading || !tenantId || !scriptUrl.trim() || !legacyTenantCode.trim()} style={{ marginTop: 18, padding: "11px 16px", border: "1px solid #cbd5e1", borderRadius: 9, background: "#fff", color: "#17213a", fontWeight: 650, cursor: verifyingLifecycle ? "wait" : "pointer" }}>{verifyingLifecycle ? "Verifying lifecycle…" : "Verify & Enable Visitor Sync"}</button>
     </section>
   </main>;
 }
