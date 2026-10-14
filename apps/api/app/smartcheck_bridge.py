@@ -64,6 +64,7 @@ def call_smartcheck(config: dict, user, action: str, **fields) -> dict:
         raise HTTPException(503, "SmartCheck bridge credentials are not configured")
     tenant_code = str(config.get("legacy_tenant_code", "")).strip()
     role = str(getattr(user.role, "value", user.role) or "").strip().upper().replace("-", "_").replace(" ", "_")
+    role = {"ADMIN": "TENANT_ADMIN", "MANAGER": "TENANT_ADMIN", "GUARD": "SECURITY", "SECURITY_GUARD": "SECURITY"}.get(role, role)
     payload = {
         "action": action,
         "bridgeSecret": secret,
