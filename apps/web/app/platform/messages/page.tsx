@@ -12,7 +12,7 @@ export default function MessagesPage() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [showCompose, setShowCompose] = useState(false);
-  const [form, setForm] = useState({ tenant_id: "", subject: "", body: "", send_email: true });
+  const [form, setForm] = useState({ tenant_id: "", subject: "", body: "", send_email: false });
   const [sending, setSending] = useState(false);
   const [prospectLines, setProspectLines] = useState("");
   const [campaignChannels, setCampaignChannels] = useState<string[]>(["whatsapp"]);
@@ -197,7 +197,7 @@ export default function MessagesPage() {
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Send failed");
       setStatus("Message sent. Email status: " + (x.email_status || "—"));
-      setForm({ tenant_id: "", subject: "", body: "", send_email: true });
+      setForm({ tenant_id: "", subject: "", body: "", send_email: false });
       setShowCompose(false);
       void load();
     } catch (e: any) {
@@ -376,10 +376,7 @@ export default function MessagesPage() {
               Message
               <textarea value={form.body} onChange={(e) => setForm({ ...form, body: e.target.value })} rows={6} placeholder="Write the message…" style={{ ...inputStyle, fontFamily: "inherit", resize: "vertical" }} />
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#4b5563" }}>
-              <input type="checkbox" checked={form.send_email} onChange={(e) => setForm({ ...form, send_email: e.target.checked })} style={{ width: "auto", margin: 0 }} />
-              Also send email to tenant owner
-            </label>
+            <p style={{ fontSize: 12, color: "#667085" }}>This sends an in-app notice only. No WhatsApp or email is sent to the tenant.</p>
             <button onClick={send} disabled={sending} style={{ background: "linear-gradient(135deg,#5b5cf0,#7159f7)", color: "#fff", border: 0, padding: "12px 22px", borderRadius: 10, fontWeight: 700, fontSize: 13, cursor: sending ? "wait" : "pointer", justifySelf: "start" }}>
               {sending ? "Sending…" : "Send message"}
             </button>
