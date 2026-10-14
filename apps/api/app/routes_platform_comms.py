@@ -508,8 +508,8 @@ async def platform_email_send(
     return {"sent": True, "from": account.email_address, "to": payload.to}
 
 # ===========================================================================
-# PLATFORM-OWNED COMMUNICATIONS — campaigns to opted-in tenant contacts.
-# This intentionally uses platform credentials, never tenant mailbox/channel keys.
+# PLATFORM-OWNED COMMUNICATIONS — campaigns to the platform owner's own customers.
+# This endpoint must never target tenant businesses or use tenant-owned channels.
 # ===========================================================================
 
 class PlatformCampaignRecipient(BaseModel):
@@ -519,9 +519,7 @@ class PlatformCampaignRecipient(BaseModel):
 
 
 class PlatformCampaignRequest(BaseModel):
-    sender_tenant_id: Optional[str] = None
-    tenant_ids: list[str] = Field(default_factory=list, max_length=500)
-    recipients: list[PlatformCampaignRecipient] = Field(default_factory=list, max_length=1000)
+    recipients: list[PlatformCampaignRecipient] = Field(min_length=1, max_length=1000)
     subject: str = Field(default="", max_length=300)
     body: str = Field(min_length=1, max_length=4000)
     channels: list[str] = Field(min_length=1)
@@ -536,119 +534,74 @@ async def platform_communications_campaign(
     user=Depends(_require_platform_admin),
     db: Session = Depends(_db),
 ):
-    """Send platform-owned outreach to selected tenants and/or manually entered prospects.
-
-    The caller must attest consent for every recipient. Tenant registration alone is
-    not treated as marketing consent; tenant credentials are never used for delivery.
-    """
+    """Send campaigns from platform-owned senders to the platform owner's own contacts."""
     channels = {str(c).strip().lower() for c in payload.channels}
     if not channels or not channels.issubset({"whatsapp", "email"}):
         raise HTTPException(400, "channels must contain whatsapp and/or email")
     if not payload.consent_confirmed:
-        raise HTTPException(400, "Confirm that every selected recipient has opted in before sending")
-    if payload.sender_tenant_id and payload.media_url:
-        raise HTTPException(400, "Media campaigns are not supported through tenant-owned channels yet; remove media or use platform-owned delivery.")
+        raise HTTPException(400, "Confirm that every recipient has opted in before sending")
     if payload.media_url and not payload.media_type:
         raise HTTPException(400, "media_type must be image or video when media_url is supplied")
     if payload.media_type and not payload.media_url:
         raise HTTPException(400, "media_url is required when media_type is supplied")
-    if not payload.tenant_ids and not payload.recipients:
-        raise HTTPException(400, "Select tenant recipients or enter prospect contacts")
     body = payload.body.strip()
     if not body:
         raise HTTPException(400, "Message body is required")
-    sender_tenant = db.get(Tenant, payload.sender_tenant_id) if payload.sender_tenant_id else None
-    if payload.sender_tenant_id and not sender_tenant:
-        raise HTTPException(404, "Sending tenant was not found")
-    tenants = db.scalars(select(Tenant).where(Tenant.id.in_(set(payload.tenant_ids)))).all() if payload.tenant_ids else []
-    by_id = {t.id: t for t in tenants}
-    missing = [tid for tid in set(payload.tenant_ids) if tid not in by_id]
-    if missing:
-        raise HTTPException(404, "One or more selected tenants were not found")
-    targets = []
-    for tid in payload.tenant_ids:
-        tenant = by_id[tid]
-        address = tenant.email
-        if not address:
-            owner = db.scalar(select(User).where(
-                User.tenant_id == tenant.id,
-                User.role.in_(["owner", "admin"]),
-                User.is_active == True,  # noqa: E712
-            ).order_by(User.created_at.asc()).limit(1))
-            address = owner.email if owner else None
-        targets.append({
-            "tenant_id": tenant.id, "name": tenant.name,
-            "phone": tenant.whatsapp_number or tenant.phone, "email": address,
-        })
-    for recipient in payload.recipients:
-        if not recipient.phone and not recipient.email:
-            raise HTTPException(400, "Every prospect needs a phone number and/or email address")
-        targets.append({
-            "tenant_id": None, "name": recipient.name.strip() or recipient.phone or recipient.email,
-            "phone": recipient.phone, "email": str(recipient.email) if recipient.email else None,
-        })
+
     from .notifications import send_email, send_platform_whatsapp, send_platform_whatsapp_media
-    from .email_integration import decrypt_email_config, send_email_smtp
-    from .models_email import TenantEmailAccount
-    from .whatsapp_channels import send_text_with_failover
     from .models_email import PlatformContactPreference
     import re
+
     results = []
-    for target in targets:
-        result = {"tenant_id": target["tenant_id"], "tenant_name": target["name"], "channels": {}}
-        phone_norm = re.sub(r"\D", "", str(target["phone"] or ""))
-        email_norm = str(target["email"] or "").strip().lower()
+    for recipient in payload.recipients:
+        phone = (recipient.phone or "").strip() or None
+        email = str(recipient.email).strip() if recipient.email else None
+        if not phone and not email:
+            raise HTTPException(400, "Every customer contact needs a phone number and/or email address")
+        name = recipient.name.strip() or phone or email or "Customer"
+        result = {"contact_id": None, "name": name, "channels": {}}
+        phone_norm = re.sub(r"\\D", "", phone or "")
+        email_norm = (email or "").strip().lower()
         phone_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.phone_norm == phone_norm)) if phone_norm else None
         email_pref = db.scalar(select(PlatformContactPreference).where(PlatformContactPreference.email_norm == email_norm)) if email_norm else None
+
         if "whatsapp" in channels:
-            if not target["phone"]:
+            if not phone:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "no_phone"}
             elif phone_pref and phone_pref.whatsapp_opt_out:
                 result["channels"]["whatsapp"] = {"sent": False, "status": "opted_out"}
             else:
-                whatsapp_body = body + "\n\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
-                if sender_tenant:
-                    delivery = await send_text_with_failover(db, sender_tenant.id, settings, target["phone"], whatsapp_body)
-                    result["channels"]["whatsapp"] = {"sent": bool(delivery.get("ok")), "status": delivery.get("channel") or delivery.get("error") or "failed", "provider": delivery.get("channel")}
-                elif payload.media_url:
-                    result["channels"]["whatsapp"] = await send_platform_whatsapp_media(target["phone"], payload.media_url, payload.media_type or "image", whatsapp_body)
-                else:
-                    result["channels"]["whatsapp"] = await send_platform_whatsapp(target["phone"], whatsapp_body)
+                msg = body + "\\n\\nReply STOP to opt out of AI Growth OS WhatsApp campaigns."
+                try:
+                    delivery = await send_platform_whatsapp_media(phone, payload.media_url, payload.media_type or "image", msg) if payload.media_url else await send_platform_whatsapp(phone, msg)
+                    result["channels"]["whatsapp"] = delivery if isinstance(delivery, dict) else {"sent": bool(delivery), "status": "sent" if delivery else "failed"}
+                except Exception as exc:
+                    logger.warning("platform customer WhatsApp campaign failed: %s", exc)
+                    result["channels"]["whatsapp"] = {"sent": False, "status": "provider_error"}
+
         if "email" in channels:
-            if not target["email"]:
+            if not email:
                 result["channels"]["email"] = {"sent": False, "status": "no_email"}
             elif email_pref and email_pref.email_opt_out:
                 result["channels"]["email"] = {"sent": False, "status": "opted_out"}
             else:
-                email_body = body + "\n\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
-                if sender_tenant:
-                    account = db.scalar(select(TenantEmailAccount).where(
-                        TenantEmailAccount.tenant_id == sender_tenant.id,
-                        TenantEmailAccount.is_active == True,  # noqa: E712
-                    ).order_by(TenantEmailAccount.created_at.desc()))
-                    if not account:
-                        result["channels"]["email"] = {"sent": False, "status": "sender_tenant_has_no_active_mailbox"}
-                    else:
-                        try:
-                            cfg = decrypt_email_config(account.config_encrypted)
-                            await send_email_smtp(cfg, target["email"], payload.subject.strip() or "Message from " + sender_tenant.name, email_body)
-                            result["channels"]["email"] = {"sent": True, "status": "sent", "from": account.email_address}
-                        except Exception as exc:
-                            logger.warning("tenant campaign email failed sender=%s: %s", sender_tenant.id, exc)
-                            result["channels"]["email"] = {"sent": False, "status": "smtp_failed"}
-                else:
-                    result["channels"]["email"] = await send_email(
-                        target["email"], payload.subject.strip() or "AI Growth OS", email_body
-                    )
+                msg = body + "\\n\\nTo stop AI Growth OS emails, reply UNSUBSCRIBE."
+                try:
+                    delivery = await send_email(email, payload.subject.strip() or "AI Growth OS", msg)
+                    result["channels"]["email"] = delivery if isinstance(delivery, dict) else {"sent": bool(delivery), "status": "sent" if delivery else "failed"}
+                except Exception as exc:
+                    logger.warning("platform customer email campaign failed: %s", exc)
+                    result["channels"]["email"] = {"sent": False, "status": "provider_error"}
+
         results.append(result)
         try:
-            audit(db, tenant_id=target["tenant_id"], actor_id=user.id,
-                  action="platform.communication_campaign",
-                  target_type="tenant" if target["tenant_id"] else "prospect",
-                  target_id=target["tenant_id"] or "manual-recipient",
-                  detail={"channels": sorted(channels), "consent_confirmed": True, "sender_tenant_id": payload.sender_tenant_id})
+            audit(db, tenant_id=None, actor_id=user.id,
+                  action="platform.customer_communication_campaign",
+                  target_type="platform_customer_contact", target_id="manual-recipient",
+                  detail={"channels": sorted(channels), "consent_confirmed": True})
         except Exception:
             pass
+
     return {
         "selected": len(results),
         "sent": sum(1 for r in results for c in r["channels"].values() if c.get("sent")),
