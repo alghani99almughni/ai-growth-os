@@ -8,7 +8,7 @@ type Role = {id:string;name:string;permissions:string[];is_system:boolean};
 type Service = {id:string;name:string;is_active:boolean};
 const PERMISSIONS = [
   ["dashboard.view","Dashboard"],["customers.view","Customers"],["customers.manage","Manage customers"],
-  ["bookings.view","Bookings"],["bookings.manage","Manage bookings"],["services.view","Services"],
+  ["bookings.view","Bookings"],["bookings.manage","Manage bookings"],["orders.view","Orders"],["orders.manage","Manage orders"],["services.view","Services"],
   ["services.manage","Manage services"],["calls.view","Calls"],["calls.manage","Manage calls"],
   ["campaigns.view","Marketing campaigns"],["campaigns.manage","Send campaigns"],
   ["communications.view","WhatsApp & email inbox"],["communications.reply","Reply to messages"],
