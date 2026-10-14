@@ -34,7 +34,7 @@ async def _handle_account(account_row: TenantEmailAccount) -> None:
     try:
         # Reload inside this session so the ORM object is bound
         account = db.get(TenantEmailAccount, account_row.id)
-        if not account or not account.is_active or not account.auto_reply_enabled:
+        if not account or not account.is_active:
             return
 
         try:
@@ -135,6 +135,12 @@ async def _process_message(db, account: TenantEmailAccount, cfg: dict, msg: dict
         ticket_id=parent_log.ticket_id if parent_log else None,
     )
 
+    if not account.auto_reply_enabled:
+        log.outcome = "received"
+        db.add(log)
+        db.commit()
+        return
+
     try:
         # Lazy import — brain is heavy and depends on many modules
         from .brain import generate_reply
@@ -209,7 +215,6 @@ async def _poller_loop() -> None:
                 accounts = db.scalars(
                     select(TenantEmailAccount).where(
                         TenantEmailAccount.is_active == True,  # noqa: E712
-                        TenantEmailAccount.auto_reply_enabled == True,  # noqa: E712
                     )
                 ).all()
             finally:
