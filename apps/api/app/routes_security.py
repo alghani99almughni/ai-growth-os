@@ -40,6 +40,30 @@ class TenantSecurityFeatureToggle(BaseModel):
     enabled: bool
 
 
+def db_session():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def principal(authorization: str | None = Header(default=None), db: Session = Depends(db_session)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Bearer token required")
+    try:
+        payload = decode_token_strict(authorization.split(" ", 1)[1], settings.jwt_secret, settings.jwt_algorithm)
+    except (ValueError, jwt.InvalidTokenError):
+        raise HTTPException(401, "Invalid access token")
+    user = db.get(User, payload.get("sub"))
+    if not user or not user.is_active or payload.get("tenant_id") != user.tenant_id:
+        raise HTTPException(401, "Invalid tenant context")
+    tenant = db.get(Tenant, user.tenant_id)
+    if not tenant or str(tenant.status).lower() != "active":
+        raise HTTPException(403, "Tenant is not active")
+    return user
+
+
 @platform_router.get("/security-visitor-management")
 def platform_security_feature_statuses(user: User = Depends(principal), db: Session = Depends(db_session)):
     if str(user.role).lower() not in PLATFORM_ROLES:
@@ -89,30 +113,6 @@ def platform_set_security_feature(tenant_id: str, body: TenantSecurityFeatureTog
         detail={"enabled": body.enabled},
     )
     return {"tenant_id": tenant_id, "security_visitor_management": body.enabled}
-
-
-def db_session():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def principal(authorization: str | None = Header(default=None), db: Session = Depends(db_session)):
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "Bearer token required")
-    try:
-        payload = decode_token_strict(authorization.split(" ", 1)[1], settings.jwt_secret, settings.jwt_algorithm)
-    except (ValueError, jwt.InvalidTokenError):
-        raise HTTPException(401, "Invalid access token")
-    user = db.get(User, payload.get("sub"))
-    if not user or not user.is_active or payload.get("tenant_id") != user.tenant_id:
-        raise HTTPException(401, "Invalid tenant context")
-    tenant = db.get(Tenant, user.tenant_id)
-    if not tenant or str(tenant.status).lower() != "active":
-        raise HTTPException(403, "Tenant is not active")
-    return user
 
 
 def tenant_access(tenant_id: str, user: User, db: Session, *, require_feature: bool = True):
