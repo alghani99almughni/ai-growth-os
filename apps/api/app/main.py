@@ -9,7 +9,7 @@ from pydantic import BaseModel,Field
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
 from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken,AIProviderUsage
-from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,RoleDefinition,InteractionEvent
+from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,StaffServiceAssignment,RoleDefinition,InteractionEvent
 from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context
@@ -1200,7 +1200,9 @@ def list_staff(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_d
     for x in rows:
         u=db.get(User,x.user_id) if x.user_id else None
         d=db.get(Department,x.department_id) if x.department_id else None
-        result.append({"id":x.id,"name":x.name,"email":u.email if u else None,"role":u.role if u else "staff","department_id":x.department_id,"department_name":d.name if d else None,"skills":x.skills,"is_active":x.is_active,"is_available":x.is_available})
+        service_rows=db.scalars(select(StaffServiceAssignment).where(StaffServiceAssignment.tenant_id==tenant_id,StaffServiceAssignment.staff_id==x.id)).all()
+        service_ids=[a.service_id for a in service_rows]
+        result.append({"id":x.id,"name":x.name,"email":u.email if u else None,"role":u.role if u else "staff","department_id":x.department_id,"department_name":d.name if d else None,"skills":x.skills,"service_ids":service_ids,"is_active":x.is_active,"is_available":x.is_available})
     return {"items":result}
 
 @app.post("/api/v1/tenants/{tenant_id}/staff",status_code=201)
@@ -1209,11 +1211,18 @@ def create_staff(tenant_id,payload:StaffCreate,user=Depends(get_current_user),db
     if db.scalar(select(User).where(User.email==payload.email.lower())): raise HTTPException(409,"Email already registered")
     if payload.department_id and not db.scalar(select(Department).where(Department.id==payload.department_id,Department.tenant_id==tenant_id)): raise HTTPException(400,"Invalid department")
     if not db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id,RoleDefinition.name==payload.role)): raise HTTPException(400,"Invalid role")
+    service_ids=list(dict.fromkeys(payload.service_ids or []))
+    if service_ids:
+        valid_ids=set(db.scalars(select(Service.id).where(Service.tenant_id==tenant_id,Service.id.in_(service_ids))).all())
+        if valid_ids != set(service_ids): raise HTTPException(400,"One or more selected services do not belong to this tenant")
     u=User(id=str(uuid.uuid4()),name=payload.name,email=payload.email.lower(),password_hash=hash_password(payload.password),tenant_id=tenant_id,role=payload.role)
     db.add(u); db.flush()
     s=StaffMember(tenant_id=tenant_id,user_id=u.id,name=payload.name,department_id=payload.department_id,skills=payload.skills)
-    db.add(s); db.commit(); db.refresh(s)
-    return {"id":s.id,"name":s.name,"email":u.email,"role":u.role,"department_id":s.department_id}
+    db.add(s); db.flush()
+    for service_id in service_ids:
+        db.add(StaffServiceAssignment(tenant_id=tenant_id,staff_id=s.id,service_id=service_id))
+    db.commit(); db.refresh(s)
+    return {"id":s.id,"name":s.name,"email":u.email,"role":u.role,"department_id":s.department_id,"service_ids":service_ids}
 
 @app.patch("/api/v1/tenants/{tenant_id}/staff/{staff_id}")
 def update_staff(tenant_id,staff_id,payload:StaffUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
@@ -1227,8 +1236,16 @@ def update_staff(tenant_id,staff_id,payload:StaffUpdate,user=Depends(get_current
     for key in ("department_id","skills","is_active","is_available"):
         value=getattr(payload,key)
         if value is not None: setattr(s,key,value)
+    if payload.service_ids is not None:
+        service_ids=list(dict.fromkeys(payload.service_ids))
+        if service_ids:
+            valid_ids=set(db.scalars(select(Service.id).where(Service.tenant_id==tenant_id,Service.id.in_(service_ids))).all())
+            if valid_ids != set(service_ids): raise HTTPException(400,"One or more selected services do not belong to this tenant")
+        db.query(StaffServiceAssignment).filter_by(tenant_id=tenant_id,staff_id=s.id).delete(synchronize_session=False)
+        for service_id in service_ids:
+            db.add(StaffServiceAssignment(tenant_id=tenant_id,staff_id=s.id,service_id=service_id))
     db.commit()
-    return {"id":s.id,"role":u.role if u else None,"department_id":s.department_id,"is_active":s.is_active,"is_available":s.is_available}
+    return {"id":s.id,"role":u.role if u else None,"department_id":s.department_id,"service_ids":payload.service_ids,"is_active":s.is_active,"is_available":s.is_available}
 
 class BusinessBrainUpdate(BaseModel):
     instructions: str = Field(default="", max_length=20000)
