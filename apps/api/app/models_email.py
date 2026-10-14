@@ -67,6 +67,7 @@ class EmailLog(Base):
     outcome = Column(String, nullable=False, default="replied")
 
     reply_text = Column(Text, nullable=True)
+    inbound_body = Column(Text, nullable=False, default="")
     error = Column(Text, nullable=True)
 
     ticket_id = Column(String, nullable=True, index=True)
@@ -116,3 +117,18 @@ class PlatformContactPreference(Base):
     whatsapp_opt_out = Column(Boolean, nullable=False, default=False)
     email_opt_out = Column(Boolean, nullable=False, default=False)
     updated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class TenantWhatsAppMessage(Base):
+    """Tenant-owned WhatsApp conversation history used by tenant and platform inboxes."""
+    __tablename__ = "tenant_whatsapp_messages"
+
+    id = Column(String, primary_key=True)
+    tenant_id = Column(String, nullable=False, index=True)
+    provider_message_id = Column(String, nullable=True, unique=True, index=True)
+    phone = Column(String, nullable=False, index=True)
+    contact_name = Column(String, nullable=True)
+    body = Column(Text, nullable=False, default="")
+    direction = Column(String, nullable=False, default="inbound", index=True)
+    status = Column(String, nullable=False, default="received", index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
