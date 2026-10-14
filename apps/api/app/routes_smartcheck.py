@@ -191,10 +191,10 @@ def verify_smartcheck_lifecycle(tenant_id: str, user: User = Depends(platform_us
         config = {}
     if not config.get("script_url") or not config.get("legacy_tenant_code"):
         raise HTTPException(409, "Save the Apps Script URL and legacy tenant code first")
-    config["visitor_lifecycle_sync_ready"] = False
-    row.value_json = json.dumps(config) if row else ""
     if not row:
         raise HTTPException(409, "Save the SmartCheck connection before running lifecycle verification")
+    config["visitor_lifecycle_sync_ready"] = False
+    row.value_json = json.dumps(config)
     db.commit()
     try:
         ping = call_smartcheck(config, user, "PING")
