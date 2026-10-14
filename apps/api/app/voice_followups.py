@@ -12,6 +12,7 @@ the order of the stages and the shape of the reply are unchanged.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime, time
 from typing import Mapping, Optional
 
@@ -249,6 +250,80 @@ def describe_day_hours(
         if offer_booking:
             text += " Would you like to book an appointment?"
     return text
+
+
+# --------------------------------------------------------------------------------------
+# Plain refusals: "no", "no no", "nope", "nahi" ... meaning depends on what was just asked
+# --------------------------------------------------------------------------------------
+
+def _plain(text: str) -> str:
+    """Casefold, drop punctuation/symbols (keeps Indic letters and vowel signs), squeeze spaces."""
+    kept = "".join(ch for ch in (text or "").casefold() if not unicodedata.category(ch).startswith(("P", "S")))
+    return re.sub(r"\s+", " ", kept).strip()
+
+
+_NEG = r"(?:no|nope|nah|naa|nahi|nahin|nai|\u0928\u0939\u0940\u0902|\u0928\u0939\u0940|\u0928\u094b|\u0c32\u0c47\u0c26\u0c41|\u0c35\u0c26\u0c4d\u0c26\u0c41)"
+_REFUSAL_RE = re.compile(rf"^(?:{_NEG}(?: {_NEG})*(?: (?:thanks|thank you|please|sir|madam|ji))?|not now|not right now|not really)$")
+_DONE_RE = re.compile(
+    r"^(?:nothing|nothing else|that is all|thats all|i am good|im good|all good|all set|bas|bas itna|bas itna hi|kuch nahi|kuch nahin"
+    r"|\u0915\u0941\u091b \u0928\u0939\u0940\u0902|\u092c\u0938|\u092c\u0938 \u0907\u0924\u0928\u093e)$")
+_OFFERED_MORE_HELP = re.compile(r"anything else|here to help|still there|need anything|how can i help", re.I)
+
+
+def is_refusal(message: str) -> bool:
+    """A bare "no": "no", "no no", "nope", "nahi", "no thanks", "not now" ..."""
+    return bool(_REFUSAL_RE.match(_plain(message)))
+
+
+def is_nothing_else(message: str) -> bool:
+    """"nothing else", "that's all", "I'm good", "bas" ... or any bare refusal."""
+    value = _plain(message)
+    return bool(_REFUSAL_RE.match(value) or _DONE_RE.match(value))
+
+
+def decline_kind(state: Optional[str], last_assistant: Optional[str], message: str) -> Optional[str]:
+    """What a bare refusal means, decided by what the assistant had just said:
+
+    "confirmation"  the caller declined "Shall I confirm that appointment?"
+    "offer"         the caller declined "Would you like to book an appointment?"
+    "nothing_else"  the caller has nothing more to ask after "...anything else..." / a finished call
+    None            no special meaning: the normal ladder decides
+    """
+    refusal, done = is_refusal(message), is_nothing_else(message)
+    if not done:
+        return None
+    last = (last_assistant or "").casefold()
+    if refusal and state == "booking_confirmation":
+        return "confirmation"
+    if refusal and "book an appointment" in last:
+        return "offer"
+    if state in ("closed", "booking_confirmed") or _OFFERED_MORE_HELP.search(last):
+        return "nothing_else"
+    return None
+
+
+_DECLINE_TEXT = {
+    "en": {
+        "confirmation": "No problem. I haven't booked anything. Which day and time would you prefer instead?",
+        "offer": "No problem. Is there anything else I can help you with?",
+        "nothing_else": "Alright, thank you for calling {name}. Have a great day!",
+    },
+    "hi": {
+        "confirmation": "\u0915\u094b\u0908 \u092c\u093e\u0924 \u0928\u0939\u0940\u0902, \u092e\u0948\u0902\u0928\u0947 \u0905\u092d\u0940 \u0915\u0941\u091b \u092c\u0941\u0915 \u0928\u0939\u0940\u0902 \u0915\u093f\u092f\u093e \u0939\u0948\u0964 \u0906\u092a \u0915\u093f\u0938 \u0926\u093f\u0928 \u0914\u0930 \u0915\u093f\u0938 \u0938\u092e\u092f \u0906\u0928\u093e \u091a\u093e\u0939\u0947\u0902\u0917\u0947?",
+        "offer": "\u0915\u094b\u0908 \u092c\u093e\u0924 \u0928\u0939\u0940\u0902\u0964 \u0915\u094d\u092f\u093e \u092e\u0948\u0902 \u0906\u092a\u0915\u0940 \u0914\u0930 \u0915\u094b\u0908 \u092e\u0926\u0926 \u0915\u0930 \u0938\u0915\u0924\u093e \u0939\u0942\u0901?",
+        "nothing_else": "\u0920\u0940\u0915 \u0939\u0948, {name} \u0915\u094b \u0915\u0949\u0932 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0927\u0928\u094d\u092f\u0935\u093e\u0926\u0964 \u0906\u092a\u0915\u093e \u0926\u093f\u0928 \u0936\u0941\u092d \u0939\u094b!",
+    },
+    "te": {
+        "confirmation": "\u0c2a\u0c30\u0c4d\u0c35\u0c3e\u0c32\u0c47\u0c26\u0c41, \u0c28\u0c47\u0c28\u0c41 \u0c07\u0c02\u0c15\u0c3e \u0c0f\u0c26\u0c40 \u0c2c\u0c41\u0c15\u0c4d \u0c1a\u0c47\u0c2f\u0c32\u0c47\u0c26\u0c41. \u0c0f \u0c30\u0c4b\u0c1c\u0c41 \u0c2e\u0c30\u0c3f\u0c2f\u0c41 \u0c0f \u0c38\u0c2e\u0c2f\u0c02 \u0c15\u0c3e\u0c35\u0c3e\u0c32\u0c3f?",
+        "offer": "\u0c2a\u0c30\u0c4d\u0c35\u0c3e\u0c32\u0c47\u0c26\u0c41. \u0c07\u0c02\u0c15\u0c47\u0c2e\u0c48\u0c28\u0c3e \u0c38\u0c39\u0c3e\u0c2f\u0c02 \u0c15\u0c3e\u0c35\u0c3e\u0c32\u0c3e?",
+        "nothing_else": "\u0c38\u0c30\u0c47, {name} \u0c15\u0c41 \u0c15\u0c3e\u0c32\u0c4d \u0c1a\u0c47\u0c38\u0c3f\u0c28\u0c02\u0c26\u0c41\u0c15\u0c41 \u0c27\u0c28\u0c4d\u0c2f\u0c35\u0c3e\u0c26\u0c3e\u0c32\u0c41. \u0c2e\u0c40 \u0c30\u0c4b\u0c1c\u0c41 \u0c36\u0c41\u0c2d\u0c02\u0c17\u0c3e \u0c09\u0c02\u0c21\u0c3e\u0c32\u0c3f!",
+    },
+}
+
+
+def decline_reply(kind: str, language: str, business_name: str) -> str:
+    table = _DECLINE_TEXT.get(language, _DECLINE_TEXT["en"])
+    return table[kind].format(name=business_name or "us")
 
 
 # --------------------------------------------------------------------------------------

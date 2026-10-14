@@ -39,6 +39,8 @@ import base64
 import json
 import logging
 import os
+import threading
+import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime
 from typing import Optional
@@ -58,6 +60,27 @@ from .tenant_policy import tenant_policy, policy_context
 logger = logging.getLogger("api.voice_escalate")
 
 router = APIRouter()
+
+
+def _warm_gemini_sdk() -> None:
+    """Import the Gemini SDK in the background at start-up.
+
+    The first import takes several seconds (7.5 s measured on a small machine; the same 8 s gap showed up in a live
+    call between "escalate ws accepted" and the Gemini connection opening). Doing it inside the first escalation ate
+    most of the client's 15 s first-speech window, so the caller was dropped to the callback form. Importing here moves
+    that cost to boot time; a request that arrives meanwhile simply waits on the same import lock.
+    """
+    started = time.perf_counter()
+    try:
+        from google import genai  # noqa: F401
+        from google.genai import types  # noqa: F401
+        logger.info("gemini sdk warm-up done in %.1fs", time.perf_counter() - started)
+    except Exception:
+        logger.warning("gemini sdk warm-up skipped", exc_info=True)
+
+
+if settings.gemini_api_key and os.getenv("SPECIALIST_SDK_WARMUP", "1") != "0":
+    threading.Thread(target=_warm_gemini_sdk, name="gemini-sdk-warmup", daemon=True).start()
 
 MAX_SESSION_SECONDS = 420          # after this the customer is handed to a human instead of burning tokens
 FIRST_TEXT_WAIT_SECONDS = 2.5      # how long to wait for the hand-over context before greeting anyway
@@ -269,6 +292,7 @@ async def _connect_live(client, model: str, tuned_config, baseline_config):
 async def voice_escalate(websocket: WebSocket, call_id: str):
     await websocket.accept()
     logger.info("escalate ws accepted call_id=%s", call_id)
+    t_accept = time.perf_counter()
 
     system_prompt = ""
     language_codes: list[str] = []
@@ -298,6 +322,7 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
         vocabulary = [tenant.name] + WEEKDAYS if tenant.name else list(WEEKDAYS)
     finally:
         db.close()   # do not hold a pooled connection for the whole call
+    t_db = time.perf_counter()
 
     try:
         from google import genai
@@ -309,6 +334,7 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
         return
 
     client = genai.Client(api_key=settings.gemini_api_key)
+    t_sdk = time.perf_counter()
     model_name = _live_model(getattr(settings, "gemini_live_model", None))
     config, has_tools = _live_config(genai_types, system_prompt, tuned=True,
                                      language_codes=language_codes, vocabulary=vocabulary)
@@ -318,6 +344,10 @@ async def voice_escalate(websocket: WebSocket, call_id: str):
 
     async def run_session() -> None:
         async with _connect_live(client, model_name, config, baseline_config) as session:
+            t_live = time.perf_counter()
+            logger.info("escalate_timing call_id=%s db_ms=%d sdk_ms=%d connect_ms=%d total_ms=%d", call_id,
+                        (t_db - t_accept) * 1000, (t_sdk - t_db) * 1000, (t_live - t_sdk) * 1000,
+                        (t_live - t_accept) * 1000)
             await websocket.send_json({"type": "status", "status": "connected", "provider": "gemini", "model": model_name})
 
             stop = asyncio.Event()

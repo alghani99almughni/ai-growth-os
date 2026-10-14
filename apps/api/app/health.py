@@ -50,6 +50,9 @@ async def health():
         "status": "ok",
         "uptime_seconds": round(time.time() - _STARTED_AT, 1),
         "version": os.getenv("APP_VERSION", "dev"),
+        # Render sets this to the deployed git commit. The post-deploy QA workflow waits for it to equal
+        # the pushed commit; main.py also sets it, but this route is registered first and shadowed that one.
+        "commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
     }
 
 

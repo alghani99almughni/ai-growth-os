@@ -19,8 +19,8 @@ from app.db import Base
 from app.models import Service, Tenant
 from app.models_growth import BusinessHour, KnowledgeItem
 from app.voice_followups import (
-    WEEKDAYS_EN, WEEKDAYS_HI, WEEKDAYS_TE, asks_for_time, bare_time_answer, describe_day_hours,
-    is_day_followup, spoken_time,
+    WEEKDAYS_EN, WEEKDAYS_HI, WEEKDAYS_TE, asks_for_time, bare_time_answer, decline_kind, decline_reply,
+    describe_day_hours, is_day_followup, is_nothing_else, is_refusal, spoken_time,
 )
 
 TZ = "Asia/Kolkata"
@@ -397,3 +397,111 @@ def test_specialist_is_told_not_to_greet_again():
     text = OPENING_ADDENDUM.casefold()
     assert "do not give a welcome greeting" in text and "continue it" in text
     assert "taking over" not in text and "greet the customer by name" not in text
+
+
+# ---------------------------------------------------------------------------------------
+# production call 2026-10-13: after "thank you" the caller said "no no" and was handed to the paid
+# specialist and then to the callback form. A bare "no" now means what the last question made it mean.
+# ---------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", ["no", "No no", "nope", "nah", "No, thanks.", "not now", "nahi", "nahin nahin",
+                                  "\u0928\u0939\u0940\u0902 \u0928\u0939\u0940\u0902", "\u0c32\u0c47\u0c26\u0c41"])
+def test_bare_refusals_are_recognised(text):
+    assert is_refusal(text) and is_nothing_else(text)
+
+
+@pytest.mark.parametrize("text", ["no, actually yes", "yes", "I have no idea", "not tomorrow, Thursday", "no appointment on Monday please",
+                                  "what are your timings", ""])
+def test_longer_sentences_are_not_bare_refusals(text):
+    assert not is_refusal(text)
+
+
+@pytest.mark.parametrize("text", ["nothing else", "that's all", "I'm good", "all set", "bas itna hi"])
+def test_nothing_else_phrases(text):
+    assert is_nothing_else(text) and not is_refusal(text)
+
+
+def test_decline_meaning_depends_on_the_last_thing_the_assistant_said():
+    offer = "Tomorrow, Thursday, we're open from 9:00 AM to 6:00 PM. Would you like to book an appointment?"
+    closing = "You're welcome. If you need anything else, I'm here to help."
+    assert decline_kind("booking_confirmation", "Shall I confirm that appointment?", "no") == "confirmation"
+    assert decline_kind("new", offer, "no") == "offer"
+    assert decline_kind("new", closing, "no no") == "nothing_else"
+    assert decline_kind("closed", None, "nope") == "nothing_else"
+    assert decline_kind("booking_confirmed", None, "nothing else") == "nothing_else"
+    assert decline_kind("new", "We're open Monday to Saturday.", "no") is None      # no context: the ladder decides
+    assert decline_kind("new", closing, "what time do you close") is None
+
+
+def test_decline_replies_exist_in_three_languages():
+    assert decline_reply("nothing_else", "en", "Demo Realty") == "Alright, thank you for calling Demo Realty. Have a great day!"
+    assert "Demo Realty" in decline_reply("nothing_else", "hi", "Demo Realty")
+    assert "Demo Realty" in decline_reply("nothing_else", "te", "Demo Realty")
+    assert decline_reply("offer", "fr", "x") == decline_reply("offer", "en", "x")
+
+
+def test_the_real_call_no_no_after_thank_you_ends_politely_instead_of_escalating():
+    caller = Convo(make_db())
+    caller.say("yeah wanted to know the timing")
+    caller.say("thank you")
+    caller.say("no no")
+    assert not caller.escalated and caller.last["provider"] == "deterministic"
+    assert caller.reply == "Alright, thank you for calling Demo Realty. Have a great day!"
+    assert caller.state == "closed"
+
+
+def test_declining_the_booking_offer_does_not_escalate():
+    caller = Convo(make_db())
+    caller.say("what are your timings")
+    caller.say("tomorrow")
+    assert "book an appointment" in caller.reply
+    caller.say("no")
+    assert not caller.escalated and caller.reply == "No problem. Is there anything else I can help you with?"
+    assert caller.state == "information"
+
+
+def test_declining_the_confirmation_restarts_the_slot_cleanly():
+    caller = Convo(make_db())
+    caller.say("I want an appointment")
+    caller.say(WEEKDAYS_EN[_day(2).weekday()])
+    caller.say("2:30 PM")
+    assert "Shall I confirm" in caller.reply
+    caller.say("no")
+    assert not caller.escalated and "haven't booked anything" in caller.reply and caller.state == "booking_day"
+    target = _day(3)
+    result = caller.say(f"{WEEKDAYS_EN[target.weekday()]} 3:30 PM")
+    assert "Shall I confirm" in caller.reply and "3:30 PM" in caller.reply
+    assert result["booking"]["date"] == target.isoformat() and result["booking"]["time"] == "3:30 PM"
+
+
+def test_hindi_refusal_after_closing_gets_a_hindi_goodbye():
+    caller = Convo(make_db())
+    caller.say("thank you")
+    caller.say("\u0928\u0939\u0940\u0902 \u0928\u0939\u0940\u0902")
+    assert not caller.escalated and "Demo Realty" in caller.reply and "\u0927\u0928\u094d\u092f\u0935\u093e\u0926" in caller.reply
+
+
+def test_a_bare_no_with_no_context_is_still_handed_off_honestly():
+    caller = Convo(make_db())
+    caller.say("no no")
+    assert caller.escalated
+
+
+def test_no_thanks_inside_a_booking_still_uses_the_existing_cancel_path():
+    caller = Convo(make_db())
+    caller.say("I want an appointment")
+    caller.say(WEEKDAYS_EN[_day(2).weekday()])
+    caller.say("2:30 PM")
+    caller.say("no thanks")
+    assert not caller.escalated and "haven't booked anything" not in caller.reply
+
+
+# ---------------------------------------------------------------------------------------
+# specialist cold start: the Gemini SDK is imported at boot, not inside the first escalation
+# ---------------------------------------------------------------------------------------
+
+def test_gemini_sdk_warmup_imports_the_sdk():
+    import sys
+    from app.voice_escalate import _warm_gemini_sdk
+    _warm_gemini_sdk()
+    assert "google.genai" in sys.modules and "google.genai.types" in sys.modules

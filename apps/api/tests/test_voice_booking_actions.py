@@ -45,3 +45,20 @@ def test_reschedule_parser_converts_explicit_time(monkeypatch):
     monkeypatch.setattr(actions, "resolve_booking_date", lambda tenant, day, relative, hint: date(2026, 10, 12))
     tenant = SimpleNamespace(timezone="Asia/Kolkata")
     assert _parse_new_start(tenant, "Monday at 11 AM") == datetime(2026, 10, 12, 11, 0)
+
+
+def test_natural_cancel_confirmations_are_accepted():
+    # Found by the 15-tenant QA matrix: "Yes, cancel it" was rejected and the cancellation never completed.
+    for phrase in ("Yes, cancel it", "yes cancel it", "ok cancel it", "cancel it", "please cancel it", "yeah go ahead",
+                   "go ahead and cancel it", "Yes, cancel my appointment", "yes please reschedule it", "do it", "Yes."):
+        assert _affirmative(phrase), phrase
+
+
+def test_natural_refusals_and_unclear_answers_are_not_confirmations():
+    for phrase in ("no", "No, keep it", "don't cancel", "Do not cancel it", "never mind", "keep it", "stop",
+                   "nahi", "cancel that", "yes, but maybe later", "maybe", "what time is it", "No, actually yes"):
+        assert not _affirmative(phrase), phrase
+    for phrase in ("no", "No, keep it", "don't cancel", "Do not cancel it", "never mind", "keep it", "stop", "nahi"):
+        assert _negative(phrase), phrase
+    assert not _negative("No, actually yes")
+    assert not _negative("nothing else")

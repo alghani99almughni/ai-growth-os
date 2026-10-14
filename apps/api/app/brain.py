@@ -15,7 +15,10 @@ from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
 from .booking import available_slots
 from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
-from .voice_followups import spoken_time, bare_time_answer, asks_for_time, describe_day_hours, is_day_followup, HOURS_CUES
+from .voice_followups import (
+    spoken_time, bare_time_answer, asks_for_time, describe_day_hours, is_day_followup, HOURS_CUES,
+    decline_kind, decline_reply,
+)
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -746,8 +749,19 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     current_entities=extract_booking_entities(message, expecting_time=asks_for_time(c.last_assistant_message))
     has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested"))
     active_booking=c.state.startswith("booking")
+    # A bare "no" / "no no" is answered from context instead of being handed to a human: declining a confirmation,
+    # declining the "would you like to book?" offer, or "nothing else" after the closing line.
+    decline=None if is_booking_cancellation(message) else decline_kind(c.state,c.last_assistant_message,message)
     if c.state == "new" and any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
+    elif decline:
+        booking=decline_reply(decline,language,tenant.name)
+        if decline=="confirmation":
+            intent="decline"; c.state="booking_day"; c.cleared_at=datetime.utcnow()   # start the slot over, keep nothing stale
+        elif decline=="offer":
+            intent="decline"; c.state="information"
+        else:
+            intent="closing"; c.state="closed"; c.cleared_at=datetime.utcnow()
     elif intent=="language_request":
         requested_language=language_request(message) or "en"
         previous_booking_state=c.state if active_booking else None

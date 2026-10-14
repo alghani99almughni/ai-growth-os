@@ -1,44 +1,107 @@
 name: Full Multi-Tenant QA Matrix
+
+# Two gates, one test file (qa/full_matrix.py):
+#   local-matrix       runs on every pull request and push. It starts THIS commit's API inside the runner
+#                      (SQLite, no AI keys, no production traffic) so a failing change is caught BEFORE it is
+#                      merged or deployed.
+#   production-matrix  runs after a push to main. It waits until Render reports this exact commit on /health,
+#                      then runs the same matrix against the deployed API, including the load/latency check.
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "qa/**"
+      - ".github/workflows/full-qa-matrix.yml"
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_production:
+        description: "Also run the matrix against the deployed production API"
+        type: boolean
+        default: true
+
 permissions:
   contents: read
-concurrency:
-  group: production-qa-regression
-  cancel-in-progress: true
+
 jobs:
-  qa-matrix:
+  local-matrix:
+    name: multi-industry matrix (this commit, local API)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 25
+    concurrency:
+      group: qa-local-${{ github.ref }}
+      cancel-in-progress: true
     env:
-      API_URL: https://ai-growth-os-api.onrender.com
-      GITHUB_SHA: ${{ github.sha }}
+      PYTHONPATH: .
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
+      DATABASE_URL: sqlite:///./qa_ci.db
+      RENDER_GIT_COMMIT: ${{ github.sha }}
+      API_URL: http://127.0.0.1:8000
+      QA_SKIP_LOAD: "1"   # SQLite is single-writer; the load/latency check runs against production instead
     steps:
       - uses: actions/checkout@v4
-      - run: python -m pip install -q requests
-      - name: Wait for Render
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+      - name: Install
         run: |
-          python - <<'PY'
-          import os,time,requests
-          base=os.environ["API_URL"]; expected=os.environ["GITHUB_SHA"]; end=time.time()+300
-          while time.time()<end:
-            try:
-              r=requests.get(base+"/health",timeout=10); r.raise_for_status()
-              got=r.json().get("commit",""); print("DEPLOYED_COMMIT",got)
-              if got==expected: break
-            except requests.RequestException as exc:
-              print("HEALTH_RETRY",type(exc).__name__,str(exc))
-            time.sleep(8)
-          else: raise SystemExit("Render deployment timeout")
-          PY
-      - name: Execute 15-tenant QA matrix
+          pip install -r apps/api/requirements.txt
+          pip install requests
+      - name: Start the API
+        working-directory: apps/api
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/api.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/health > /dev/null; then echo "API ready after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "API did not start"; cat "$RUNNER_TEMP/api.log"; exit 1
+      - name: Run the multi-industry matrix
         run: python qa/full_matrix.py
-      - name: Upload error log
+      - name: API log tail (on failure)
+        if: failure()
+        run: tail -n 80 "$RUNNER_TEMP/api.log" || true
+      - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: full-qa-error-log
-          path: qa_error_log.md
+          name: qa-local-report
+          path: |
+            qa_error_log.md
+            qa_report.json
+          if-no-files-found: warn
+
+  production-matrix:
+    name: multi-industry matrix (deployed production API)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.run_production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: production-qa-regression
+      cancel-in-progress: true
+    env:
+      API_URL: https://ai-growth-os-api.onrender.com
+      EXPECTED_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -q requests
+      - name: Wait for Render to deploy this commit
+        run: python qa/wait_for_deploy.py
+      - name: Run the multi-industry matrix (with load check)
+        run: python qa/full_matrix.py
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-production-report
+          path: |
+            qa_error_log.md
+            qa_report.json
           if-no-files-found: warn

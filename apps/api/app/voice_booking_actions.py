@@ -32,8 +32,30 @@ def _normalize_confirmation(text: str) -> str:
     return " ".join(value.strip().split())
 
 
+_AFFIRM_LEAD = r"(?:yes|yeah|yep|yup|sure|okay|ok|alright|absolutely|definitely|please)"
+_AFFIRM_OBJ = r"(?:it|that|this|that appointment|this appointment|the appointment|my appointment)"
+_AFFIRM_ACTION = (
+    r"(?:go ahead(?: and (?:cancel|reschedule|change|move)(?: " + _AFFIRM_OBJ + r")?)?|do it|confirm(?: it)?|"
+    r"(?:cancel|reschedule|change|move) " + _AFFIRM_OBJ + r"|that is (?:right|correct)|thats (?:right|correct))"
+)
+# "yes cancel it", "ok go ahead", "please cancel my appointment", "yes please reschedule it" ...
+_AFFIRM_RE = re.compile(r"^(?:" + _AFFIRM_LEAD + r" )*" + _AFFIRM_ACTION + r"(?: please)?$")
+# Whole short refusals only: "no", "no keep it", "dont cancel", "do not cancel it", "never mind", "keep it", "stop".
+# A mixed answer such as "no, actually yes" is deliberately NOT a refusal.
+_NEG_OBJ = r"(?: it| that| this| my appointment| the appointment)?"
+_NEGATIVE_RE = re.compile(
+    r"^(?:(?:no|nope|nah)(?: thanks| thank you| please)?"
+    r"|(?:(?:no|nope|nah) )?(?:dont|do not)(?: cancel)?" + _NEG_OBJ +
+    r"|(?:(?:no|nope|nah) )?(?:never ?mind|keep|leave|stop)" + _NEG_OBJ + r")$"
+)
+
+
 def _affirmative(text: str) -> bool:
     value = _normalize_confirmation(text)
+    if _negative(text):
+        return False
+    if _AFFIRM_RE.match(value):
+        return True
     return value in {
         "yes", "yes please", "yeah", "yep", "sure", "confirm", "confirmed",
         "okay", "ok", "please do", "go ahead", "haan", "han", "ji", "theek hai",
@@ -46,6 +68,8 @@ def _affirmative(text: str) -> bool:
 
 def _negative(text: str) -> bool:
     value = _normalize_confirmation(text)
+    if _NEGATIVE_RE.match(value):
+        return True
     return value in {
         "no", "no thanks", "don't", "do not", "cancel that", "leave it",
         "not now", "no please", "nahi", "nahin", "नहीं", "मत करो",
