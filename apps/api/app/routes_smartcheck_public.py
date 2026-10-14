@@ -86,7 +86,7 @@ def _require_lifecycle_ready(config: dict) -> None:
     if config.get("visitor_lifecycle_sync_ready") is not True:
         raise HTTPException(
             503,
-            "Visitor registration is not enabled until SmartCheck listing, approval, gate transitions, and QR verification are synchronized",
+            "Visitor registration is not enabled until SmartCheck visitor lifecycle synchronization (listing, approval, gate transitions, and QR verification) is complete",
         )
 
 
