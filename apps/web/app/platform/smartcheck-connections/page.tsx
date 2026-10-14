@@ -9,6 +9,7 @@ type Connection = {
   tenant_id: string;
   script_url: string;
   drive_folder_url: string;
+  legacy_tenant_code: string;
   script_status: string;
   drive_status: string;
   authenticated_sync_ready: boolean;
@@ -23,6 +24,7 @@ export default function SmartCheckConnectionsPage() {
   const [tenantId, setTenantId] = useState("");
   const [scriptUrl, setScriptUrl] = useState("");
   const [driveUrl, setDriveUrl] = useState("");
+  const [legacyTenantCode, setLegacyTenantCode] = useState("");
   const [status, setStatus] = useState<Connection | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -40,7 +42,7 @@ export default function SmartCheckConnectionsPage() {
       });
       if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || "Could not load connection settings");
       const data = await response.json() as Connection;
-      setStatus(data); setScriptUrl(data.script_url || ""); setDriveUrl(data.drive_folder_url || "");
+      setStatus(data); setScriptUrl(data.script_url || ""); setDriveUrl(data.drive_folder_url || ""); setLegacyTenantCode(data.legacy_tenant_code || "");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not load connection settings"); }
   }, []);
 
@@ -67,11 +69,12 @@ export default function SmartCheckConnectionsPage() {
       const response = await fetch(api() + "/api/v1/platform/tenants/" + encodeURIComponent(tenantId) + "/smartcheck-connection", {
         method: "POST",
         headers: { Authorization: "Bearer " + token(), "Content-Type": "application/json" },
-        body: JSON.stringify({ script_url: scriptUrl.trim(), drive_folder_url: driveUrl.trim() || null }),
+        body: JSON.stringify({ script_url: scriptUrl.trim(), drive_folder_url: driveUrl.trim() || null, legacy_tenant_code: legacyTenantCode.trim() || null }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Could not save connection");
-      setStatus({ tenant_id: tenantId, script_url: scriptUrl.trim(), drive_folder_url: driveUrl.trim(), ...data });
+      setStatus({ tenant_id: tenantId, script_url: scriptUrl.trim(), drive_folder_url: driveUrl.trim(), legacy_tenant_code: legacyTenantCode.trim(), ...data });
+      setLegacyTenantCode(data.legacy_tenant_code || legacyTenantCode.trim());
       setMessage("Settings saved. Review the statuses below; full sync is not yet enabled.");
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save connection"); }
     finally { setSaving(false); }
@@ -112,6 +115,10 @@ export default function SmartCheckConnectionsPage() {
       <p style={{ margin: "0 0 14px", color: "#69778d", fontSize: 13 }}>Save the folder link for reference. A sharing link alone does not authorize the platform to read or write Drive files.</p>
       <label style={{ display: "block", fontSize: 13, fontWeight: 600 }}>Drive folder URL
         <input value={driveUrl} onChange={(e) => setDriveUrl(e.target.value)} placeholder="https://drive.google.com/drive/folders/…" style={inputStyle} />
+      </label>
+      <label style={{ display: "block", marginTop: 14, fontSize: 13, fontWeight: 600 }}>Existing SmartCheck tenant code (optional)
+        <input value={legacyTenantCode} onChange={(e) => setLegacyTenantCode(e.target.value)} placeholder="For example, TNT-101" maxLength={100} style={inputStyle} />
+        <span style={{ display: "block", marginTop: 5, fontSize: 12, color: "#69778d", fontWeight: 400 }}>Maps this AI Growth OS tenant to its existing SmartCheck row. Each legacy code can map to only one tenant. Saving the mapping does not enable sync by itself.</span>
       </label>
       {status && <div style={{ marginTop: 14, display: "flex", gap: 10, alignItems: "center" }}><strong style={{ fontSize: 13 }}>Drive status</strong>{badge(status.drive_status)}</div>}
     </section>
