@@ -665,6 +665,7 @@ async def platform_email_inbox(
             messages = await asyncio.to_thread(fetch_new_messages_sync, cfg, 50)
             from email.utils import parseaddr
             from .models_email import PlatformContactPreference
+            newly_received = []
             for msg in messages:
                 mid = (msg.get("message_id") or "").strip()
                 if not mid:
@@ -691,14 +692,44 @@ async def platform_email_inbox(
                         db.add(pref)
                     pref.email_opt_out = True
                     pref.updated_at = datetime.utcnow()
-                db.add(PlatformEmailMessage(
+                inbox_row = PlatformEmailMessage(
                     id=str(uuid.uuid4()), message_id=mid,
                     from_address=sender_raw,
                     to_address=msg.get("to") or settings.platform_email_address,
                     subject=subject, body=message_body,
                     received_at=received_at, status=status,
-                ))
+                )
+                db.add(inbox_row)
+                newly_received.append((inbox_row, sender_email, unsubscribe))
             db.commit()
+            # Auto-reply only for newly fetched messages, only when a matching active
+            # template has explicitly enabled auto_reply, and never to opted-out contacts.
+            from .routes_platform_templates import choose_template
+            from .models_email import PlatformContactPreference
+            from .email_integration import send_reply_smtp
+            for inbox_row, sender_email, unsubscribe in newly_received:
+                if unsubscribe or not sender_email:
+                    continue
+                pref = db.scalar(select(PlatformContactPreference).where(
+                    PlatformContactPreference.email_norm == sender_email
+                ))
+                if pref and pref.email_opt_out:
+                    continue
+                template = choose_template(db, "email", inbox_row.body, inbox_row.subject)
+                if not template:
+                    continue
+                try:
+                    await send_reply_smtp(
+                        cfg, sender_email, template.subject.strip() or ("Re: " + inbox_row.subject if inbox_row.subject else "AI Growth OS"),
+                        template.body.strip(), in_reply_to=inbox_row.message_id, references=inbox_row.message_id,
+                    )
+                    inbox_row.reply_text = template.body.strip()
+                    inbox_row.replied_at = datetime.utcnow()
+                    inbox_row.status = "auto_replied"
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception("Platform email template auto-reply failed message=%s", inbox_row.id)
         except Exception as exc:
             db.rollback()
             logger.warning("platform email inbox poll failed: %s", exc)
@@ -880,6 +911,25 @@ async def platform_openwa_webhook(request: Request, db: Session = Depends(_db)):
             await send_platform_whatsapp(phone, reply)
         except Exception:
             logger.exception("Platform WhatsApp consent acknowledgement failed")
+    elif not (pref and pref.whatsapp_opt_out):
+        # One template response per newly persisted inbound provider message.
+        from .routes_platform_templates import choose_template
+        template = choose_template(db, "whatsapp", body)
+        if template:
+            try:
+                from .notifications import send_platform_whatsapp
+                result = await send_platform_whatsapp(phone, template.body.strip())
+                if result.get("sent"):
+                    outbound = PlatformWhatsAppMessage(
+                        id=str(uuid.uuid4()), phone=phone, contact_name=row.contact_name,
+                        body=template.body.strip(), direction="outbound", status="auto_replied",
+                    )
+                    db.add(outbound)
+                    row.status = "auto_replied"
+                    db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("Platform WhatsApp template auto-reply failed message=%s", row.id)
     return {"ok": True, "message_id": row.id}
 
 
