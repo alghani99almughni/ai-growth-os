@@ -80,6 +80,16 @@ def _script_config(db, tenant_id: str) -> dict:
     return config
 
 
+def _require_lifecycle_ready(config: dict) -> None:
+    # A public request must not enter Sheets until the same system can list and
+    # approve it, record gate transitions, and verify its QR/pass state.
+    if config.get("visitor_lifecycle_sync_ready") is not True:
+        raise HTTPException(
+            503,
+            "Visitor registration is not enabled until SmartCheck listing, approval, gate transitions, and QR verification are synchronized",
+        )
+
+
 def _submit_to_smartcheck(config: dict, secret: str, body: PublicVisitorRequest) -> dict:
     tenant_code = str(config["legacy_tenant_code"]).strip()
     payload = {
@@ -132,6 +142,7 @@ def create_public_visitor_request(tenant_slug: str, body: PublicVisitorRequest):
         if not _tenant_feature_enabled(db, tenant.id):
             raise HTTPException(403, "Security & Visitor Management is disabled for this tenant")
         config = _script_config(db, tenant.id)
+        _require_lifecycle_ready(config)
     finally:
         db.close()
     return _submit_to_smartcheck(config, os.environ["AI_GROWTH_OS_BRIDGE_SECRET"], body)
