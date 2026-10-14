@@ -3537,7 +3537,7 @@ def platform_ticket_reply(ticket_id: str, payload: TicketReplyRequest, user: Use
 class PlatformMessageRequest(BaseModel):
     subject: str = Field(min_length=2, max_length=300)
     body: str = Field(default="", max_length=8000)
-    send_email: bool = True
+    send_email: bool = False
 
 
 @app.get("/api/v1/platform/messages")
@@ -3552,7 +3552,7 @@ def platform_message_send(tenant_id: str, payload: PlatformMessageRequest, user:
     require_platform_admin(user)
     from .platform_messages import send_message
     try:
-        return send_message(db, tenant_id=tenant_id, subject=payload.subject, body=payload.body, from_admin_id=user.id, send_email=payload.send_email)
+        return send_message(db, tenant_id=tenant_id, subject=payload.subject, body=payload.body, from_admin_id=user.id, send_email=False)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
