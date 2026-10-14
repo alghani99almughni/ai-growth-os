@@ -442,7 +442,7 @@ def _smartcheck_config(db: Session, tenant_id: str) -> dict:
         TenantSetting.key == SMARTCHECK_CONFIG_KEY,
     ))
     if not row:
-        return {"enabled": False, "web_app_url": ""}
+        return {"enabled": False, "web_app_url": "", "shared_secret": ""}
     try:
         value = json.loads(row.value_json or "{}")
     except (TypeError, ValueError):
