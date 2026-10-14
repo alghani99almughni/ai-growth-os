@@ -25,7 +25,7 @@ app = FastAPI(
 )
 
 from .models_integrations import TenantIntegration,PlatformAIProvider
-from .models_email import TenantEmailAccount, EmailLog
+from .models_email import TenantEmailAccount, EmailLog, TenantWhatsAppMessage
 from .models_platform_templates import PlatformReplyTemplate
 from .models_monitoring import HealthSnapshot, SelfHealAction, MonitoringAlert, BackupRecord
 from .notifications import send_owner_credentials,send_password_reset
@@ -888,10 +888,22 @@ async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db
     tenant=db.get(Tenant,tenant_id)
     if not tenant: raise HTTPException(404,"Tenant not found")
     # The first WhatsApp interaction is an identity gate: number is captured from WhatsApp, name must be supplied by the customer.
+    provider_message_id = str(data.get("id") or data.get("messageId") or data.get("message_id") or "").strip() or None
+    from .models_email import TenantWhatsAppMessage
+    if provider_message_id and db.scalar(select(TenantWhatsAppMessage.id).where(TenantWhatsAppMessage.provider_message_id == provider_message_id)):
+        return {"ok": True, "duplicate": True}
     existing=db.scalar(select(Customer).where(Customer.tenant_id==tenant_id,Customer.phone==normalize_phone(phone)))
     push_name=((data.get("contact") or {}).get("pushName") or (data.get("contact") or {}).get("name") or "").strip()
+    inbound_row = TenantWhatsAppMessage(id=str(uuid.uuid4()), tenant_id=tenant_id,
+        provider_message_id=provider_message_id, phone=phone, contact_name=(existing.name if existing else push_name) or None,
+        body=body, direction="inbound", status="received")
+    db.add(inbound_row); db.commit()
     if not existing and not push_name:
-        await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(phone,"Welcome to "+tenant.name+"! Before I can assist you, please reply with your name.")
+        prompt = "Welcome to "+tenant.name+"! Before I can assist you, please reply with your name."
+        await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(phone,prompt)
+        db.add(TenantWhatsAppMessage(id=str(uuid.uuid4()), tenant_id=tenant_id, phone=phone,
+            contact_name=None, body=prompt, direction="outbound", status="sent"))
+        db.commit()
         return {"ok":True,"identity_required":True}
     if not existing:
         try: existing=upsert_customer(db,tenant_id,phone,push_name,True,source="whatsapp")
@@ -899,9 +911,13 @@ async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db
     elif not existing.name and push_name:
         existing.name=push_name; existing.whatsapp_opt_in=True; db.commit()
     # Existing customers may interact freely; new customers must have both mobile + name before AI/business actions.
+    inbound_row.contact_name = existing.name or push_name or None
     result=await generate_reply(db,tenant_id,body,None,"whatsapp")
     reply=result.get("reply") or "Thanks. How can I help you today?"
     await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(existing.phone,reply)
+    db.add(TenantWhatsAppMessage(id=str(uuid.uuid4()), tenant_id=tenant_id, phone=existing.phone,
+        contact_name=existing.name, body=reply, direction="outbound", status="sent"))
+    db.commit()
     return {"ok":True,"customer_id":existing.id,"reply":reply}
 
 @app.post("/api/v1/leads",status_code=201)
