@@ -275,9 +275,12 @@ export default function MessagesPage() {
             <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform WhatsApp Inbox</h2>
             <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>Receive and reply to messages sent to the platform-owned WhatsApp number.</p>
           </div>
-          <button onClick={loadWhatsAppInbox} disabled={whatsappInboxLoading} style={{ background: "#fff", border: "1px solid #d7dce5", borderRadius: 9, padding: "9px 14px", cursor: whatsappInboxLoading ? "wait" : "pointer", fontWeight: 600 }}>
-            {whatsappInboxLoading ? "Loading…" : "Refresh WhatsApp inbox"}
-          </button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <a href="/platform/templates" style={{background:"#f0efff",border:"1px solid #d9d5ff",borderRadius:9,padding:"9px 14px",color:"#4f46e5",fontSize:12,fontWeight:700,textDecoration:"none"}}>Reply templates & auto-reply</a>
+            <button onClick={loadWhatsAppInbox} disabled={whatsappInboxLoading} style={{ background: "#fff", border: "1px solid #d7dce5", borderRadius: 9, padding: "9px 14px", cursor: whatsappInboxLoading ? "wait" : "pointer", fontWeight: 600 }}>
+              {whatsappInboxLoading ? "Loading…" : "Refresh WhatsApp inbox"}
+            </button>
+          </div>
         </div>
         <p style={{ fontSize: 12, color: "#4b5563" }}>Webhook URL: <code>{whatsappInbox.webhook_url || (api() + "/api/v1/webhooks/platform/openwa")}</code></p>
         {!whatsappInbox.configured || !whatsappInbox.webhook_secret_configured ? <p style={{ color: "#8a5a00", background: "#fff8e6", padding: 10, borderRadius: 8, fontSize: 12 }}>Configure platform-owned OpenWA credentials and OPENWA_WEBHOOK_SECRET in Render, then set this webhook URL on the platform OpenWA session. Incoming messages will appear here after the provider sends webhook events.</p> : null}
@@ -304,9 +307,12 @@ export default function MessagesPage() {
             <h2 style={{ margin: 0, fontSize: 18, color: "#17213a" }}>Platform Email Inbox</h2>
             <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>Receive tenant emails and reply from the platform-owned mailbox.</p>
           </div>
-          <button onClick={loadEmailInbox} disabled={emailInboxLoading} style={{ background: "#fff", border: "1px solid #d7dce5", borderRadius: 9, padding: "9px 14px", cursor: emailInboxLoading ? "wait" : "pointer", fontWeight: 600 }}>
-            {emailInboxLoading ? "Checking inbox…" : "Refresh inbox"}
-          </button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <a href="/platform/templates" style={{background:"#f0efff",border:"1px solid #d9d5ff",borderRadius:9,padding:"9px 14px",color:"#4f46e5",fontSize:12,fontWeight:700,textDecoration:"none"}}>Reply templates & auto-reply</a>
+            <button onClick={loadEmailInbox} disabled={emailInboxLoading} style={{ background: "#fff", border: "1px solid #d7dce5", borderRadius: 9, padding: "9px 14px", cursor: emailInboxLoading ? "wait" : "pointer", fontWeight: 600 }}>
+              {emailInboxLoading ? "Checking inbox…" : "Refresh inbox"}
+            </button>
+          </div>
         </div>
         {emailInbox.from_address && <p style={{ fontSize: 12, color: "#4b5563" }}>Mailbox: {emailInbox.from_address}</p>}
         {emailInbox.poll_error && <p style={{ color: "#b6341f", fontSize: 12 }}>{emailInbox.poll_error}</p>}
