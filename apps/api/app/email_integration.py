@@ -1,8 +1,8 @@
 """Email integration: IMAP polling + SMTP sending + AI auto-reply.
 
 Provider presets:
-  gmail    -> imap.gmail.com:993,  smtp.gmail.com:587
-  outlook  -> outlook.office365.com:993, smtp.office365.com:587
+  gmail    -> imap.gmail.com:993,  smtp.gmail.com:465
+  outlook  -> outlook.office365.com:993, smtp.office365.com:465
   custom   -> caller supplies host/port for both
 
 All credentials are stored encrypted in TenantEmailAccount.config_encrypted
@@ -34,15 +34,15 @@ PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
         "imap_host": "imap.gmail.com",
         "imap_port": 993,
         "smtp_host": "smtp.gmail.com",
-        "smtp_port": 587,
-        "smtp_starttls": True,
+        "smtp_port": 465,
+        "smtp_starttls": False,
     },
     "outlook": {
         "imap_host": "outlook.office365.com",
         "imap_port": 993,
         "smtp_host": "smtp.office365.com",
-        "smtp_port": 587,
-        "smtp_starttls": True,
+        "smtp_port": 465,
+        "smtp_starttls": False,
     },
     "custom": {},
 }
