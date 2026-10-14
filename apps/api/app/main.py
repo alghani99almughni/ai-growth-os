@@ -1261,6 +1261,8 @@ def update_staff(tenant_id,staff_id,payload:StaffUpdate,user=Depends(get_current
     for key in ("department_id","skills","is_active","is_available"):
         value=getattr(payload,key)
         if value is not None: setattr(s,key,value)
+    if payload.is_active is not None and u:
+        u.is_active=payload.is_active
     if payload.service_ids is not None:
         service_ids=list(dict.fromkeys(payload.service_ids))
         if service_ids:
