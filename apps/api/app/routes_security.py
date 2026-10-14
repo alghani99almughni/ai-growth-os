@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
