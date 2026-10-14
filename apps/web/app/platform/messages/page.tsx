@@ -240,9 +240,9 @@ export default function MessagesPage() {
           </label>
           <div style={{ display: "grid", gap: 12, alignContent: "start" }}>
             <div style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Delivery channels</div>
-            {["whatsapp"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
+            {["whatsapp","email"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
               <input type="checkbox" checked={campaignChannels.includes(channel)} onChange={e => setCampaignChannels(prev => e.target.checked ? [...prev, channel] : prev.filter(x => x !== channel))} />
-              WhatsApp (selected tenant channel)
+              {channel === "whatsapp" ? "WhatsApp (selected tenant channel)" : "Email (selected tenant mailbox)"}
             </label>)}
             <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Email subject
               <input value={campaignSubject} onChange={e => setCampaignSubject(e.target.value)} style={inputStyle} />
