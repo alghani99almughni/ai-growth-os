@@ -80,3 +80,71 @@ def test_validate_legacy_tenant_code_rejects_unsafe_values(code):
 
 def test_validate_legacy_tenant_code_allows_empty_mapping():
     assert smartcheck.validate_legacy_tenant_code("  ") is None
+
+
+
+def test_lifecycle_verification_requires_active_legacy_tenant_mapping(monkeypatch):
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(value_json=json.dumps({
+        "script_url": "https://script.google.com/macros/s/example/exec",
+        "legacy_tenant_code": "TNT-MISSING",
+        "visitor_lifecycle_sync_ready": True,
+    }))
+    db = Mock()
+    db.get.return_value = SimpleNamespace(id="tenant-1")
+    db.commit = Mock()
+    monkeypatch.setattr(smartcheck, "connection_setting", lambda db, tenant_id: row)
+
+    def fake_call(config, user, action, **fields):
+        if action == "PING":
+            return {"status": "ok"}
+        if action == "VALIDATE_TENANT":
+            return {"status": "success", "valid": False}
+        if action == "LIST_VISITORS":
+            return {"status": "success", "visitors": []}
+        if action == "VERIFY_TOKEN":
+            return {"status": "success", "valid": False}
+        raise AssertionError(action)
+
+    monkeypatch.setattr(smartcheck, "call_smartcheck", fake_call)
+    user = SimpleNamespace(id="platform-user")
+
+    with pytest.raises(HTTPException) as exc:
+        smartcheck.verify_smartcheck_lifecycle("tenant-1", user=user, db=db)
+
+    assert exc.value.status_code == 409
+    assert json.loads(row.value_json)["visitor_lifecycle_sync_ready"] is False
+    assert "active tenant mapping" in json.loads(row.value_json)["lifecycle_verification_error"]
+
+
+def test_lifecycle_verification_enables_only_after_all_probes(monkeypatch):
+    from types import SimpleNamespace
+
+    row = SimpleNamespace(value_json=json.dumps({
+        "script_url": "https://script.google.com/macros/s/example/exec",
+        "legacy_tenant_code": "TNT-101",
+    }))
+    db = Mock()
+    db.get.return_value = SimpleNamespace(id="tenant-1")
+    db.commit = Mock()
+    monkeypatch.setattr(smartcheck, "connection_setting", lambda db, tenant_id: row)
+    actions = []
+
+    def fake_call(config, user, action, **fields):
+        actions.append(action)
+        return {
+            "PING": {"status": "ok"},
+            "VALIDATE_TENANT": {"status": "success", "valid": True},
+            "LIST_VISITORS": {"status": "success", "visitors": []},
+            "VERIFY_TOKEN": {"status": "success", "valid": False},
+        }[action]
+
+    monkeypatch.setattr(smartcheck, "call_smartcheck", fake_call)
+    user = SimpleNamespace(id="platform-user")
+    result = smartcheck.verify_smartcheck_lifecycle("tenant-1", user=user, db=db)
+
+    assert result["visitor_lifecycle_sync_ready"] is True
+    assert result["checks"]["tenant_mapping"] == "passed"
+    assert actions == ["PING", "VALIDATE_TENANT", "LIST_VISITORS", "VERIFY_TOKEN"]
+    assert json.loads(row.value_json)["visitor_lifecycle_sync_ready"] is True
