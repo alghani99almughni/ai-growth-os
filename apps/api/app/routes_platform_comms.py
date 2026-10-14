@@ -963,3 +963,95 @@ async def platform_whatsapp_inbox_reply(
     except Exception:
         pass
     return {"sent": True, "message_id": outbound.id, "phone": inbound.phone}
+
+
+# ===========================================================================
+# SUPER ADMIN INBOX: tenant-owned channels (never platform-owned credentials)
+# ===========================================================================
+@router.get("/api/v1/platform/tenant-comms/email/inbox")
+def tenant_email_inbox(limit: int = 100, tenant_id: str = "",
+                       user=Depends(_require_platform_admin), db: Session = Depends(_db)):
+    from .models import Tenant
+    from .models_email import EmailLog
+    q = select(EmailLog, TenantEmailAccount, Tenant).join(
+        TenantEmailAccount, TenantEmailAccount.id == EmailLog.account_id
+    ).join(Tenant, Tenant.id == EmailLog.tenant_id)
+    if tenant_id:
+        q = q.where(EmailLog.tenant_id == tenant_id)
+    rows = db.execute(q.order_by(EmailLog.created_at.desc()).limit(min(max(limit, 1), 300))).all()
+    return {"items": [{
+        "id": log.id, "tenant_id": log.tenant_id, "tenant_name": tenant.name,
+        "account_id": account.id, "account_email": account.email_address,
+        "from_address": log.from_address, "to_address": log.to_address,
+        "subject": log.subject, "body": log.inbound_body or "",
+        "reply_text": log.reply_text, "outcome": log.outcome, "error": log.error,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    } for log, account, tenant in rows]}
+
+
+@router.post("/api/v1/platform/tenant-comms/email/inbox/{message_id}/reply")
+async def tenant_email_inbox_reply(message_id: str, payload: PlatformEmailReplyRequest,
+                                   user=Depends(_require_platform_admin), db: Session = Depends(_db)):
+    from .email_integration import decrypt_email_config, send_reply_smtp
+    row = db.get(EmailLog, message_id)
+    if not row:
+        raise HTTPException(404, "Tenant email message not found")
+    account = db.scalar(select(TenantEmailAccount).where(
+        TenantEmailAccount.id == row.account_id, TenantEmailAccount.tenant_id == row.tenant_id
+    ))
+    if not account or not account.is_active:
+        raise HTTPException(409, "Tenant email account is inactive or unavailable")
+    try:
+        cfg = decrypt_email_config(account.config_encrypted)
+        await send_reply_smtp(cfg, row.from_address, row.subject, payload.body.strip(),
+                              in_reply_to=row.message_id, references=row.references_header or row.message_id)
+    except Exception as exc:
+        logger.warning("admin tenant email reply failed log=%s: %s", message_id, exc)
+        raise HTTPException(502, "Reply failed using the tenant's configured mailbox")
+    row.reply_text = payload.body.strip()
+    row.outcome = "admin_replied"
+    row.error = None
+    db.commit()
+    return {"sent": True, "to": row.from_address, "tenant_id": row.tenant_id}
+
+
+@router.get("/api/v1/platform/tenant-comms/whatsapp/inbox")
+def tenant_whatsapp_inbox(limit: int = 100, tenant_id: str = "",
+                          user=Depends(_require_platform_admin), db: Session = Depends(_db)):
+    from .models import Tenant
+    from .models_email import TenantWhatsAppMessage
+    q = select(TenantWhatsAppMessage, Tenant).join(Tenant, Tenant.id == TenantWhatsAppMessage.tenant_id)
+    if tenant_id:
+        q = q.where(TenantWhatsAppMessage.tenant_id == tenant_id)
+    rows = db.execute(q.order_by(TenantWhatsAppMessage.created_at.desc()).limit(min(max(limit, 1), 300))).all()
+    return {"items": [{
+        "id": msg.id, "tenant_id": msg.tenant_id, "tenant_name": tenant.name,
+        "phone": msg.phone, "contact_name": msg.contact_name, "body": msg.body,
+        "direction": msg.direction, "status": msg.status,
+        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+    } for msg, tenant in rows]}
+
+
+@router.post("/api/v1/platform/tenant-comms/whatsapp/inbox/{message_id}/reply")
+async def tenant_whatsapp_inbox_reply(message_id: str, payload: PlatformWhatsAppReplyRequest,
+                                      user=Depends(_require_platform_admin), db: Session = Depends(_db)):
+    import uuid
+    from .models_email import TenantWhatsAppMessage
+    from .whatsapp_channels import send_text_with_failover
+    inbound = db.get(TenantWhatsAppMessage, message_id)
+    if not inbound or inbound.direction != "inbound":
+        raise HTTPException(404, "Tenant inbound WhatsApp message not found")
+    try:
+        result = await send_text_with_failover(db, inbound.tenant_id, settings, inbound.phone, payload.body.strip())
+    except Exception as exc:
+        logger.warning("admin tenant WhatsApp reply failed message=%s: %s", message_id, exc)
+        raise HTTPException(502, "Reply failed using the tenant's configured WhatsApp channel")
+    outbound = TenantWhatsAppMessage(
+        id=str(uuid.uuid4()), tenant_id=inbound.tenant_id, phone=inbound.phone,
+        contact_name=inbound.contact_name, body=payload.body.strip(),
+        direction="outbound", status="sent",
+    )
+    db.add(outbound)
+    inbound.status = "replied"
+    db.commit()
+    return {"sent": True, "phone": inbound.phone, "tenant_id": inbound.tenant_id, "provider": result.get("provider")}
