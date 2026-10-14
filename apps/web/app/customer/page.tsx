@@ -91,6 +91,15 @@ export default function Customer(){
 
  const items:Item[]=business?.menu?.items||[];
  const cats=business?.menu?.categories||[];
+ const services:any[] = business?.services || [];
+ const feature:any = business?.features || {};
+ const categoryLabel = business?.industry_category || business?.industry || "Local business";
+ const businessTypeLabel = business?.business_type || "";
+ const profileText = (String(categoryLabel)+" "+String(businessTypeLabel)+" "+String(business?.industry||"")).toLowerCase();
+ const isHospitality = ["hospitality","restaurant","cafe","café","hotel","eatery","eateries","bakery","food service","fine dining"].some(x=>profileText.includes(x));
+ const showTableTools = isHospitality && !!feature.call_waiter;
+ const showMenu = isHospitality && !!feature.digital_menu;
+ const showGames = !!feature.games && (isHospitality || profileText.includes("fitness") || profileText.includes("gym"));
  const cartItems=useMemo(()=>items.filter(x=>cart[x.id]).map(x=>({...x,quantity:cart[x.id]})),[items,cart]);
  const total=cartItems.reduce((s,x)=>s+x.price*x.quantity,0);
 
@@ -100,57 +109,54 @@ export default function Customer(){
  async function placeOrder(){if(!business||!cartItems.length)return;setStatus("Placing order…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:cartItems.map(x=>({menu_item_id:x.id,quantity:x.quantity})),context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(!r.ok){setStatus(d.detail||"Unable to place order");return}setOrder(d);setCart({});setActive("home");setStatus("Order placed successfully");}
 
  async function startTeamCall(){
-  if(!business)return;
-  setCallInstance(x=>x+1);
-  setCallOpen(true);
- }
-
- async function callWaiter(type="waiter"){if(!business)return;const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/service-requests",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({request_type:type,context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(r.ok){setWaiter(d);setStatus("Request sent to the team");}else setStatus(d.detail||"Unable to send request")}
-
- async function submitFeedback(){if(!business||!feedback)return;const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/feedback",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({order_id:order?.id,customer_id:customerId||undefined,rating:feedback,comment})});const d=await r.json();if(r.ok){setFeedbackSent(true);if(d.google_review_url)window.open(d.google_review_url,"_blank","noopener,noreferrer");}}
-
- async function payBill(){if(!business||!order?.bill)return;setStatus("Preparing secure payment…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/bills/"+order.bill.id+"/payment-order",{method:"POST"});const d=await r.json();if(!r.ok){setStatus(d.detail||"Payment unavailable");return}const s=document.createElement("script");s.src="https://checkout.razorpay.com/v1/checkout.js";s.onload=()=>{const rz=new (window as any).Razorpay({key:d.key_id,amount:d.amount,currency:d.currency,name:business.name,order_id:d.razorpay_order_id,handler:async(res:any)=>{const v=await fetch(api()+"/api/v1/public/business/"+business.slug+"/bills/"+order.bill.id+"/verify-payment",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({razorpay_order_id:res.razorpay_order_id,razorpay_payment_id:res.razorpay_payment_id,razorpay_signature:res.razorpay_signature})});const vd=await v.json();setStatus(v.ok?"Payment successful":"Payment verification failed");if(v.ok)setOrder({...order,bill:{...order.bill,status:"paid"}})}});rz.open()};document.body.appendChild(s)}
-
- async function saveGame(){if(!business||!game)return;const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/games/"+game+"/score?score="+Math.max(0,Math.floor(gameScore))+(customerId?"&customer_id="+encodeURIComponent(customerId):" "),{method:"POST"});if(r.ok){const d=await r.json();setGamePoints(d.reward_points||0)}}
-
- function playGame(name:string){setGame(name);setGameScore(0);setGamePoints(0);setGameData({bricks:Array(12).fill(true),target:Math.floor(Math.random()*9),moves:0,board:[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]})}
-
- function gameAction(action:string){
-  if(!game)return;
-  if(game==="tap"){setGameData((d:any)=>({...d,target:Math.floor(Math.random()*9)}));setGameScore(s=>s+1);return}
-  if(game==="dino"||game==="flappy"){setGameScore(s=>s+1);setGameData((d:any)=>({...d,moves:d.moves+1}));return}
-  if(game==="brick"){setGameData((d:any)=>{const b=[...d.bricks];const i=Number(action);if(b[i]){b[i]=false;setGameScore(s=>s+10)}return {...d,bricks:b}});return}
-  if(game==="snake"){setGameScore(s=>s+1);return}
-  if(game==="2048"){setGameData((d:any)=>({...d,moves:d.moves+1}));setGameScore(s=>s+2);return}
- }
-
- if(!business)return <main className="shell"><section className="hero"><p>AI GROWTH OS • CUSTOMER PWA</p><h1>{slug||"Your business experience"}</h1><p>{status||"Loading your experience…"}</p></section></main>;
+  if(!business)return <main className="shell" style={{minHeight:"100vh",padding:"clamp(16px,4vw,44px)",background:"linear-gradient(145deg,#eef4ff 0%,#f8f5ff 48%,#effcf7 100%)"}}><section className="hero" style={{background:"linear-gradient(120deg,#172554,#4338ca 60%,#0f766e)",minHeight:280,display:"flex",flexDirection:"column",justifyContent:"center"}}><p style={{letterSpacing:".16em",fontWeight:800,fontSize:11}}>YOUR NEXT GREAT EXPERIENCE</p><h1>{slug||"Welcome"}</h1><p>{status||"Loading your business website…"}</p><div style={{display:"flex",gap:8,marginTop:24,alignItems:"center"}}><span style={{background:"rgba(255,255,255,.16)",padding:"8px 12px",borderRadius:999,fontSize:12}}>Personalised for you</span><span style={{fontSize:12,opacity:.8}}>One place. Everything you need.</span></div></section><div style={{padding:16,color:"#65718b",fontSize:12}}>Loading your business experience securely…</div></main>;
 
  const delivered=order&&["served","completed"].includes(order.status);
- return <main className="shell">
-  <section className="hero">
-   <p>{business.industry?.toUpperCase()} • CUSTOMER EXPERIENCE</p>
-   <h1>{business.name}</h1>
-   <p>{business.description||"Welcome. Everything you need for your visit is here."}</p>
-   {order&&<div className="card"><strong>🍽️ Order #{order.id.slice(0,8)}</strong><div className="statusline"><span className={order.status==="completed"?"done":"live"}>{order.status.replace("_"," ").toUpperCase()}</span></div><small>{order.status==="pending"?"Order received":order.status==="confirmed"?"Kitchen confirmed":order.status==="preparing"?"Your food is being prepared":order.status==="ready"?"Your order is ready":order.status==="served"?"Delivered to your table":"Order completed"}</small></div>}
+ return <main className="shell" style={{maxWidth:1240,padding:"clamp(14px,3vw,34px)",background:"linear-gradient(180deg,#f1f5ff 0%,#fafbff 360px,#f7f9fc 100%)",minHeight:"100vh"}}>
+  <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:14,marginBottom:18,flexWrap:"wrap"}}>
+   <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:42,height:42,borderRadius:14,display:"grid",placeItems:"center",color:"#fff",fontSize:20,fontWeight:800,background:"linear-gradient(135deg,#6366f1,#0d9488)",boxShadow:"0 8px 24px #6366f133"}}>{String(business.name||"B").trim().charAt(0).toUpperCase()}</div><div><div style={{fontWeight:800,fontSize:15,color:"#18213b"}}>{business.name}</div><div style={{fontSize:11,color:"#74809b"}}>{categoryLabel}{businessTypeLabel?" · "+businessTypeLabel:""}</div></div></div>
+   <div style={{display:"flex",gap:7,flexWrap:"wrap"}}><button className="btn-ghost" onClick={()=>setActive("home")}>Home</button>{services.length>0&&<button className="btn-ghost" onClick={()=>setActive("services")}>Services</button>}{showMenu&&<button className="btn-ghost" onClick={()=>setActive("menu")}>Menu</button>}{feature.feedback&&<button className="btn-ghost" onClick={()=>setActive("feedback")}>Reviews</button>}</div>
+  </header>
+  <section className="hero" style={{background:"radial-gradient(circle at 84% 18%,rgba(255,255,255,.22),transparent 26%),linear-gradient(115deg,#172554 0%,#4338ca 50%,#0f766e 100%)",padding:"clamp(28px,5vw,58px)",minHeight:300,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+   <div style={{fontSize:11,fontWeight:800,letterSpacing:".16em",textTransform:"uppercase",opacity:.85}}>{categoryLabel}{businessTypeLabel?" / "+businessTypeLabel:""} · CUSTOMER EXPERIENCE</div>
+   <h1 style={{maxWidth:850,marginTop:18}}>{business.name}</h1>
+   <p style={{fontSize:16,maxWidth:680}}>{business.description||"Professional service, personal attention. Discover what we offer and connect with our team when you are ready."}</p>
+   <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:24}}>
+    {feature.ai_voice&&<button style={{background:"#fff",color:"#3730a3",borderRadius:999,padding:"13px 19px",boxShadow:"0 8px 22px #10104422"}} onClick={startTeamCall}>☎ Talk to our team</button>}
+    {feature.bookings&&<button style={{background:"rgba(255,255,255,.14)",color:"#fff",border:"1px solid rgba(255,255,255,.4)",borderRadius:999,padding:"13px 19px"}} onClick={startTeamCall}>▦ Book a consultation</button>}
+    {services.length>0&&<button style={{background:"rgba(255,255,255,.14)",color:"#fff",border:"1px solid rgba(255,255,255,.4)",borderRadius:999,padding:"13px 19px"}} onClick={()=>setActive("services")}>Explore services ↓</button>}
+    {feature.ai_chat&&<button style={{background:"rgba(255,255,255,.14)",color:"#fff",border:"1px solid rgba(255,255,255,.4)",borderRadius:999,padding:"13px 19px"}} onClick={()=>location.href="/customer/assistant?business="+encodeURIComponent(business.slug)}>✦ Ask AI</button>}
+   </div>
+   {order&&<div style={{marginTop:22,background:"rgba(255,255,255,.13)",border:"1px solid rgba(255,255,255,.22)",borderRadius:14,padding:14,maxWidth:420,color:"#fff"}}><strong>Order #{order.id.slice(0,8)}</strong><div style={{marginTop:6,fontSize:12}}>{order.status.replace("_"," ").toUpperCase()} · {order.status==="pending"?"Order received":order.status==="confirmed"?"Confirmed":order.status==="preparing"?"In preparation":order.status==="ready"?"Ready":order.status==="served"?"Served":"Completed"}</div></div>}
   </section>
-
-  <nav className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))"}}>
-   <button className="card" onClick={()=>setActive("home")}>🏠 Home</button>
-   {business.features?.digital_menu&&<button className="card" onClick={()=>setActive("menu")}>📖 Menu</button>}
-   {business.features?.games&&<button className="card" onClick={()=>setActive("games")}>🎮 Play</button>}
-   {business.features?.ai_voice&&<button className="card" onClick={startTeamCall}>📞 Call Team</button>}
-   {business.features?.call_waiter&&<button className="card" onClick={()=>callWaiter("waiter")}>🔔 Call Waiter</button>}
-   {order&&<button className="card" onClick={()=>setActive("bill")}>💳 Bill</button>}
-   {delivered&&<button className="card" onClick={()=>setActive("feedback")}>⭐ Feedback</button>}
+  <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:12,margin:"18px 0 26px"}}>
+   {feature.ai_voice&&<button onClick={startTeamCall} style={{textAlign:"left",background:"#fff",color:"#1e293b",border:"1px solid #e1e7f3",borderRadius:18,padding:18,boxShadow:"0 8px 24px #1e293b08"}}><span style={{fontSize:24}}>☎️</span><div style={{fontWeight:800,marginTop:10}}>Talk to our team</div><div style={{fontSize:12,color:"#73809a",fontWeight:500,marginTop:4}}>Get help from our team</div></button>}
+   {feature.bookings&&<button onClick={startTeamCall} style={{textAlign:"left",background:"linear-gradient(135deg,#f0fdfa,#ecfeff)",color:"#134e4a",border:"1px solid #bcebe5",borderRadius:18,padding:18}}><span style={{fontSize:24}}>🗓️</span><div style={{fontWeight:800,marginTop:10}}>Appointments</div><div style={{fontSize:12,opacity:.8,fontWeight:500,marginTop:4}}>Discuss a time that works for you</div></button>}
+   {services.length>0&&<button onClick={()=>setActive("services")} style={{textAlign:"left",background:"linear-gradient(135deg,#eef2ff,#f5f3ff)",color:"#3730a3",border:"1px solid #dcd7ff",borderRadius:18,padding:18}}><span style={{fontSize:24}}>✦</span><div style={{fontWeight:800,marginTop:10}}>Services</div><div style={{fontSize:12,opacity:.8,fontWeight:500,marginTop:4}}>{services.length} services available</div></button>}
+   {feature.online_payment&&<div style={{background:"linear-gradient(135deg,#fff7ed,#fffbeb)",color:"#92400e",border:"1px solid #fde5bd",borderRadius:18,padding:18}}><span style={{fontSize:24}}>⌁</span><div style={{fontWeight:800,marginTop:10}}>Secure payments</div><div style={{fontSize:12,opacity:.8,marginTop:4}}>Available when a bill or payment request is created</div></div>}
+   {feature.feedback&&<button onClick={()=>setActive("feedback")} style={{textAlign:"left",background:"linear-gradient(135deg,#fdf2f8,#fff1f2)",color:"#9d174d",border:"1px solid #fbcfe8",borderRadius:18,padding:18}}><span style={{fontSize:24}}>☆</span><div style={{fontWeight:800,marginTop:10}}>Share feedback</div><div style={{fontSize:12,opacity:.8,fontWeight:500,marginTop:4}}>Help us improve your experience</div></button>}
+  </section>
+  <div style={{display:"flex",justifyContent:"space-between",alignItems:"end",gap:12,flexWrap:"wrap",margin:"24px 0 8px"}}><div><div style={{fontSize:11,color:"#6366f1",fontWeight:800,letterSpacing:".14em"}}>YOUR EXPERIENCE</div><h2 style={{fontSize:23,margin:"7px 0",color:"#17213a"}}>{isHospitality?"Everything for your visit":"How can we help you today?"}</h2><p style={{margin:0,fontSize:13,color:"#73809a"}}>{isHospitality?"Convenient service, ordering and support in one place.":"Explore our services, ask a question or connect with our team."}</p></div></div>
+  <nav className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",marginTop:12}}>
+   <button className="card" onClick={()=>setActive("home")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>⌂ Overview</button>
+   {services.length>0&&<button className="card" onClick={()=>setActive("services")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>✦ Services</button>}
+   {showMenu&&<button className="card" onClick={()=>setActive("menu")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>📖 Menu</button>}
+   {showGames&&<button className="card" onClick={()=>setActive("games")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>🎮 Play</button>}
+   {feature.ai_voice&&<button className="card" onClick={startTeamCall} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>☎ Call</button>}
+   {feature.ai_chat&&<button className="card" onClick={()=>location.href="/customer/assistant?business="+encodeURIComponent(business.slug)} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>✦ Ask AI</button>}
+   {showTableTools&&<button className="card" onClick={()=>callWaiter("waiter")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>🔔 Call Waiter</button>}
+   {order&&<button className="card" onClick={()=>setActive("bill")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>▣ Bill</button>}
   </nav>
 
   {active==="home"&&<section className="grid">
-   <article className="card"><h2>🍽️ Your table</h2><p>{context?context:"Table context will appear here when you scan a table QR."}</p>{waiter&&<p>🔔 {waiter.status||"requested"}{waiter.assigned_staff_name?" • "+waiter.assigned_staff_name:""}</p>}{business.features?.call_waiter&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>callWaiter("waiter")}>Call waiter</button><button onClick={()=>callWaiter("water")}>💧 Water</button><button onClick={()=>callWaiter("cutlery")}>🍴 Cutlery</button><button onClick={()=>callWaiter("clear_table")}>🧹 Clear table</button></div>}</article>
-   {business.features?.games&&<article className="card"><h2>🎮 Relax & play</h2><p>All six mini games run locally in your browser.</p><button onClick={()=>setActive("games")}>Play now</button></article>}
-   {business.features?.digital_menu&&<article className="card"><h2>📖 Menu</h2><p>{items.length?items.length+" items available":"Menu is being prepared."}</p><button onClick={()=>setActive("menu")}>Browse menu</button></article>}
-   {business.features?.ai_chat&&<article className="card"><h2>🤖 AI Assistant</h2><p>Ask about the menu, order, business or anything you need.</p><button onClick={()=>location.href="/customer/assistant?business="+encodeURIComponent(business.slug)}>Ask AI</button></article>}
-  </section>}
+   {showTableTools&&<article className="card"><h2>🍽️ Your table</h2><p>{context?context:"Scan your table QR to attach this request to your table."}</p>{waiter&&<p>🔔 {waiter.status||"requested"}{waiter.assigned_staff_name?" · "+waiter.assigned_staff_name:""}</p>}<div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>callWaiter("waiter")}>Call waiter</button><button onClick={()=>callWaiter("water")}>💧 Water</button><button onClick={()=>callWaiter("cutlery")}>🍴 Cutlery</button><button onClick={()=>callWaiter("clear_table")}>🧹 Clear table</button></div></article>}
+   {showGames&&<article className="card"><h2>🎮 Relax & play</h2><p>Take a short break with our mini games.</p><button onClick={()=>setActive("games")}>Play now</button></article>}
+   {showMenu&&<article className="card"><h2>📖 Menu & ordering</h2><p>{items.length?items.length+" items available":"Menu is being prepared."}</p><button onClick={()=>setActive("menu")}>Browse menu</button></article>}
+   {services.length>0&&<article className="card" style={{background:"linear-gradient(135deg,#fff,#f0fdfa)",borderColor:"#d2eee9"}}><h2>✦ Our services</h2><p>Find the right service for your needs.</p><button onClick={()=>setActive("services")} style={{background:"linear-gradient(135deg,#4f46e5,#0f766e)"}}>Explore services</button></article>}
+   {feature.ai_chat&&<article className="card"><h2>✦ AI assistant</h2><p>Ask about our services, timings or next steps.</p><button onClick={()=>location.href="/customer/assistant?business="+encodeURIComponent(business.slug)} style={{background:"linear-gradient(135deg,#4f46e5,#0f766e)"}}>Ask AI</button></article>}
+   {feature.bookings&&<article className="card"><h2>🗓️ Need an appointment?</h2><p>Speak with our team to discuss availability and booking.</p><button onClick={startTeamCall} style={{background:"linear-gradient(135deg,#4f46e5,#0f766e)"}}>Discuss appointment</button></article>}
+  </section>
+  {active==="services"&&<section className="card" style={{padding:"clamp(18px,3vw,30px)"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}><div><div style={{fontSize:11,color:"#6366f1",fontWeight:800,letterSpacing:".14em"}}>WHAT WE DO</div><h2 style={{fontSize:24,margin:"6px 0"}}>Services from {business.name}</h2></div><button className="btn-ghost" onClick={()=>setActive("home")}>Back</button></div><div className="grid">{services.map((s:any)=><article key={s.id} className="card" style={{background:"linear-gradient(145deg,#fff,#f4f7ff)",borderColor:"#e0e7ff"}}><div style={{width:42,height:42,display:"grid",placeItems:"center",borderRadius:13,background:"#e0e7ff",color:"#4338ca",fontSize:21}}>✦</div><h3 style={{marginTop:14,fontSize:16}}>{s.name}</h3><p>{s.description||"Personalised service from our team."}</p>{s.duration_minutes&&<p style={{fontSize:12,color:"#6b7280"}}>Duration · {s.duration_minutes} minutes</p>}{s.price!==null&&s.price!==undefined&&<p style={{fontWeight:800,color:"#0f766e"}}>{s.currency||"INR"} {s.price}</p>}<button style={{marginTop:8,background:"linear-gradient(135deg,#4f46e5,#0f766e)"}} onClick={startTeamCall}>{feature.bookings?"Ask about booking":"Ask about this service"}</button></article>)}</div></section>}
 
   {active==="menu"&&<section className="card"><div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center"}}><h2>📖 Digital Menu</h2><button onClick={()=>setActive("home")}>Back</button></div>{cats.map((cat:any)=><div key={cat.id}><h3>{cat.name}</h3><div className="grid">{items.filter(x=>x.category_id===cat.id).map(x=><article className="card" key={x.id}><h3>{x.name}</h3><p>{x.description}</p><strong>₹{x.price}</strong><div><button onClick={()=>remove(x.id)}>-</button><span style={{padding:"0 12px"}}>{cart[x.id]||0}</span><button onClick={()=>add(x.id)}>+</button></div></article>)}</div></div>)}{items.filter(x=>!x.category_id).map(x=><article className="card" key={x.id}><h3>{x.name}</h3><p>{x.description}</p><strong>₹{x.price}</strong><button onClick={()=>add(x.id)}>Add</button></article>)}{cartItems.length>0&&<div className="card"><strong>Cart: ₹{total}</strong><button onClick={placeOrder}>Place order</button></div>}</section>}
 
