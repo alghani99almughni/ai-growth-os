@@ -17,6 +17,7 @@ export default function PlatformCustomerMarketingPage() {
   const [status, setStatus] = useState("");
   const [result, setResult] = useState<any>(null);
   const [savedContacts, setSavedContacts] = useState<ExternalContact[]>([]);
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [savingContacts, setSavingContacts] = useState(false);
 
   useEffect(() => { void loadSavedContacts(); }, []);
@@ -35,6 +36,7 @@ export default function PlatformCustomerMarketingPage() {
       if (!response.ok) return;
       const data = await response.json();
       setSavedContacts(data.items || []);
+      setSelectedContactIds(old => old.filter(id => (data.items || []).some((contact: ExternalContact) => contact.id === id && contact.status === "active")));
     } catch { /* campaign sending remains available if contact-book loading fails */ }
   }
 
@@ -107,8 +109,9 @@ export default function PlatformCustomerMarketingPage() {
   }
 
   async function sendCampaign() {
-    const recipients = parseContacts(contactsCsv);
-    if (!recipients.length) { setStatus("Import or paste your own customer contacts first."); return; }
+    const selectedSaved = savedContacts.filter(contact => selectedContactIds.includes(contact.id) && contact.status === "active");
+    const recipients = selectedSaved.length ? selectedSaved.map(contact => ({ name: contact.name, phone: contact.phone || "", email: contact.email || "" })) : parseContacts(contactsCsv);
+    if (!recipients.length) { setStatus("Select saved external contacts or paste/import external contact rows first."); return; }
     if (recipients.some(r => !r.phone && !r.email)) { setStatus("Every row needs a phone number and/or email: name,phone,email."); return; }
     if (!channels.length) { setStatus("Select WhatsApp and/or email."); return; }
     if (!body.trim()) { setStatus("Enter your campaign message."); return; }
@@ -170,8 +173,9 @@ export default function PlatformCustomerMarketingPage() {
 
     <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 18 }}>
       <h2 style={{ margin: "0 0 12px", fontSize: 17 }}>Saved platform contacts ({savedContacts.length})</h2>
+      <p style={{ margin: "0 0 12px", color: "#667085", fontSize: 12 }}>Select saved contacts below to target them directly. Selected saved contacts take priority over pasted rows.</p>
       <p style={{ margin: "0 0 12px", color: "#667085", fontSize: 12 }}>External contact book only. Saving a contact does not send a message. Campaign sends still require the explicit confirmation below and sender policy compliance.</p>
-      {savedContacts.length === 0 ? <p style={{ color: "#667085", fontSize: 13 }}>No saved external contacts yet.</p> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr>{["Contact", "Phone / email", "WhatsApp opt-in", "Email opt-in", "Status", ""].map(label => <th key={label} style={{ textAlign: "left", padding: 9, background: "#f7f9fc", borderBottom: "1px solid #e8ecf3" }}>{label}</th>)}</tr></thead><tbody>{savedContacts.map(contact => <tr key={contact.id}><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.name}<div style={{ color: "#667085" }}>{contact.tags}</div></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.phone || "—"}<div>{contact.email || "—"}</div></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.whatsapp_opt_in ? "Yes" : "No"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.email_opt_in ? "Yes" : "No"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.status}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}><button onClick={() => archiveContact(contact.id)} style={{ ...inputStyle, width: "auto", marginTop: 0, color: "#b42318", cursor: "pointer" }}>Archive</button></td></tr>)}</tbody></table></div>}
+      {savedContacts.length === 0 ? <p style={{ color: "#667085", fontSize: 13 }}>No saved external contacts yet.</p> : <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr>{["Select", "Contact", "Phone / email", "WhatsApp opt-in", "Email opt-in", "Status", ""].map(label => <th key={label} style={{ textAlign: "left", padding: 9, background: "#f7f9fc", borderBottom: "1px solid #e8ecf3" }}>{label}</th>)}</tr></thead><tbody>{savedContacts.map(contact => <tr key={contact.id}><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}><input type="checkbox" aria-label={"Select " + contact.name} disabled={contact.status !== "active"} checked={selectedContactIds.includes(contact.id)} onChange={e => setSelectedContactIds(old => e.target.checked ? [...old, contact.id] : old.filter(id => id !== contact.id))} /></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.name}<div style={{ color: "#667085" }}>{contact.tags}</div></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.phone || "—"}<div>{contact.email || "—"}</div></td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.whatsapp_opt_in ? "Yes" : "No"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.email_opt_in ? "Yes" : "No"}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}>{contact.status}</td><td style={{ padding: 9, borderBottom: "1px solid #edf0f5" }}><button onClick={() => archiveContact(contact.id)} style={{ ...inputStyle, width: "auto", marginTop: 0, color: "#b42318", cursor: "pointer" }}>Archive</button></td></tr>)}</tbody></table></div>}
     </section>
 
     <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 18 }}>
