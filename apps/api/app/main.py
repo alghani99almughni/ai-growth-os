@@ -26,6 +26,7 @@ app = FastAPI(
 
 from .models_integrations import TenantIntegration,PlatformAIProvider
 from .models_email import TenantEmailAccount, EmailLog
+from .models_platform_templates import PlatformReplyTemplate
 from .models_monitoring import HealthSnapshot, SelfHealAction, MonitoringAlert, BackupRecord
 from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
@@ -75,6 +76,7 @@ from .voice_escalate import router as voice_escalate_router
 from .routes_onboarding import router as onboarding_router
 from .industry_catalog import router as industry_catalog_router
 from .routes_platform_comms import router as platform_comms_router
+from .routes_platform_templates import router as platform_templates_router
 from .routes_campaign_media import router as campaign_media_router
 from .voice_runtime import VoiceTurnController
 from .agent_training import AGENT_TRAINING_CONTEXT
@@ -109,6 +111,7 @@ app.include_router(voice_escalate_router)
 app.include_router(onboarding_router)
 app.include_router(industry_catalog_router)
 app.include_router(platform_comms_router)
+app.include_router(platform_templates_router)
 app.include_router(campaign_media_router)
 app.add_middleware(
     CORSMiddleware,
