@@ -23,6 +23,9 @@ export default function TenantsPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [securityEnabled, setSecurityEnabled] = useState<Set<string>>(new Set());
+  const [securityBusy, setSecurityBusy] = useState<Record<string, boolean>>({});
+  const [securityMessage, setSecurityMessage] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("ago_access_token") || "";
@@ -41,6 +44,47 @@ export default function TenantsPage() {
       .then((x) => { setItems(x.items || []); setLoading(false); })
       .catch((e) => { if (e.message !== "auth") setError(e.message || "Failed to load"); setLoading(false); });
   }, [search, statusFilter]);
+
+  useEffect(() => {
+    const token = localStorage.getItem("ago_access_token") || "";
+    if (!token) return;
+    fetch(api() + "/api/v1/platform/security-visitor-management", {
+      headers: { Authorization: "Bearer " + token },
+      cache: "no-store",
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("Could not load tenant add-on settings");
+        return r.json();
+      })
+      .then((x) => setSecurityEnabled(new Set<string>(x.enabled_tenant_ids || [])))
+      .catch(() => setSecurityMessage("Could not load visitor add-on status. Refresh to retry."));
+  }, []);
+
+  async function toggleSecurity(tenantId: string, enabled: boolean) {
+    const token = localStorage.getItem("ago_access_token") || "";
+    setSecurityBusy((v) => ({ ...v, [tenantId]: true }));
+    setSecurityMessage("");
+    try {
+      const r = await fetch(api() + "/api/v1/platform/tenants/" + encodeURIComponent(tenantId) + "/security-visitor-management", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ enabled }),
+      });
+      const x = await r.json();
+      if (!r.ok) throw new Error(x?.detail || "Could not update visitor add-on");
+      setSecurityEnabled((current) => {
+        const next = new Set(current);
+        if (x.security_visitor_management) next.add(tenantId);
+        else next.delete(tenantId);
+        return next;
+      });
+      setSecurityMessage((x.security_visitor_management ? "Enabled" : "Disabled") + " Security & Visitor Management for the selected tenant.");
+    } catch (e: any) {
+      setSecurityMessage(e.message || "Could not update visitor add-on");
+    } finally {
+      setSecurityBusy((v) => ({ ...v, [tenantId]: false }));
+    }
+  }
 
   function bandColor(band: string) {
     if (band === "healthy") return { bg: "#e9faf2", fg: "#1d9c68" };
@@ -74,6 +118,7 @@ export default function TenantsPage() {
       </div>
 
       {error && <p style={{ color: "#b00", marginBottom: 12 }}>{error}</p>}
+      {securityMessage && <p role="status" style={{ color: securityMessage.startsWith("Could not") ? "#b00" : "#24724b", marginBottom: 12 }}>{securityMessage}</p>}
 
       {loading ? (
         <div style={{ padding: 40, textAlign: "center", color: "#75839a" }}>Loading…</div>
@@ -91,6 +136,7 @@ export default function TenantsPage() {
                 <th style={thStyle}>Industry</th>
                 <th style={thStyle}>Status</th>
                 <th style={thStyle}>Health</th>
+                <th style={thStyle}>Security add-on</th>
                 <th style={thStyle}>Last seen</th>
                 <th style={thStyle}>Created</th>
                 <th style={thStyle}>Actions</th>
@@ -113,6 +159,27 @@ export default function TenantsPage() {
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: c.bg, color: c.fg }}>
                         {t.health_score} · {t.health_band}
                       </span>
+                    </td>
+                    <td style={tdStyle}>
+                      <button
+                        type="button"
+                        disabled={!!securityBusy[t.id]}
+                        onClick={() => toggleSecurity(t.id, !securityEnabled.has(t.id))}
+                        aria-pressed={securityEnabled.has(t.id)}
+                        style={{
+                          border: "1px solid " + (securityEnabled.has(t.id) ? "#b7e4cd" : "#d7dce5"),
+                          borderRadius: 8,
+                          padding: "7px 10px",
+                          background: securityEnabled.has(t.id) ? "#e9faf2" : "#fff",
+                          color: securityEnabled.has(t.id) ? "#176044" : "#68758a",
+                          cursor: securityBusy[t.id] ? "wait" : "pointer",
+                          fontSize: 11,
+                          fontWeight: 700,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {securityBusy[t.id] ? "Saving…" : securityEnabled.has(t.id) ? "Enabled" : "Enable"}
+                      </button>
                     </td>
                     <td style={tdStyle}>
                       {t.last_seen_at ? new Date(t.last_seen_at).toLocaleDateString() : "-"}
