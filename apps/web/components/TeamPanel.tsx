@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 const api = () => process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 type Staff = { id:string; name:string; user_id?:string|null; department_id?:string|null; department_name?:string|null; email?:string|null; role?:string|null; skills:string|null; service_ids?:string[]; is_active:boolean; is_available:boolean };
 type Department = {id:string;name:string;description?:string;skills:string;is_active:boolean};
-type Role = {id:string;name:string;permissions:string[];is_system:boolean};\ntype Service = {id:string;name:string;is_active:boolean};
+type Role = {id:string;name:string;permissions:string[];is_system:boolean};
+type Service = {id:string;name:string;is_active:boolean};
 const PERMISSIONS = [
   ["dashboard.view","Dashboard"],["customers.view","Customers"],["customers.manage","Manage customers"],
   ["bookings.view","Bookings"],["bookings.manage","Manage bookings"],["services.view","Services"],
@@ -16,7 +17,9 @@ const PERMISSIONS = [
 export default function TeamPanel({tenantId,token}:{tenantId:string;token:string}) {
   const [items,setItems]=useState<Staff[]>([]);
   const [departments,setDepartments]=useState<Department[]>([]);
-  const [roles,setRoles]=useState<Role[]>([]);\n  const [services,setServices]=useState<Service[]>([]);\n  const [selectedServiceIds,setSelectedServiceIds]=useState<string[]>([]);
+  const [roles,setRoles]=useState<Role[]>([]);
+  const [services,setServices]=useState<Service[]>([]);
+  const [selectedServiceIds,setSelectedServiceIds]=useState<string[]>([]);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState("");
   const [status,setStatus]=useState("");
