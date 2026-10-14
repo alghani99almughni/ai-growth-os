@@ -15,6 +15,7 @@ export default function MessagesPage() {
   const [form, setForm] = useState({ tenant_id: "", subject: "", body: "", send_email: true });
   const [sending, setSending] = useState(false);
   const [campaignTenants, setCampaignTenants] = useState<string[]>([]);
+  const [campaignSenderTenant, setCampaignSenderTenant] = useState("");
   const [prospectLines, setProspectLines] = useState("");
   const [campaignChannels, setCampaignChannels] = useState<string[]>(["whatsapp"]);
   const [campaignSubject, setCampaignSubject] = useState("AI Growth OS update");
@@ -163,6 +164,8 @@ export default function MessagesPage() {
   }
 
   async function sendCampaign() {
+    if (!campaignSenderTenant) { setStatus("Select a tenant whose connected WhatsApp/email channels should send this campaign."); return; }
+    if (mediaUrl) { setStatus("Remove media for campaigns sent through tenant-owned channels; text campaigns are supported."); return; }
     if (!campaignTenants.length && !prospectLines.trim()) { setStatus("Select tenants or paste prospect contacts."); return; }
     if (!campaignChannels.length) { setStatus("Choose WhatsApp and/or email."); return; }
     if (!campaignBody.trim()) { setStatus("Enter a campaign message."); return; }
@@ -177,7 +180,7 @@ export default function MessagesPage() {
     try {
       const r = await fetch(api() + "/api/v1/platform/communications/campaign", {
         method: "POST", headers: headers(),
-        body: JSON.stringify({ tenant_ids: campaignTenants, recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed, media_url: mediaUrl || null, media_type: mediaType || null }),
+        body: JSON.stringify({ sender_tenant_id: campaignSenderTenant, tenant_ids: campaignTenants, recipients, channels: campaignChannels, subject: campaignSubject, body: campaignBody, consent_confirmed: consentConfirmed, media_url: mediaUrl || null, media_type: mediaType || null }),
       });
       const x = await r.json();
       if (!r.ok) throw new Error(x?.detail || "Campaign failed");
@@ -220,8 +223,15 @@ export default function MessagesPage() {
       {activeTab === "whatsapp-promotional" && (
       <section style={{ background: "#fff", border: "1px solid #e8ecf3", borderRadius: 14, padding: 22, marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>AI Growth OS Marketing Hub</h1>
-        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for WhatsApp and email campaigns, prospect contacts, platform inboxes, replies, and delivery results. Campaigns use AI Growth OS platform-owned channels, not tenant credentials.</p>
+        <p style={{ margin: "6px 0 16px", color: "#75839a", fontSize: 13 }}>One workspace for tenant-connected WhatsApp/email campaigns, prospect contacts, shared inboxes, replies, and delivery results.</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 14 }}>
+          <label style={{fontSize:12,color:"#17213a",fontWeight:600}}>Send from tenant’s connected channels
+            <select required value={campaignSenderTenant} onChange={e=>setCampaignSenderTenant(e.target.value)} style={inputStyle}>
+              <option value="">Select sending tenant…</option>
+              {tenants.map((t:any)=><option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <span style={{display:"block",marginTop:5,color:"#75839a",fontWeight:400}}>Uses that tenant’s existing WhatsApp connection and active SMTP mailbox. No separate platform credentials.</span>
+          </label>
           <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Select tenant recipients
             <select multiple value={campaignTenants} onChange={e => setCampaignTenants(Array.from(e.target.selectedOptions, o => o.value))} style={{ ...inputStyle, minHeight: 130 }}>
               {tenants.map((t: any) => <option key={t.id} value={t.id}>{t.name}{t.email ? " · " + t.email : ""}</option>)}
@@ -232,7 +242,7 @@ export default function MessagesPage() {
             <div style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Delivery channels</div>
             {["whatsapp"].map(channel => <label key={channel} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#4b5563" }}>
               <input type="checkbox" checked={campaignChannels.includes(channel)} onChange={e => setCampaignChannels(prev => e.target.checked ? [...prev, channel] : prev.filter(x => x !== channel))} />
-              Platform WhatsApp
+              WhatsApp (selected tenant channel)
             </label>)}
             <label style={{ fontSize: 12, color: "#17213a", fontWeight: 600 }}>Email subject
               <input value={campaignSubject} onChange={e => setCampaignSubject(e.target.value)} style={inputStyle} />
@@ -249,7 +259,7 @@ export default function MessagesPage() {
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Optional WhatsApp image/video (max 16 MB)
           <input type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/3gpp" onChange={e => uploadCampaignMedia(e.target.files?.[0])} disabled={mediaUploading} style={{ ...inputStyle, padding: 8 }} />
-          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>{mediaUploading ? "Uploading…" : mediaUrl ? "Uploaded: " + mediaType + " · ready for WhatsApp campaign" : "Requires S3-compatible durable storage and Meta WhatsApp Cloud API credentials."}</span>
+          <span style={{ display: "block", marginTop: 4, color: "#75839a", fontWeight: 400 }}>{mediaUploading ? "Uploading…" : mediaUrl ? "Uploaded: " + mediaType + " · ready for WhatsApp campaign" : "Tenant-channel campaigns currently support text only; remove media before sending."}</span>
           {mediaUrl && <button type="button" onClick={() => { setMediaUrl(""); setMediaType(""); }} style={{ marginTop: 6, border: "1px solid #d7dce5", borderRadius: 7, padding: "5px 9px", background: "#fff" }}>Remove media</button>}
         </label>
         <label style={{ display: "block", marginTop: 14, fontSize: 12, color: "#17213a", fontWeight: 600 }}>Message template
