@@ -33,7 +33,8 @@ def lifecycle_config(db, tenant_id: str) -> dict | None:
         TenantSetting.tenant_id == tenant_id, TenantSetting.key == "smartcheck_connection"
     ))
     try:
-        cfg = json.loads(row.value_json) if row else {}
+        raw_config = getattr(row, "value_json", None) if row else None
+        cfg = json.loads(raw_config) if raw_config else {}
     except (TypeError, ValueError):
         cfg = {}
     if cfg.get("visitor_lifecycle_sync_ready") is not True:
