@@ -1069,7 +1069,7 @@ def list_platform_marketing_contacts(
     db: Session = Depends(_db),
 ):
     from .models_email import PlatformMarketingContact
-    q = select(PlatformMarketingContact)
+    q = select(PlatformMarketingContact).where(PlatformMarketingContact.status == "active")
     needle = query.strip().lower()
     if needle:
         like = "%" + needle.replace("%", "\\%").replace("_", "\\_") + "%"
