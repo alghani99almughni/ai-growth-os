@@ -375,6 +375,7 @@ def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), d
 
 class SmartCheckConfigInput(BaseModel):
     web_app_url: str = Field(min_length=1, max_length=2048)
+    shared_secret: str = Field(min_length=24, max_length=256)
     enabled: bool = True
 
 
@@ -396,6 +397,23 @@ class SmartCheckMigrationInput(BaseModel):
 
 
 SMARTCHECK_CONFIG_KEY = "smartcheck_google_apps_script"
+
+
+def _smartcheck_fernet_key() -> bytes:
+    import base64
+    return base64.urlsafe_b64encode(hashlib.sha256(
+        (settings.jwt_secret + ":smartcheck-config:v1").encode("utf-8")
+    ).digest())
+
+
+def _encrypt_smartcheck_secret(secret: str) -> str:
+    from cryptography.fernet import Fernet
+    return Fernet(_smartcheck_fernet_key()).encrypt(secret.encode("utf-8")).decode("ascii")
+
+
+def _decrypt_smartcheck_secret(value: str) -> str:
+    from cryptography.fernet import Fernet
+    return Fernet(_smartcheck_fernet_key()).decrypt(value.encode("ascii")).decode("utf-8")
 
 
 def _validate_smartcheck_url(value: str) -> str:
@@ -429,9 +447,15 @@ def _smartcheck_config(db: Session, tenant_id: str) -> dict:
         value = json.loads(row.value_json or "{}")
     except (TypeError, ValueError):
         value = {}
+    encrypted_secret = str(value.get("shared_secret_encrypted") or "")
+    try:
+        shared_secret = _decrypt_smartcheck_secret(encrypted_secret) if encrypted_secret else ""
+    except Exception:
+        shared_secret = ""
     return {
         "enabled": bool(value.get("enabled")),
         "web_app_url": str(value.get("web_app_url") or ""),
+        "shared_secret": shared_secret,
     }
 
 
@@ -452,7 +476,11 @@ def get_smartcheck_config(
     tenant_access(tenant_id, user, db, require_feature=False)
     admin_only(user)
     config = _smartcheck_config(db, tenant_id)
-    return {"enabled": config["enabled"], "web_app_url": config["web_app_url"]}
+    return {
+        "enabled": config["enabled"],
+        "web_app_url": config["web_app_url"],
+        "has_shared_secret": bool(config["shared_secret"]),
+    }
 
 
 @router.put("/smartcheck/config")
@@ -469,7 +497,11 @@ def save_smartcheck_config(
         TenantSetting.tenant_id == tenant_id,
         TenantSetting.key == SMARTCHECK_CONFIG_KEY,
     ))
-    value = json.dumps({"enabled": payload.enabled, "web_app_url": url})
+    value = json.dumps({
+        "enabled": payload.enabled,
+        "web_app_url": url,
+        "shared_secret_encrypted": _encrypt_smartcheck_secret(payload.shared_secret),
+    })
     if row:
         row.value_json = value
     else:
@@ -495,7 +527,10 @@ async def ping_smartcheck(
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             response = await client.post(
                 config["web_app_url"],
-                json={"action": "PING", "tenantId": tenant_id, "type": "TEST_PING"},
+                json={
+                    "action": "PING", "tenantId": tenant_id, "type": "TEST_PING",
+                    "apiKey": config["shared_secret"],
+                },
             )
         response.raise_for_status()
         try:
@@ -536,6 +571,7 @@ async def sync_pass_to_smartcheck(
     payload = {
         "action": "SYNC_TICKET",
         "tenantId": tenant_id,
+        "apiKey": config["shared_secret"],
         "ticketId": p.id,
         "visitorName": p.visitor_name,
         "visitorMobile": p.visitor_mobile or "",
