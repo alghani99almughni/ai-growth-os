@@ -11,7 +11,7 @@ This adapter is an **optional, tenant-scoped bridge**. AI Growth OS remains the 
    - `SPREADSHEET_ID`: the spreadsheet ID to use.
    - `DRIVE_FOLDER_ID`: optional; otherwise the script creates/uses a `SmartCheckPasses` folder.
 4. Authorize Spreadsheet and Drive access as the Google account that owns the sheet/folder, then deploy as a Web App. Copy the HTTPS URL shaped like `https://script.google.com/macros/s/DEPLOYMENT_ID/exec`.
-5. In the tenant's Security & Visitors settings, configure that URL and the same API key. The API stores the key encrypted using a purpose-specific key derived from the server JWT secret; it never returns the secret in the config GET response.
+5. Call `PUT /api/v1/tenants/{tenant_id}/security/smartcheck/config` with the URL and the same API key. The API stores the key encrypted using a purpose-specific key derived from the server JWT secret; it never returns the secret in the config GET response. A dedicated configuration panel in the dashboard is not included yet.
 6. Enable Security & Visitor Management for that tenant before using ping, sync, or migration endpoints.
 
 ## API operations
