@@ -29,26 +29,13 @@ _STATUS = {
 
 
 def lifecycle_config(db, tenant_id: str) -> dict | None:
-    row = db.scalar(select(TenantSetting).where(
-        TenantSetting.tenant_id == tenant_id, TenantSetting.key == "smartcheck_connection"
-    ))
-    try:
-        raw_config = getattr(row, "value_json", None) if row else None
-        cfg = json.loads(raw_config) if raw_config else {}
-    except (TypeError, ValueError):
-        cfg = {}
-    if cfg.get("visitor_lifecycle_sync_ready") is not True:
-        return None
-    url = str(cfg.get("script_url", "")).strip()
-    parsed = urlparse(url)
-    if (parsed.scheme != "https" or parsed.hostname != "script.google.com"
-            or parsed.username or parsed.password or not parsed.path.startswith("/macros/s/")
-            or not parsed.path.endswith("/exec") or parsed.query or parsed.fragment
-            or not str(cfg.get("legacy_tenant_code", "")).strip()):
-        raise HTTPException(503, "SmartCheck lifecycle connection is invalid")
-    if not os.getenv("AI_GROWTH_OS_BRIDGE_SECRET", "").strip():
-        raise HTTPException(503, "SmartCheck bridge credentials are not configured")
-    return cfg
+    """Legacy Sheets bridge is intentionally disabled for visitor data writes.
+
+    SmartCheck visitor records now live in the AI Growth OS PostgreSQL database.
+    Keep the adapter helpers temporarily for compatibility with diagnostics, but
+    never route operational visitor lifecycle actions to a spreadsheet.
+    """
+    return None
 
 
 class _SafeRedirect(HTTPRedirectHandler):
