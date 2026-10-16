@@ -1,7 +1,7 @@
-"""Public QR-first visitor request endpoint backed by the existing SmartCheck bridge.
+"""Public QR-first visitor registration backed by AI Growth OS PostgreSQL.
 
-This endpoint intentionally does not write visitor records into the AI Growth OS SQL
-visitor tables. It requires an explicit tenant mapping and server-side bridge secret.
+No Google Sheets, Apps Script URL, or bridge secret is required. Visitors may register
+from a QR scan without installing the PWA; all requests begin pending approval.
 """
 from __future__ import annotations
 
@@ -19,6 +19,10 @@ from .config import settings
 from .db import SessionLocal
 from .models import Tenant
 from .models_growth import TenantSetting, PlatformSetting
+from .models_security import VisitorPass, VisitorEvent
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/api/v1/public/smartcheck", tags=["public-smartcheck-visitors"])
 _ALLOWED_SCRIPT_HOSTS = {"script.google.com", "script.googleusercontent.com"}
@@ -59,81 +63,9 @@ def _tenant_feature_enabled(db, tenant_id: str) -> bool:
                              defaults.get("security_visitor_management", False)))
 
 
-def _script_config(db, tenant_id: str) -> dict:
-    row = db.scalar(select(TenantSetting).where(
-        TenantSetting.tenant_id == tenant_id, TenantSetting.key == "smartcheck_connection"
-    ))
-    try:
-        config = json.loads(row.value_json) if row else {}
-    except (TypeError, ValueError):
-        config = {}
-    script_url = str(config.get("script_url", "")).strip()
-    parsed = urlparse(script_url)
-    if (parsed.scheme != "https" or parsed.hostname != "script.google.com"
-            or parsed.username or parsed.password or not parsed.path.startswith("/macros/s/")
-            or not parsed.path.endswith("/exec") or parsed.query or parsed.fragment):
-        raise HTTPException(503, "SmartCheck visitor registration is not configured for this tenant")
-    if not str(config.get("legacy_tenant_code", "")).strip():
-        raise HTTPException(503, "SmartCheck tenant mapping is not configured for this tenant")
-    if not os.getenv("AI_GROWTH_OS_BRIDGE_SECRET", "").strip():
-        raise HTTPException(503, "SmartCheck bridge credentials are not configured")
-    return config
-
-
-def _require_lifecycle_ready(config: dict) -> None:
-    # A public request must not enter Sheets until the same system can list and
-    # approve it, record gate transitions, and verify its QR/pass state.
-    if config.get("visitor_lifecycle_sync_ready") is not True:
-        raise HTTPException(
-            503,
-            "Visitor registration is not enabled until SmartCheck visitor lifecycle synchronization (listing, approval, gate transitions, and QR verification) is complete",
-        )
-
-
-def _submit_to_smartcheck(config: dict, secret: str, body: PublicVisitorRequest) -> dict:
-    tenant_code = str(config["legacy_tenant_code"]).strip()
-    payload = {
-        "action": "VISITOR_REQUEST",
-        "bridgeSecret": secret,
-        "actorRole": "VISITOR",
-        "actorTenantId": tenant_code,
-        "tenantId": tenant_code,
-        "visitorName": body.visitor_name.strip(),
-        "visitorMobile": body.visitor_mobile.strip(),
-        "purpose": body.purpose.strip(),
-        "targetDestination": body.destination.strip(),
-        "vehicleNumber": body.vehicle_number.strip().upper(),
-    }
-    request = Request(
-        str(config["script_url"]).strip(),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "User-Agent": "AI-Growth-OS-SmartCheck/1.0"},
-        method="POST",
-    )
-    opener = build_opener(GoogleScriptRedirectHandler())
-    try:
-        with opener.open(request, timeout=10) as response:
-            final = urlparse(response.geturl())
-            if final.scheme != "https" or final.hostname not in _ALLOWED_SCRIPT_HOSTS:
-                raise HTTPException(502, "SmartCheck returned an untrusted redirect")
-            raw = response.read(65536)
-        result = json.loads(raw.decode("utf-8"))
-    except HTTPException:
-        raise
-    except (HTTPError, URLError, TimeoutError, ValueError, OSError):
-        raise HTTPException(502, "SmartCheck could not accept the visitor request") from None
-    if not isinstance(result, dict) or result.get("status") != "success" or not result.get("ticketId"):
-        raise HTTPException(502, "SmartCheck did not confirm that the visitor request was saved")
-    return {
-        "ticket_id": str(result["ticketId"]),
-        "status": str(result.get("statusLabel", "PENDING")),
-        "message": "Visitor request submitted. Entry is not permitted until an authorized person approves it.",
-    }
-
-
 @router.post("/{tenant_slug}/visitor-requests")
 def create_public_visitor_request(tenant_slug: str, body: PublicVisitorRequest):
-    """Public QR visitor form; request is saved to SmartCheck and remains pending approval."""
+    """Public QR visitor form; writes directly to the tenant-scoped SQL database."""
     db = SessionLocal()
     try:
         tenant = db.scalar(select(Tenant).where(Tenant.slug == tenant_slug.lower()))
@@ -141,8 +73,44 @@ def create_public_visitor_request(tenant_slug: str, body: PublicVisitorRequest):
             raise HTTPException(404, "Visitor registration is unavailable for this tenant")
         if not _tenant_feature_enabled(db, tenant.id):
             raise HTTPException(403, "Security & Visitor Management is disabled for this tenant")
-        config = _script_config(db, tenant.id)
-        _require_lifecycle_ready(config)
+
+        raw_token = secrets.token_urlsafe(32)
+        now = datetime.utcnow()
+        visitor = VisitorPass(
+            tenant_id=tenant.id,
+            site_id=None,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            visitor_name=body.visitor_name.strip(),
+            visitor_mobile=body.visitor_mobile.strip(),
+            purpose=body.purpose.strip(),
+            destination=body.destination.strip(),
+            vehicle_number=body.vehicle_number.strip().upper(),
+            industry="apartment",
+            status="pending",
+            expires_at=now + timedelta(hours=24),
+            created_by="public-qr-visitor",
+        )
+        db.add(visitor)
+        db.flush()
+        db.add(VisitorEvent(
+            tenant_id=tenant.id,
+            pass_id=visitor.id,
+            actor_id="public-qr-visitor",
+            event_type="visitor_request_created",
+            details_json=json.dumps({"source": "qr_public_form", "status": "pending"}),
+        ))
+        db.commit()
+        db.refresh(visitor)
+        return {
+            "ticket_id": visitor.id,
+            "status": "pending",
+            "message": "Visitor request submitted. Entry is not permitted until an authorized person approves it.",
+        }
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Could not save visitor request. Please try again.") from None
     finally:
         db.close()
-    return _submit_to_smartcheck(config, os.environ["AI_GROWTH_OS_BRIDGE_SECRET"], body)
