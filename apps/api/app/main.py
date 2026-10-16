@@ -899,6 +899,47 @@ async def share_customer_pwa(tenant_id,customer_id,user=Depends(get_current_user
         raise HTTPException(503,str(exc))
     return {"sent":True,"pwa_url":url,"whatsapp":result}
 @app.post("/api/v1/webhooks/openwa/{tenant_id}")
+# ============ SESSION_WHATSAPP_INBOX ============
+
+class WhatsAppReplyRequest(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+
+
+@app.get("/api/v1/tenants/{tenant_id}/whatsapp-threads")
+def list_whatsapp_threads(tenant_id, limit: int = 200,
+                          user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .whatsapp_threads import list_threads
+    return {"items": list_threads(db, tenant_id, limit=limit)}
+
+
+@app.get("/api/v1/tenants/{tenant_id}/whatsapp-threads/{phone}")
+def get_whatsapp_thread(tenant_id, phone,
+                        user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .whatsapp_threads import thread_detail
+    t = thread_detail(db, tenant_id, phone)
+    if not t:
+        raise HTTPException(404, "Thread not found")
+    return t
+
+
+@app.post("/api/v1/tenants/{tenant_id}/whatsapp-threads/{phone}/reply")
+async def reply_whatsapp_thread(tenant_id, phone, payload: WhatsAppReplyRequest,
+                                user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .whatsapp_channels import send_text_with_failover
+    from .models_email import TenantWhatsAppMessage
+    try:
+        result = await send_text_with_failover(db, tenant_id, settings, phone, payload.body)
+    except Exception as exc:
+        raise HTTPException(502, f"Send failed: {exc}")
+    db.add(TenantWhatsAppMessage(
+        id=str(uuid.uuid4()), tenant_id=tenant_id, phone=phone,
+        contact_name=None, body=payload.body, direction="outbound", status="sent",
+    ))
+    db.commit()
+    return {"sent": True, "whatsapp": result}
 async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db)):
     raw=await request.body()
     signature=request.headers.get("X-OpenWA-Signature") or request.headers.get("X-Webhook-Signature")
