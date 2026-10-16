@@ -11,19 +11,8 @@ function initialSetup(){
   const ts=ensureSheet_(ss,TENANTS,["Tenant Code","Organization Name","Category","Assigned Role","Contact Person","Email ID","Mobile Number","Reception Clearance","Staff Details","App URL","Spreadsheet URL","Registered At","Status"]);
   const us=ensureSheet_(ss,USERS,["Email","Name","Role","Designation","Status","Tenant ID","RegisteredAt"]);
   ensureSheet_(ss,LOGS,["Date","Ticket ID","Tenant Name","Visitor Name","Mobile","Purpose","Target Destination","Vehicle Number","Status","Approver Name","QR Token","Snapshot Link","Tenant ID","Updated At","Updated By","Notes"]);
-  // Preserve original setup behavior: seed demo records only when the sheets are empty.
-  const now=new Date().toISOString();
-  if(ts.getLastRow()<=1){
-    ts.appendRow(["TNT-101","Greenwood High School","School","Tenant Administrator","Principal Sharma","admin@greenwood.edu","9444444444","ENABLED","Gate Security Vikram, Reception Desk","https://ai-growth-os-web.onrender.com",ss.getUrl(),now,"ACTIVE"]);
-    ts.appendRow(["TNT-102","Prestige Tech Cloud Towers","Corporate IT Park","Tenant Administrator","Facility Manager Rahul","facility@prestigetowers.com","9888888888","ENABLED","Tower A Gate, Tower B Gate","https://ai-growth-os-web.onrender.com",ss.getUrl(),now,"ACTIVE"]);
-  }
-  if(us.getLastRow()<=1){
-    us.appendRow(["shukurhustle@gmail.com","Syed Shukur","OWNER","Developer Admin","ACTIVE","TNT-101",now]);
-    us.appendRow(["gate@greenwood.edu","Officer Vikram S","SECURITY","Main Gate Post #1","ACTIVE","TNT-101",now]);
-    us.appendRow(["reception@greenwood.edu","Pooja Front Desk","RECEPTION","Lobby Desk","ACTIVE","TNT-101",now]);
-    us.appendRow(["principal@greenwood.edu","Principal Sharma","APPROVER","School Principal","ACTIVE","TNT-101",now]);
-    us.appendRow(["security@prestigetowers.com","Security Main Gate","SECURITY","Main Gate Alpha","ACTIVE","TNT-102",now]);
-  }
+  // Production safety: never seed sample tenants/users. The existing spreadsheet is the source of truth.
+  // Existing tenant and user rows are left untouched; setup only ensures tabs and headers.
   folder_(DRIVE_FOLDER);
   return "Required sheets checked; existing rows preserved.";
 }
