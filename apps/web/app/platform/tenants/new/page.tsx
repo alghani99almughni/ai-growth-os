@@ -4,6 +4,12 @@ import { useRouter } from "next/navigation";
 
 const API = String(process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/+$/, "");
 type CatalogEntry = { id: string; category: string; business_type: string; roles: string[]; is_active: boolean; sort_order: number };
+const SERVICE_GROUPS = [
+  { title: "AI Engagement", items: [["ai_chat", "AI Chat"], ["ai_voice", "AI Voice & Calls"]] },
+  { title: "Customer Services", items: [["bookings", "Bookings & Appointments"], ["digital_menu", "Digital Menu"], ["online_ordering", "Online Ordering"], ["order_tracking", "Order Tracking"], ["service_requests", "Service Requests"], ["call_waiter", "Call Staff / Waiter"], ["queue", "Queue Management"], ["online_payment", "Online Payments"], ["auto_bill", "Automatic Billing"]] },
+  { title: "Growth & Retention", items: [["loyalty", "Loyalty & Rewards"], ["referrals", "Referrals"], ["feedback", "Customer Feedback"], ["google_review", "Google Reviews"], ["games", "Mini Games"]] },
+  { title: "Security & Visitor Operations", items: [["security_visitor_management", "Security & Visitor Management"]] },
+] as const;
 const STARTER_TEMPLATES = [
   { key: "restaurant", label: "Restaurant / Cafe" }, { key: "hotel", label: "Hotel" },
   { key: "salon", label: "Salon / Beauty" }, { key: "dental", label: "Dental Clinic" },
@@ -28,6 +34,12 @@ export default function NewTenantPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [catalogLoading, setCatalogLoading] = useState(true);
+  const [features, setFeatures] = useState<Record<string, boolean>>({
+    digital_menu: true, online_ordering: true, order_tracking: true, call_waiter: true,
+    service_requests: true, games: true, auto_bill: true, online_payment: true,
+    ai_chat: true, ai_voice: true, loyalty: false, referrals: false, feedback: true,
+    google_review: true, bookings: true, queue: true, security_visitor_management: false,
+  });
 
   useEffect(() => {
     fetch(API + "/api/v1/public/industry-catalog", { cache: "no-store" })
@@ -42,6 +54,15 @@ export default function NewTenantPage() {
       })
       .catch(e => setErr(e.message || "Could not load active industry categories."))
       .finally(() => setCatalogLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem("ago_access_token") || "";
+    if (!token) return;
+    fetch(API + "/api/v1/platform/feature-defaults", { headers: { Authorization: "Bearer " + token }, cache: "no-store" })
+      .then(async r => { const x = await r.json().catch(() => ({})); if (!r.ok) throw new Error(x.detail || "Could not load feature defaults."); return x; })
+      .then(x => setFeatures(old => ({ ...old, ...(x.features || {}) })))
+      .catch(e => setErr(e.message || "Could not load feature defaults."));
   }, []);
 
   const categories = useMemo(() => Array.from(new Set(catalog.filter(x => x.is_active).map(x => x.category))), [catalog]);
@@ -103,7 +124,13 @@ export default function NewTenantPage() {
       });
       const selected = await selection.json().catch(() => ({}));
       if (!selection.ok) throw new Error("Tenant was created, but industry selection was not saved: " + (selected.detail || selection.status));
-      router.push("/platform/tenants/" + tenantId);
+      const assignments = await fetch(API + "/api/v1/platform/tenants/" + encodeURIComponent(tenantId) + "/overrides", {
+        method: "PUT", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ features }),
+      });
+      const assigned = await assignments.json().catch(() => ({}));
+      if (!assignments.ok) throw new Error("Tenant was created, but service assignments were not saved: " + (assigned.detail || assignments.status));
+      router.push("/platform/tenants/" + tenantId + "/services");
     } catch (e: any) { setErr(String(e?.message || "Unable to create tenant.")); setBusy(false); }
   };
 
@@ -126,6 +153,17 @@ export default function NewTenantPage() {
       <Field label="AI starter template (auto-mapped from subcategory)">
         <select value={industry} onChange={e=>setIndustry(e.target.value)} style={inp}>{STARTER_TEMPLATES.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}</select>
       </Field>
+      <section style={{ border: "1px solid #e8ecf3", borderRadius: 12, padding: 16, background: "#fff", display: "grid", gap: 14 }}>
+        <div><h2 style={{ margin: 0, fontSize: 16 }}>Assign services & features</h2><p style={{ margin: "5px 0 0", color: "#75839a", fontSize: 12 }}>Review platform defaults and select what this tenant can use. You can change these later.</p></div>
+        {SERVICE_GROUPS.map(group => <div key={group.title}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 13 }}>{group.title}</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 8 }}>
+            {group.items.map(([key, label]) => <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, border: "1px solid #e8ecf3", borderRadius: 8, padding: "9px 10px", fontSize: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!features[key]} onChange={e => setFeatures(old => ({ ...old, [key]: e.target.checked }))} />{label}
+            </label>)}
+          </div>
+        </div>)}
+      </section>
       <Field label="Business name"><input value={businessName} onChange={e=>setBusinessName(e.target.value)} placeholder="Business name" style={inp}/></Field>
       <hr style={rule}/>
       <Field label="Owner name"><input value={ownerName} onChange={e=>setOwnerName(e.target.value)} placeholder="Owner name" style={inp}/></Field>

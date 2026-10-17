@@ -121,6 +121,7 @@ export default function TenantsPage() {
                       {t.created_at ? new Date(t.created_at).toLocaleDateString() : "-"}
                     </td>
                     <td style={tdStyle}>
+                                            <a href={"/platform/tenants/" + encodeURIComponent(t.id) + "/services"} style={{ color: "#5b5cf0", fontWeight: 700, textDecoration: "none", fontSize: 12, marginRight: 12 }}>Manage services</a>
                                             <a href={"/dashboard?tenant=" + t.id} style={{ color: "#5b5cf0", fontWeight: 600, textDecoration: "none", fontSize: 12, marginRight: 12 }}>Open dashboard</a>
                                             <a href={"/customer?business=" + t.slug} target="_blank" rel="noreferrer" style={{ color: "#5b5cf0", fontWeight: 600, textDecoration: "none", fontSize: 12 }}>Open site ↗</a>
                     </td>
