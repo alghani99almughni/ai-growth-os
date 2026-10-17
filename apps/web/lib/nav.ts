@@ -22,6 +22,7 @@ export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard/crm",       label: "Customers",             icon: "Users", labelKey: "nav.tenant.crm" },
   { href: "/dashboard/services",   label: "Services",             icon: "ShoppingBag", labelKey: "nav.tenant.services" },
   { href: "/dashboard/team",       label: "Team",                 icon: "UserCog", labelKey: "nav.tenant.team" },
+  { href: "/dashboard/team-comms", label: "Team Chat",             icon: "MessagesSquare" },
   { href: "/dashboard/knowledge",  label: "Business Brain",       icon: "Brain", labelKey: "nav.tenant.knowledge" },
   { href: "/dashboard/loyalty",    label: "Loyalty",              icon: "Gift", labelKey: "nav.tenant.loyalty" },
   { href: "/dashboard/website",    label: "Website",              icon: "Globe", labelKey: "nav.tenant.website" },
