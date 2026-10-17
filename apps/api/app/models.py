@@ -96,3 +96,32 @@ class Lead(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="new", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class WhatsAppMessage(Base):
+    __tablename__ = "whatsapp_messages"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: __import__("uuid").uuid4().hex)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    customer_id: Mapped[str] = mapped_column(ForeignKey("customers.id"), index=True)
+    direction: Mapped[str] = mapped_column(String(10)) # "inbound" or "outbound"
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class CampaignBatch(Base):
+    __tablename__ = "campaign_batches"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: __import__("uuid").uuid4().hex)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    template_text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="pending") # pending | running | completed | failed
+    total_contacts: Mapped[int] = mapped_column(Integer, default=0)
+    sent_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class CampaignRecipient(Base):
+    __tablename__ = "campaign_recipients"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: __import__("uuid").uuid4().hex)
+    campaign_id: Mapped[str] = mapped_column(ForeignKey("campaign_batches.id"), index=True)
+    phone: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="pending") # pending | sent | failed
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
