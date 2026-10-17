@@ -898,7 +898,6 @@ async def share_customer_pwa(tenant_id,customer_id,user=Depends(get_current_user
     except RuntimeError as exc:
         raise HTTPException(503,str(exc))
     return {"sent":True,"pwa_url":url,"whatsapp":result}
-@app.post("/api/v1/webhooks/openwa/{tenant_id}")
 # ============ SESSION_WHATSAPP_INBOX ============
 
 class WhatsAppReplyRequest(BaseModel):
@@ -940,6 +939,7 @@ async def reply_whatsapp_thread(tenant_id, phone, payload: WhatsAppReplyRequest,
     ))
     db.commit()
     return {"sent": True, "whatsapp": result}
+@app.post("/api/v1/webhooks/openwa/{tenant_id}")
 async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db)):
     raw=await request.body()
     signature=request.headers.get("X-OpenWA-Signature") or request.headers.get("X-Webhook-Signature")
