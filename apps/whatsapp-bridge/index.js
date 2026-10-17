@@ -50,8 +50,11 @@ async function forwardInbound(msg) {
     logger.warn("webhook not configured — dropping inbound message");
     return;
   }
-  const key = msg.key || {};
-  const from = (key.remoteJid || "").split("@")[0];
+    const key = msg.key || {};
+  // Use remoteJidAlt if available to get the real phone number (PN), 
+  // falling back to remoteJid if not present.
+  const jid = key.remoteJidAlt || key.remoteJid || "";
+  const from = jid.split("@")[0];
   const body =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
@@ -60,13 +63,13 @@ async function forwardInbound(msg) {
     "";
   if (!from || !body) return;
 
-  const payload = {
+    const payload = {
     event: "message.received",
     data: {
       id: key.id || "",
       from: from + "@c.us",
       senderPhone: from,
-      chatId: key.remoteJid || "",
+      chatId: (key.remoteJidAlt || key.remoteJid || ""), // Fix: prefer real phone number over LID
       body,
       isGroup: (key.remoteJid || "").endsWith("@g.us"),
       contact: { pushName: msg.pushName || "" },
