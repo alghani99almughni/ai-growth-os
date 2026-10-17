@@ -28,16 +28,6 @@ class PublicVisitorRequest(BaseModel):
     vehicle_number: str = Field(default="", max_length=40)
 
 
-class GoogleScriptRedirectHandler(HTTPRedirectHandler):
-    """Allow normal Apps Script redirects without allowing redirects to arbitrary hosts."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        parsed = urlparse(newurl)
-        if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_SCRIPT_HOSTS:
-            return None
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
 def _tenant_feature_enabled(db, tenant_id: str) -> bool:
     feature_row = db.scalar(select(TenantSetting).where(
         TenantSetting.tenant_id == tenant_id, TenantSetting.key == "features"
