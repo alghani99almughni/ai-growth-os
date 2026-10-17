@@ -644,7 +644,49 @@ def set_whatsapp_priority(tenant_id, payload: WhatsAppPriorityUpdate, user=Depen
     from .whatsapp_channels import set_priority, all_channels
     set_priority(db, tenant_id, payload.priority)
     return all_channels(db, tenant_id)
+from fastapi import Request
+import httpx
 
+# Add these Pydantic models near your other models
+class WhatsAppConnectRequest(BaseModel):
+    phone: str
+
+@app.post("/api/v1/tenants/{tenant_id}/whatsapp/bridge-connect")
+async def connect_bridge_session(tenant_id: str, payload: WhatsAppConnectRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    
+    # 1. Tell the bridge to start a session for this tenant
+    bridge_url = "https://ai-growth-whatsapp-bridge.onrender.com"
+    api_key = "1db7721c438712d430850bcd68b675df" # In production, use os.environ.get("BRIDGE_API_KEY")
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Reset any old session first to avoid conflicts
+        await client.post(
+            f"{bridge_url}/api/sessions/{tenant_id}/reset",
+            headers={"X-API-Key": api_key}
+        )
+        
+        # Start the new session
+        res = await client.post(
+            f"{bridge_url}/api/connect",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            json={"tenantId": tenant_id, "phone": payload.phone}
+        )
+        return res.json()
+
+@app.get("/api/v1/tenants/{tenant_id}/whatsapp/bridge-status")
+async def get_bridge_status(tenant_id: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    
+    bridge_url = "https://ai-growth-whatsapp-bridge.onrender.com"
+    api_key = "1db7721c438712d430850bcd68b675df"
+    
+    async with httpx.AsyncClient() as client:
+        res = await client.get(
+            f"{bridge_url}/api/sessions/{tenant_id}/status",
+            headers={"X-API-Key": api_key}
+        )
+        return res.json()
 
 # ==== Meta Cloud API inbound webhook ====
 
@@ -998,7 +1040,10 @@ def leads(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); rows=db.scalars(select(Lead).where(Lead.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"intent":x.intent,"notes":x.notes,"status":x.status} for x in rows]}
 
 class ChatRequest(BaseModel): tenant_id:str; message:str=Field(min_length=1,max_length=4000); name:str|None=None; phone:str|None=None; conversation_id:str|None=None; channel:str="pwa"
-
+class CampaignCreateRequest(BaseModel):
+    name: str
+    template_text: str
+    recipients: list[dict] # e.g. [{"phone": "919876543210", "name": "SHUKUR"}]
 class HoursUpdate(BaseModel):
     items: list[BusinessHourInput]
 
@@ -4224,3 +4269,95 @@ def monitoring_backups(limit: int = 100,
     } for r in rows]}
 
 # ============ END SESSION20A_MONITORING ============
+# ============ WHATSAPP BULK CAMPAIGNS ============
+import asyncio
+from .models import CampaignBatch, CampaignRecipient
+
+@app.post("/api/v1/tenants/{tenant_id}/campaigns")
+async def create_campaign(tenant_id: str, payload: CampaignCreateRequest, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    
+    # 1. Create the batch
+    batch = CampaignBatch(
+        tenant_id=tenant_id,
+        name=payload.name,
+        template_text=payload.template_text,
+        total_contacts=len(payload.recipients),
+        status="pending"
+    )
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+
+    # 2. Add recipients
+    for r in payload.recipients:
+        db.add(CampaignRecipient(
+            campaign_id=batch.id,
+            phone=r["phone"],
+            name=r.get("name", "")
+        ))
+    db.commit()
+
+    return {"ok": True, "campaign_id": batch.id, "message": "Campaign created. Start it from the dashboard."}
+
+@app.post("/api/v1/tenants/{tenant_id}/campaigns/{campaign_id}/start")
+async def start_campaign(tenant_id: str, campaign_id: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    
+    batch = db.get(CampaignBatch, campaign_id)
+    if not batch or batch.tenant_id != tenant_id:
+        raise HTTPException(404, "Campaign not found")
+        
+    if batch.status != "pending":
+        raise HTTPException(400, "Campaign already started or completed")
+        
+    batch.status = "running"
+    db.commit()
+
+    # Fire and forget the background task
+    asyncio.create_task(run_campaign_batch(tenant_id, campaign_id))
+    
+    return {"ok": True, "message": "Campaign started in background."}
+
+async def run_campaign_batch(tenant_id: str, campaign_id: str):
+    from .db import SessionLocal
+    from .whatsapp_channels import send_text_with_failover
+    import logging
+    logger = logging.getLogger("uvicorn.error")
+    
+    db = SessionLocal()
+    try:
+        batch = db.get(CampaignBatch, campaign_id)
+        if not batch: return
+        
+        recipients = db.scalars(select(CampaignRecipient).where(CampaignRecipient.campaign_id == campaign_id, CampaignRecipient.status == "pending")).all()
+        
+        for r in recipients:
+            # 1. Personalize message
+            msg = batch.template_text.replace("{Name}", r.name or "").replace("{Phone}", r.phone)
+            
+            # 2. Send via bridge
+            try:
+                await send_text_with_failover(db, tenant_id, settings, r.phone, msg)
+                r.status = "sent"
+                batch.sent_count += 1
+            except Exception as e:
+                r.status = "failed"
+                r.error_message = str(e)
+            
+            db.commit()
+            
+            # 3. RATE LIMITING (Crucial for avoiding WhatsApp bans)
+            # Wait 4 seconds between messages to avoid getting the number banned.
+            await asyncio.sleep(4)
+            
+        batch.status = "completed"
+        db.commit()
+    except Exception as e:
+        logger.error(f"Campaign failed: {e}")
+        if batch:
+            batch.status = "failed"
+            db.commit()
+    finally:
+        db.close()
+# ============ END WHATSAPP BULK CAMPAIGNS ============
