@@ -76,7 +76,7 @@ async function startSession(tenantId, phoneNumber) {
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   
   // FIX 1: Use fetchLatestWaWebVersion instead of fetchLatestBaileysVersion
-  const version = [2, 3000, 1042466098]; // Known working version (as of 2026-07)
+  const { version } = await fetchLatestWaWebVersion();
 
   const sock = makeWASocket({
     version,
