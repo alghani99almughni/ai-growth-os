@@ -50,6 +50,7 @@ export const ADMIN_NAV: NavItem[] = [
   { href: "/platform/industry-catalog", label: "Industry catalogue",  icon: "Globe" },
   { href: "/platform/ai",            label: "AI providers",          icon: "Bot", labelKey: "nav.ai" },
   { href: "/platform/features",      label: "Feature defaults",      icon: "ToggleLeft", labelKey: "nav.features" },
+  { href: "/platform/security",      label: "Security & Visitors",   icon: "ShieldCheck" },
   { href: "/platform/audit",         label: "Audit log",             icon: "FileText", labelKey: "nav.audit" },
   { href: "/platform/health",        label: "Health",                icon: "Activity", labelKey: "nav.health" },
   { href: "/platform/monitoring",    label: "Monitoring",            icon: "Activity" },
