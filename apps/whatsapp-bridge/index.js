@@ -17,7 +17,6 @@ const logger = P({ level: process.env.LOG_LEVEL || "warn" });
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// Multi-Tenant Session Store
 const sessions = new Map();
 
 function auth(req, res, next) {
@@ -54,8 +53,8 @@ async function startSession(tenantId, phoneNumber) {
   const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   
-  // Stable WhatsApp Web version
-  const version = [2, 3000, 1043857760];
+  // Dynamically fetch the latest working WhatsApp version
+  const { version } = await fetchLatestWaWebVersion();
 
   const sock = makeWASocket({
     version,
@@ -100,13 +99,6 @@ async function startSession(tenantId, phoneNumber) {
       }
     }
 
-    if (qr && !phoneNumber) {
-      sessionData.pairingCode = null;
-      sessionData.connectionState = "qr";
-      console.log(`\n[${tenantId}] SCAN QR`);
-      QRCode.generate(qr, { small: true });
-    }
-
     if (connection === "open") {
       sessionData.pairingCode = null;
       sessionData.pairingRequested = false;
@@ -137,7 +129,6 @@ async function startSession(tenantId, phoneNumber) {
   });
 }
 
-// API ROUTES
 app.post("/api/connect", auth, async (req, res) => {
   const { tenantId, phone } = req.body || {};
   if (!tenantId || !phone) return res.status(400).json({ error: "tenantId and phone required" });
@@ -191,7 +182,6 @@ app.post("/api/sessions/:tenantId/reset", auth, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Health check
 app.get("/", (_req, res) => res.json({ status: "ok", sessions: sessions.size }));
 
 app.listen(PORT, () => {
