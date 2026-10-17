@@ -184,9 +184,7 @@ app.get("/qr", (_req, res) => {
       </body></html>`
     );
   }
-  const QRCode = require("qrcode-terminal"); // noop import guard
-  // Generate QR as an image via external service (no npm needed)
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(
+   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(
     currentQR
   )}`;
   res.send(
