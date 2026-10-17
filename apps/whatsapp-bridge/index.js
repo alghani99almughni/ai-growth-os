@@ -53,14 +53,12 @@ async function forwardInbound(msg) {
     logger.warn("webhook not configured — dropping inbound message");
     return;
   }
+  
   const key = msg.key || {};
-<<<<<<< Updated upstream
-  const from = (key.remoteJid || "").split("@")[0];
-=======
   // Prefer remoteJidAlt so we deliver the real phone number instead of a LID.
   const jid = key.remoteJidAlt || key.remoteJid || "";
   const from = jid.split("@")[0];
->>>>>>> Stashed changes
+  
   const body =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
@@ -75,11 +73,7 @@ async function forwardInbound(msg) {
       id: key.id || "",
       from: from + "@c.us",
       senderPhone: from,
-<<<<<<< Updated upstream
-      chatId: key.remoteJid || "",
-=======
       chatId: jid,
->>>>>>> Stashed changes
       body,
       isGroup: (key.remoteJid || "").endsWith("@g.us"),
       contact: { pushName: msg.pushName || "" },
