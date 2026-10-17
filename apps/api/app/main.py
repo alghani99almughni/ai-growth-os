@@ -987,7 +987,7 @@ async def reply_whatsapp_thread(tenant_id, phone, payload: WhatsAppReplyRequest,
 async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db)):
     raw=await request.body()
     signature=request.headers.get("X-OpenWA-Signature") or request.headers.get("X-Webhook-Signature")
-    if not WebhookAdapter.verify_webhook(raw,signature,settings.openwa_webhook_secret):
+    if not WhatsAppAdapter.verify_webhook(raw,signature,settings.openwa_webhook_secret):
         raise HTTPException(401,"Invalid OpenWA webhook signature")
     try: payload=json.loads(raw.decode("utf-8"))
     except Exception: raise HTTPException(400,"Invalid webhook JSON")
