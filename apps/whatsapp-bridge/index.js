@@ -6,7 +6,6 @@ import makeWASocket, {
   Browsers,
 } from "@whiskeysockets/baileys";
 import P from "pino";
-import QRCode from "qrcode-terminal";
 import fs from "fs";
 
 const PORT = process.env.PORT || 8080;
@@ -74,8 +73,6 @@ async function startSession(tenantId, phoneNumber) {
   
   const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-  
-  // FIX 1: Use fetchLatestWaWebVersion instead of fetchLatestBaileysVersion
   const { version } = await fetchLatestWaWebVersion();
 
   const sock = makeWASocket({
@@ -108,7 +105,6 @@ async function startSession(tenantId, phoneNumber) {
         sessionData.connectionState = "connecting";
     }
 
-    // FIX 2: Trigger pairing code on QR event AND connection state
     if ((qr || connection === "connecting") && phoneNumber && !state.creds.registered && !sessionData.pairingRequested) {
       sessionData.pairingRequested = true;
       try {
@@ -120,13 +116,6 @@ async function startSession(tenantId, phoneNumber) {
         console.error(`[${tenantId}] pairing code failed:`, err.message);
         sessionData.pairingRequested = false;
       }
-    }
-
-    if (qr && !phoneNumber) {
-      sessionData.pairingCode = null;
-      sessionData.connectionState = "qr";
-      console.log(`\n[${tenantId}] SCAN QR`);
-      QRCode.generate(qr, { small: true });
     }
 
     if (connection === "open") {
