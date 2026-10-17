@@ -6,16 +6,10 @@ from a QR scan without installing the PWA; all requests begin pending approval.
 from __future__ import annotations
 
 import json
-import os
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
-from urllib.request import HTTPRedirectHandler, Request, build_opener
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from .config import settings
 from .db import SessionLocal
 from .models import Tenant
 from .models_growth import TenantSetting, PlatformSetting
@@ -25,8 +19,6 @@ import secrets
 from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/api/v1/public/smartcheck", tags=["public-smartcheck-visitors"])
-_ALLOWED_SCRIPT_HOSTS = {"script.google.com", "script.googleusercontent.com"}
-
 
 class PublicVisitorRequest(BaseModel):
     visitor_name: str = Field(min_length=1, max_length=160)
