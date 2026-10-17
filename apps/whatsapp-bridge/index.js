@@ -58,7 +58,7 @@ async function forwardInbound(msg) {
 async function startSocket() {
   const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-  const { version } = await fetchLatestWaWebVersion();
+  const version = [2, 3000, 1043857760]; // Stable WhatsApp Web version;
 
   sock = makeWASocket({
     version,
