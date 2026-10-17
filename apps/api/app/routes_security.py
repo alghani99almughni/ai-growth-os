@@ -29,7 +29,6 @@ from .models import Tenant, User
 from .models_growth import TenantSetting, PlatformSetting
 from .models_security import SecuritySite, VisitorPass, VisitorEvent
 from .security import decode_token_strict
-from .smartcheck_bridge import lifecycle_config, call_smartcheck, pass_from_sheet
 
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/security", tags=["security-visitor-management"])
 ADMIN_ROLES = {"owner", "admin", "tenant_admin", "manager", "security_admin", "platform_admin", "super_admin"}
@@ -233,20 +232,6 @@ def create_site(tenant_id: str, body: SiteInput, user: User = Depends(principal)
 @router.get("/passes")
 def list_passes(tenant_id: str, user: User = Depends(principal), db: Session = Depends(db_session), status: str | None = None, limit: int = 100):
     tenant_access(tenant_id, user, db)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "LIST_VISITORS")
-        rows = result.get("visitors", [])
-        if not isinstance(rows, list):
-            raise HTTPException(502, "SmartCheck visitor list response was invalid")
-        items = [pass_from_sheet(row, tenant_id) for row in rows if isinstance(row, dict)]
-        if status:
-            items = [item for item in items if item["status"] == status.strip().lower()]
-        return {"items": items[:max(1, min(limit, 200))]}
-    q = select(VisitorPass).where(VisitorPass.tenant_id == tenant_id).order_by(VisitorPass.created_at.desc()).limit(max(1, min(limit, 200)))
-    if status:
-        q = q.where(VisitorPass.status == status)
-    return {"items": [pass_json(p) for p in db.scalars(q).all()]}
 
 
 @router.post("/passes")
@@ -255,176 +240,42 @@ def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal)
     admin_only(user)
     if not body.needs_approval:
         raise HTTPException(422, "New visitor passes must require human approval")
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "VISITOR_REQUEST",
-            visitorName=body.visitor_name.strip(), visitorMobile=body.visitor_mobile.strip(),
-            purpose=body.purpose.strip(), targetDestination=body.destination.strip(),
-            vehicleNumber=body.vehicle_number.strip().upper())
-        ticket = str(result.get("ticketId", "")).strip()
-        if not ticket:
-            raise HTTPException(502, "SmartCheck did not return a visitor ticket ID")
-        return {"id": ticket, "tenant_id": tenant_id, "site_id": None,
-            "visitor_name": body.visitor_name.strip(), "visitor_mobile": body.visitor_mobile.strip(),
-            "purpose": body.purpose.strip(), "destination": body.destination.strip(),
-            "vehicle_number": body.vehicle_number.strip().upper(), "industry": body.industry,
-            "status": "pending", "expires_at": None, "created_at": None,
-            "checked_in_at": None, "checked_out_at": None, "qr_token": None}
-    # Every new pass starts pending; the separate approve endpoint records the approving actor.
-    return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
 @router.post("/requests")
 def create_ai_request(tenant_id: str, body: VisitorRequestInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Create a pending visitor request for AI chat/voice workflows. Never grants access."""
     tenant_access(tenant_id, user, db)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "VISITOR_REQUEST",
-            visitorName=body.visitor_name.strip(), visitorMobile=body.visitor_mobile.strip(),
-            purpose=body.purpose.strip(), targetDestination=body.destination.strip(), vehicleNumber="")
-        ticket = str(result.get("ticketId", "")).strip()
-        if not ticket:
-            raise HTTPException(502, "SmartCheck did not return a visitor ticket ID")
-        return {"id": ticket, "tenant_id": tenant_id, "visitor_name": body.visitor_name.strip(),
-            "visitor_mobile": body.visitor_mobile.strip(), "purpose": body.purpose.strip(),
-            "destination": body.destination.strip(), "vehicle_number": "", "status": "pending",
-            "qr_token": None, "expires_at": None, "created_at": None}
-    return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
 @router.post("/qr")
 def render_qr(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Render a QR image only for a token belonging to an unexpired pass in this tenant."""
     tenant_access(tenant_id, user, db)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "VERIFY_TOKEN", token=body.token)
-        if result.get("valid") is not True:
-            raise HTTPException(409, "SmartCheck token is invalid, unapproved, or already used")
-        image = qrcode.make(body.token)
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        return {"image_data_url": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"),
-                "pass_id": result.get("pass", {}).get("ticketId"), "status": "approved"}
-    digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
-    p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
-    if not p:
-        raise HTTPException(404, "Visitor token not found for this tenant")
-    if p.status not in {"pending", "approved"} or (p.expires_at and p.expires_at <= datetime.utcnow()):
-        raise HTTPException(409, "QR can only be rendered for a current visitor pass")
-    image = qrcode.make(body.token)
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return {"image_data_url": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"),
-            "pass_id": p.id, "status": p.status}
 
 
 @router.post("/verify-token")
 def verify_token(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Validate a QR/token for the selected tenant; verification does not admit the visitor."""
     tenant_access(tenant_id, user, db)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "VERIFY_TOKEN", token=body.token)
-        if result.get("valid") is not True:
-            raise HTTPException(409, str(result.get("message", "Invalid or unused visitor token")))
-        p = result.get("pass") or {}
-        return {"valid": True, "pass": {
-            "id": p.get("ticketId"), "tenant_id": tenant_id,
-            "visitor_name": p.get("visitorName", ""), "visitor_mobile": p.get("visitorMobile", ""),
-            "purpose": p.get("purpose", ""), "destination": p.get("destination", ""),
-            "vehicle_number": p.get("vehicleNumber", ""), "status": "approved", "qr_token": p.get("qrToken")
-        }}
-    digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
-    p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
-    if not p:
-        raise HTTPException(404, "Invalid visitor token")
-    if p.expires_at and p.expires_at <= datetime.utcnow():
-        if p.status in {"pending", "approved"}:
-            p.status = "expired"
-            event(db, tenant_id, p.id, user.id, "pass_expired")
-            db.commit()
-        raise HTTPException(410, "Visitor pass expired")
-    if p.status != "approved":
-        raise HTTPException(409, "Pass is not approved or has already been used")
-    event(db, tenant_id, p.id, user.id, "pass_token_verified", {"status": p.status})
-    db.commit()
-    return {"valid": True, "pass": pass_json(p)}
 
 
 @router.post("/passes/{pass_id}/approve")
 def approve_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     admin_only(user)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "APPROVE_VISITOR", ticketId=pass_id)
-        return {"id": pass_id, "tenant_id": tenant_id, "status": "approved",
-                "qr_token": result.get("qrToken") or None}
-    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
-    if not p:
-        raise HTTPException(404, "Pass not found")
-    if p.status != "pending":
-        raise HTTPException(409, "Only pending passes can be approved")
-    if p.expires_at and p.expires_at <= datetime.utcnow():
-        p.status = "expired"
-        event(db, tenant_id, p.id, user.id, "approval_rejected_expired")
-        db.commit()
-        raise HTTPException(410, "Pass expired")
-    p.status = "approved"
-    p.approved_by = user.id
-    event(db, tenant_id, p.id, user.id, "pass_approved")
-    db.commit()
-    db.refresh(p)
-    return pass_json(p)
 
 
 @router.post("/passes/{pass_id}/check-in")
 def check_in(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "CHECK_IN", ticketId=pass_id)
-        return {"id": pass_id, "tenant_id": tenant_id, "status": "checked_in"}
-    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
-    if not p:
-        raise HTTPException(404, "Pass not found")
-    if p.status != "approved":
-        raise HTTPException(409, "Pass must be approved and unused before entry")
-    if p.expires_at and p.expires_at <= datetime.utcnow():
-        p.status = "expired"
-        event(db, tenant_id, p.id, user.id, "check_in_rejected_expired")
-        db.commit()
-        raise HTTPException(410, "Pass expired")
-    p.status = "checked_in"
-    p.checked_in_at = datetime.utcnow()
-    event(db, tenant_id, p.id, user.id, "visitor_checked_in")
-    db.commit()
-    db.refresh(p)
-    return pass_json(p)
 
 
 @router.post("/passes/{pass_id}/check-out")
 def check_out(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "CHECK_OUT", ticketId=pass_id)
-        return {"id": pass_id, "tenant_id": tenant_id, "status": "checked_out"}
-    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
-    if not p:
-        raise HTTPException(404, "Pass not found")
-    if p.status != "checked_in":
-        raise HTTPException(409, "Only checked-in visitors can check out")
-    p.status = "checked_out"
-    p.checked_out_at = datetime.utcnow()
-    event(db, tenant_id, p.id, user.id, "visitor_checked_out")
-    db.commit()
-    db.refresh(p)
-    return pass_json(p)
 
 
 @router.get("/events")
@@ -439,22 +290,6 @@ def deny_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db:
     """Record an explicit human denial; a denied pass can never be admitted."""
     tenant_access(tenant_id, user, db)
     admin_only(user)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "REJECT_VISITOR", ticketId=pass_id)
-        return {"id": pass_id, "tenant_id": tenant_id, "status": "denied"}
-    p = db.scalar(select(VisitorPass).where(
-        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
-    ))
-    if not p:
-        raise HTTPException(404, "Pass not found")
-    if p.status != "pending":
-        raise HTTPException(409, "Only pending passes can be denied")
-    p.status = "denied"
-    event(db, tenant_id, p.id, user.id, "pass_denied")
-    db.commit()
-    db.refresh(p)
-    return pass_json(p)
 
 
 @router.post("/passes/{pass_id}/cancel")
@@ -462,20 +297,4 @@ def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), d
     """Cancel a pending or approved pass without altering completed gate history."""
     tenant_access(tenant_id, user, db)
     admin_only(user)
-    smartcheck = lifecycle_config(db, tenant_id)
-    if smartcheck:
-        result = call_smartcheck(smartcheck, user, "CANCEL_VISITOR", ticketId=pass_id)
-        return {"id": pass_id, "tenant_id": tenant_id, "status": "cancelled"}
-    p = db.scalar(select(VisitorPass).where(
-        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
-    ))
-    if not p:
-        raise HTTPException(404, "Pass not found")
-    if p.status not in {"pending", "approved"}:
-        raise HTTPException(409, "Only pending or approved passes can be cancelled")
-    p.status = "cancelled"
-    event(db, tenant_id, p.id, user.id, "pass_cancelled")
-    db.commit()
-    db.refresh(p)
-    return pass_json(p)
 
