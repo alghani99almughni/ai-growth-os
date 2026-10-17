@@ -316,7 +316,7 @@ def set_overrides(db: Session, tenant_id: str, overrides: dict, actor_id: str | 
         "digital_menu", "online_ordering", "order_tracking", "call_waiter",
         "service_requests", "games", "auto_bill", "online_payment",
         "ai_chat", "ai_voice", "loyalty", "referrals", "feedback",
-        "google_review", "bookings", "queue",
+        "google_review", "bookings", "queue", "security_visitor_management",
     }
     cleaned = {k: bool(v) for k, v in (overrides or {}).items() if k in allowed}
 
