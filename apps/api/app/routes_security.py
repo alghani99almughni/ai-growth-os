@@ -12,6 +12,7 @@ import hashlib
 import io
 import json
 import secrets
+from urllib.parse import quote, urlparse
 from datetime import datetime, timedelta
 from typing import Any
 
