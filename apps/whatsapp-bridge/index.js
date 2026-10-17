@@ -13,7 +13,7 @@ const API_KEY = process.env.BRIDGE_API_KEY || "change-me-in-render";
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const PAIRING_PHONE = process.env.PAIRING_PHONE || "";
-const TENANT_ID = process.env.TENANT_ID || "tenant_1";
+const TENANT_ID = process.env.TENANT_ID || "tenant_1"; // This will route to the Admin
 
 const logger = P({ level: process.env.LOG_LEVEL || "warn" });
 const app = express();
@@ -58,9 +58,8 @@ async function forwardInbound(msg) {
 async function startSocket() {
   const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-
-  // FORCING the version that worked successfully on 8790153319
-  const version = [2, 3000, 1043857760]; 
+  
+  const { version } = await fetchLatestWaWebVersion();
 
   sock = makeWASocket({
     version,
@@ -86,12 +85,6 @@ async function startSocket() {
       } catch (err) {
         pairingRequested = false;
       }
-    }
-
-    if (qr && !PAIRING_PHONE) {
-      currentQR = qr;
-      connectionState = "qr";
-      QRCode.generate(qr, { small: true });
     }
 
     if (connection === "open") {
