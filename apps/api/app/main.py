@@ -983,64 +983,66 @@ async def reply_whatsapp_thread(tenant_id, phone, payload: WhatsAppReplyRequest,
     ))
     db.commit()
     return {"sent": True, "whatsapp": result}
+
 @app.post("/api/v1/webhooks/openwa/{tenant_id}")
 async def openwa_webhook(tenant_id:str,request:Request,db:Session=Depends(get_db)):
     raw=await request.body()
     signature=request.headers.get("X-OpenWA-Signature") or request.headers.get("X-Webhook-Signature")
     if not WhatsAppAdapter.verify_webhook(raw,signature,settings.openwa_webhook_secret):
         raise HTTPException(401,"Invalid OpenWA webhook signature")
-    try: payload=json.loads(raw.decode("utf-8"))
-    except Exception: raise HTTPException(400,"Invalid webhook JSON")
-    if payload.get("event")!="message.received": return {"ok":True,"ignored":True}
+    try: 
+        payload=json.loads(raw.decode("utf-8"))
+    except Exception: 
+        raise HTTPException(400,"Invalid webhook JSON")
+    if payload.get("event")!="message.received": 
+        return {"ok":True,"ignored":True}
+    
     data=payload.get("data") or {}
     phone=str(data.get("senderPhone") or data.get("from") or "").split("@")[0]
     body=str(data.get("body") or "").strip()
-    if not phone or not body: return {"ok":True,"ignored":True}
+    if not phone or not body: 
+        return {"ok":True,"ignored":True}
+    
     tenant=db.get(Tenant,tenant_id)
-    if not tenant: raise HTTPException(404,"Tenant not found")
+    if not tenant: 
+        raise HTTPException(404,"Tenant not found")
     
-    clean_phone = "".join(filter(str.isdigit, phone)) # Safely clean the phone number
-    
-    existing=db.scalar(select(Customer).where(Customer.tenant_id==tenant_id,Customer.phone==clean_phone))
+    clean_phone = "".join(filter(str.isdigit, phone))
     push_name=((data.get("contact") or {}).get("pushName") or "").strip()
     
+    # 1. Auto-Capture Customer
+    existing = db.scalar(select(Customer).where(Customer.tenant_id==tenant_id, Customer.phone==clean_phone))
     if not existing:
-        try: existing=upsert_customer(db,tenant_id,clean_phone,push_name or "Unknown",True,source="whatsapp")
-        except Exception as exc: raise HTTPException(400,str(exc))
-        
-    from .models_email import TenantWhatsAppMessage
-    inbound_row = TenantWhatsAppMessage(id=str(uuid.uuid4()), tenant_id=tenant_id,
-        phone=clean_phone, contact_name=existing.name,
-        body=body, direction="inbound", status="received")
-    db.add(inbound_row); db.commit()
-    
-    # ... (the rest of the AI reply logic can remain or be commented out for now) ...
-    return {"ok":True,"customer_id":existing.id}
-    if not existing and not push_name:
-        prompt = "Welcome to "+tenant.name+"! Before I can assist you, please reply with your name."
-        await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(phone,prompt)
-        db.add(TenantWhatsAppMessage(id=str(uuid.uuid4()), tenant_id=tenant_id, phone=phone,
-            contact_name=None, body=prompt, direction="outbound", status="sent"))
-        db.commit()
-        return {"ok":True,"identity_required":True}
-    if not existing:
-        try: existing=upsert_customer(db,tenant_id,phone,push_name,True,source="whatsapp")
-        except ValueError as exc: raise HTTPException(400,str(exc))
+        try:
+            existing = upsert_customer(db, tenant_id, clean_phone, push_name or "Unknown", True, source="whatsapp")
+        except Exception as exc:
+            raise HTTPException(400,str(exc))
     elif not existing.name and push_name:
-        existing.name=push_name; existing.whatsapp_opt_in=True; db.commit()
-    # Existing customers may interact freely; new customers must have both mobile + name before AI/business actions.
-    inbound_row.contact_name = existing.name or push_name or None
-    result=await generate_reply(db,tenant_id,body,None,"whatsapp")
-    reply=result.get("reply") or "Thanks. How can I help you today?"
-    await tenant_whatsapp_adapter(db,tenant_id,settings).send_text(existing.phone,reply)
-    db.add(TenantWhatsAppMessage(id=str(uuid.uuid4()), tenant_id=tenant_id, phone=existing.phone,
-        contact_name=existing.name, body=reply, direction="outbound", status="sent"))
+        existing.name = push_name
+        existing.whatsapp_opt_in = True
+        db.commit()
+        
+    # 2. Save to CRM Transcript
+    from .models_email import TenantWhatsAppMessage
+    inbound_row = TenantWhatsAppMessage(
+        id=str(uuid.uuid4()), 
+        tenant_id=tenant_id,
+        phone=clean_phone, 
+        contact_name=existing.name,
+        body=body, 
+        direction="inbound", 
+        status="received"
+    )
+    db.add(inbound_row)
     db.commit()
-    return {"ok":True,"customer_id":existing.id,"reply":reply}
+    
+    # AI reply is intentionally skipped here to avoid crashing when OpenWA credentials are not configured in the database.
+    return {"ok":True,"customer_id":existing.id}
 
 @app.post("/api/v1/leads",status_code=201)
 def lead(payload:LeadCreate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,payload.tenant_id); l=create_lead(db,payload.tenant_id,payload.source,payload.customer_id,payload.intent,payload.notes); return {"id":l.id,"status":l.status}
+
 @app.get("/api/v1/tenants/{tenant_id}/leads")
 def leads(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); rows=db.scalars(select(Lead).where(Lead.tenant_id==tenant_id)).all(); return {"items":[{"id":x.id,"customer_id":x.customer_id,"source":x.source,"intent":x.intent,"notes":x.notes,"status":x.status} for x in rows]}
@@ -1052,7 +1054,6 @@ class CampaignCreateRequest(BaseModel):
     recipients: list[dict] # e.g. [{"phone": "919876543210", "name": "SHUKUR"}]
 class HoursUpdate(BaseModel):
     items: list[BusinessHourInput]
-
 def require_platform_admin(user:User):
     if user.role not in ("super_admin","platform_admin"): raise HTTPException(403,"Platform admin access required")
 
