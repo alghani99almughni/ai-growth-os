@@ -17,17 +17,20 @@ const API_KEY = process.env.BRIDGE_API_KEY || "change-me-in-render";
 const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
 const TENANT_ID = process.env.TENANT_ID || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+const PAIRING_PHONE = process.env.PAIRING_PHONE || "";
 
 const logger = P({ level: process.env.LOG_LEVEL || "warn" });
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 // ---------------------------------------------------------------
-// State (in-memory — QR rescan needed after Render restart)
+// State (in-memory — QR/pairing rescan needed after Render restart)
 // ---------------------------------------------------------------
 let sock = null;
 let currentQR = null;
-let connectionState = "starting"; // starting | qr | connected | disconnected
+let pairingCode = null;
+let pairingRequested = false;
+let connectionState = "starting"; // starting | qr | pairing_code | connected | disconnected
 let connectedPhone = null;
 const authFolder = "./auth_info";
 
@@ -50,11 +53,12 @@ async function forwardInbound(msg) {
     logger.warn("webhook not configured — dropping inbound message");
     return;
   }
-    const key = msg.key || {};
-  // Use remoteJidAlt if available to get the real phone number (PN), 
-  // falling back to remoteJid if not present.
+  
+  const key = msg.key || {};
+  // Prefer remoteJidAlt so we deliver the real phone number instead of a LID.
   const jid = key.remoteJidAlt || key.remoteJid || "";
   const from = jid.split("@")[0];
+  
   const body =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
@@ -63,13 +67,13 @@ async function forwardInbound(msg) {
     "";
   if (!from || !body) return;
 
-    const payload = {
+  const payload = {
     event: "message.received",
     data: {
       id: key.id || "",
       from: from + "@c.us",
       senderPhone: from,
-      chatId: (key.remoteJidAlt || key.remoteJid || ""), // Fix: prefer real phone number over LID
+      chatId: jid,
       body,
       isGroup: (key.remoteJid || "").endsWith("@g.us"),
       contact: { pushName: msg.pushName || "" },
@@ -77,17 +81,14 @@ async function forwardInbound(msg) {
   };
 
   try {
-    const r = await fetch(
-      WEBHOOK_URL.replace("{tenant_id}", TENANT_ID),
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(WEBHOOK_SECRET ? { "X-OpenWA-Signature": WEBHOOK_SECRET } : {}),
-        },
-        body: JSON.stringify(payload),
-      }
-    );
+    const r = await fetch(WEBHOOK_URL.replace("{tenant_id}", TENANT_ID), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(WEBHOOK_SECRET ? { "X-OpenWA-Signature": WEBHOOK_SECRET } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
     if (!r.ok) {
       logger.warn({ status: r.status }, "webhook rejected inbound");
     } else {
@@ -110,31 +111,53 @@ async function startSocket() {
     logger,
     printQRInTerminal: false,
     auth: state,
-    // Force a Linux browser tuple to avoid Windows-428 rejections
     browser: Browsers.ubuntu("Chrome"),
     generateHighQualityLinkPreview: false,
   });
 
   sock.ev.on("creds.update", saveCreds);
 
-  sock.ev.on("connection.update", (u) => {
+  sock.ev.on("connection.update", async (u) => {
     const { connection, lastDisconnect, qr } = u;
-    if (qr) {
+
+    // --- Pairing-code path (PAIRING_PHONE set, not yet registered) ---
+    if (qr && PAIRING_PHONE && !state.creds.registered && !pairingRequested) {
+      pairingRequested = true;
+      try {
+        const digits = PAIRING_PHONE.replace(/\D/g, "");
+        pairingCode = await sock.requestPairingCode(digits);
+        connectionState = "pairing_code";
+        console.log(`\n========================================`);
+        console.log(`  WHATSAPP PAIRING CODE: ${pairingCode}`);
+        console.log(`========================================\n`);
+      } catch (err) {
+        console.error("pairing code failed:", err.message);
+        pairingRequested = false; // allow retry on next qr rotation
+      }
+    }
+
+    // --- QR fallback path (no PAIRING_PHONE) ---
+    if (qr && !PAIRING_PHONE) {
       currentQR = qr;
       connectionState = "qr";
       console.log("── SCAN QR ──");
       QRCode.generate(qr, { small: true });
     }
+
     if (connection === "open") {
       currentQR = null;
+      pairingCode = null;
+      pairingRequested = false;
       connectionState = "connected";
       connectedPhone = sock?.user?.id?.split(":")[0] || null;
       logger.info({ phone: connectedPhone }, "connected");
     }
+
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
       logger.warn({ code }, "connection closed");
       connectionState = "disconnected";
+      pairingRequested = false;
       if (code !== DisconnectReason.loggedOut) {
         setTimeout(() => {
           startSocket().catch((e) => logger.error(e, "restart failed"));
@@ -168,7 +191,16 @@ app.get("/", (_req, res) => {
   });
 });
 
-// QR as HTML (open in browser)
+// Pairing code (poll this when PAIRING_PHONE is set)
+app.get("/pair", auth, (_req, res) => {
+  res.json({
+    state: connectionState,
+    code: pairingCode,
+    phone: connectedPhone,
+  });
+});
+
+// QR as HTML (open in browser) — used when PAIRING_PHONE is empty
 app.get("/qr", (_req, res) => {
   if (connectionState === "connected") {
     return res.send(
@@ -187,7 +219,7 @@ app.get("/qr", (_req, res) => {
       </body></html>`
     );
   }
-   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(
     currentQR
   )}`;
   res.send(
@@ -225,8 +257,12 @@ app.get("/api/sessions/:session_id", auth, (req, res) => {
       phoneNumber: connectedPhone,
     });
   }
+  const status =
+    connectionState === "qr" || connectionState === "pairing_code"
+      ? "qr_pending"
+      : connectionState;
   res.json({
-    status: connectionState === "qr" ? "qr_pending" : connectionState,
+    status,
     session_id: req.params.session_id,
     phoneNumber: null,
   });
@@ -250,7 +286,7 @@ app.post("/api/sessions/:session_id/messages/send-text", auth, async (req, res) 
   }
 });
 
-// Manual QR reset (delete session + restart)
+// Manual reset (delete session + restart, forces fresh pairing/QR)
 app.post("/reset", auth, async (req, res) => {
   try {
     if (sock) {
@@ -261,6 +297,8 @@ app.post("/reset", auth, async (req, res) => {
     fs.rmSync(authFolder, { recursive: true, force: true });
     connectionState = "starting";
     currentQR = null;
+    pairingCode = null;
+    pairingRequested = false;
     connectedPhone = null;
     setTimeout(() => startSocket().catch((e) => logger.error(e, "restart failed")), 500);
     res.json({ ok: true });
