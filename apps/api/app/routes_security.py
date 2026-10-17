@@ -14,7 +14,6 @@ import json
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
-from urllib.parse import quote, urlparse
 
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -232,50 +231,127 @@ def create_site(tenant_id: str, body: SiteInput, user: User = Depends(principal)
 @router.get("/passes")
 def list_passes(tenant_id: str, user: User = Depends(principal), db: Session = Depends(db_session), status: str | None = None, limit: int = 100):
     tenant_access(tenant_id, user, db)
+    q = select(VisitorPass).where(VisitorPass.tenant_id == tenant_id).order_by(VisitorPass.created_at.desc()).limit(max(1, min(limit, 200)))
+    if status:
+        q = q.where(VisitorPass.status == status)
+    return {"items": [pass_json(p) for p in db.scalars(q).all()]}
 
 
 @router.post("/passes")
 def create_pass(tenant_id: str, body: PassInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    # Never allow a request payload to bypass human approval. Every new pass
+    # starts pending; the separate approve endpoint records the approving actor.
     if not body.needs_approval:
         raise HTTPException(422, "New visitor passes must require human approval")
+    return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
 @router.post("/requests")
 def create_ai_request(tenant_id: str, body: VisitorRequestInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Create a pending visitor request for AI chat/voice workflows. Never grants access."""
     tenant_access(tenant_id, user, db)
+    return _create_pass(tenant_id, body, user, db, needs_approval=True)
 
 
 @router.post("/qr")
 def render_qr(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Render a QR image only for a token belonging to an unexpired pass in this tenant."""
     tenant_access(tenant_id, user, db)
+    digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
+    if not p:
+        raise HTTPException(404, "Visitor token not found for this tenant")
+    if p.status not in {"pending", "approved"} or (p.expires_at and p.expires_at <= datetime.utcnow()):
+        raise HTTPException(409, "QR can only be rendered for a current visitor pass")
+    image = qrcode.make(body.token)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return {"image_data_url": "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"),
+            "pass_id": p.id, "status": p.status}
 
 
 @router.post("/verify-token")
 def verify_token(tenant_id: str, body: VerifyTokenInput, user: User = Depends(principal), db: Session = Depends(db_session)):
     """Validate a QR/token for the selected tenant; verification does not admit the visitor."""
     tenant_access(tenant_id, user, db)
+    digest = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    p = db.scalar(select(VisitorPass).where(VisitorPass.tenant_id == tenant_id, VisitorPass.token_hash == digest))
+    if not p:
+        raise HTTPException(404, "Invalid visitor token")
+    if p.expires_at and p.expires_at <= datetime.utcnow():
+        if p.status in {"pending", "approved"}:
+            p.status = "expired"
+            event(db, tenant_id, p.id, user.id, "pass_expired")
+            db.commit()
+        raise HTTPException(410, "Visitor pass expired")
+    if p.status != "approved":
+        raise HTTPException(409, "Pass is not approved or has already been used")
+    event(db, tenant_id, p.id, user.id, "pass_token_verified", {"status": p.status})
+    db.commit()
+    return {"valid": True, "pass": pass_json(p)}
 
 
 @router.post("/passes/{pass_id}/approve")
 def approve_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status != "pending":
+        raise HTTPException(409, "Only pending passes can be approved")
+    if p.expires_at and p.expires_at <= datetime.utcnow():
+        p.status = "expired"
+        event(db, tenant_id, p.id, user.id, "approval_rejected_expired")
+        db.commit()
+        raise HTTPException(410, "Pass expired")
+    p.status = "approved"
+    p.approved_by = user.id
+    event(db, tenant_id, p.id, user.id, "pass_approved")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
 
 
 @router.post("/passes/{pass_id}/check-in")
 def check_in(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
+    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status != "approved":
+        raise HTTPException(409, "Pass must be approved and unused before entry")
+    if p.expires_at and p.expires_at <= datetime.utcnow():
+        p.status = "expired"
+        event(db, tenant_id, p.id, user.id, "check_in_rejected_expired")
+        db.commit()
+        raise HTTPException(410, "Pass expired")
+    p.status = "checked_in"
+    p.checked_in_at = datetime.utcnow()
+    event(db, tenant_id, p.id, user.id, "visitor_checked_in")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
 
 
 @router.post("/passes/{pass_id}/check-out")
 def check_out(tenant_id: str, pass_id: str, user: User = Depends(principal), db: Session = Depends(db_session)):
     tenant_access(tenant_id, user, db)
     gate_staff(user)
+    p = db.scalar(select(VisitorPass).where(VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status != "checked_in":
+        raise HTTPException(409, "Only checked-in visitors can check out")
+    p.status = "checked_out"
+    p.checked_out_at = datetime.utcnow()
+    event(db, tenant_id, p.id, user.id, "visitor_checked_out")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
 
 
 @router.get("/events")
@@ -290,6 +366,18 @@ def deny_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), db:
     """Record an explicit human denial; a denied pass can never be admitted."""
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    p = db.scalar(select(VisitorPass).where(
+        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
+    ))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status != "pending":
+        raise HTTPException(409, "Only pending passes can be denied")
+    p.status = "denied"
+    event(db, tenant_id, p.id, user.id, "pass_denied")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
 
 
 @router.post("/passes/{pass_id}/cancel")
@@ -297,4 +385,16 @@ def cancel_pass(tenant_id: str, pass_id: str, user: User = Depends(principal), d
     """Cancel a pending or approved pass without altering completed gate history."""
     tenant_access(tenant_id, user, db)
     admin_only(user)
+    p = db.scalar(select(VisitorPass).where(
+        VisitorPass.id == pass_id, VisitorPass.tenant_id == tenant_id
+    ))
+    if not p:
+        raise HTTPException(404, "Pass not found")
+    if p.status not in {"pending", "approved"}:
+        raise HTTPException(409, "Only pending or approved passes can be cancelled")
+    p.status = "cancelled"
+    event(db, tenant_id, p.id, user.id, "pass_cancelled")
+    db.commit()
+    db.refresh(p)
+    return pass_json(p)
 
