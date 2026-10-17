@@ -1,64 +1,41 @@
-// AI Growth OS — WhatsApp bridge (Baileys)
-// Exposes a small REST API for the Super Admin WhatsApp Inbox.
-// Inbound messages POST to the AI Growth OS webhook.
-
+// AI Growth OS — Multi-Tenant WhatsApp bridge (Baileys)
 import express from "express";
 import makeWASocket, {
-  useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
   Browsers,
 } from "@whiskeysockets/baileys";
 import P from "pino";
 import QRCode from "qrcode-terminal";
+import fs from "fs";
 
 const PORT = process.env.PORT || 8080;
 const API_KEY = process.env.BRIDGE_API_KEY || "change-me-in-render";
-const WEBHOOK_URL = process.env.WEBHOOK_URL || "";
-const TENANT_ID = process.env.TENANT_ID || "";
+const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
-const PAIRING_PHONE = process.env.PAIRING_PHONE || "";
 
 const logger = P({ level: process.env.LOG_LEVEL || "warn" });
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// ---------------------------------------------------------------
-// State (in-memory — QR/pairing rescan needed after Render restart)
-// ---------------------------------------------------------------
-let sock = null;
-let currentQR = null;
-let pairingCode = null;
-let pairingRequested = false;
-let connectionState = "starting"; // starting | qr | pairing_code | connected | disconnected
-let connectedPhone = null;
-const authFolder = "./auth_info";
+// In-memory session manager
+const sessions = new Map(); 
 
-// ---------------------------------------------------------------
-// Auth guard for our REST endpoints
-// ---------------------------------------------------------------
 function auth(req, res, next) {
   const key = req.headers["x-api-key"] || req.query.api_key;
-  if (key !== API_KEY) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
+  if (key !== API_KEY) return res.status(401).json({ error: "unauthorized" });
   next();
 }
 
 // ---------------------------------------------------------------
-// Send inbound message to AI Growth OS webhook
+// Webhook Forwarder
 // ---------------------------------------------------------------
-async function forwardInbound(msg) {
-  if (!WEBHOOK_URL || !TENANT_ID) {
-    logger.warn("webhook not configured — dropping inbound message");
-    return;
-  }
+async function forwardInbound(msg, tenantId) {
+  if (!WEBHOOK_BASE_URL || !tenantId) return;
   
   const key = msg.key || {};
-  // Prefer remoteJidAlt so we deliver the real phone number instead of a LID.
   const jid = key.remoteJidAlt || key.remoteJid || "";
   const from = jid.split("@")[0];
-  
   const body =
     msg.message?.conversation ||
     msg.message?.extendedTextMessage?.text ||
@@ -81,7 +58,10 @@ async function forwardInbound(msg) {
   };
 
   try {
-    const r = await fetch(WEBHOOK_URL.replace("{tenant_id}", TENANT_ID), {
+    // Replace {tenant_id} in the URL
+    const url = WEBHOOK_BASE_URL.replace("{tenant_id}", tenantId);
+    
+    const r = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -89,24 +69,24 @@ async function forwardInbound(msg) {
       },
       body: JSON.stringify(payload),
     });
-    if (!r.ok) {
-      logger.warn({ status: r.status }, "webhook rejected inbound");
-    } else {
-      logger.info({ from }, "inbound forwarded");
-    }
+    
+    if (!r.ok) logger.warn({ status: r.status, tenantId }, "webhook rejected inbound");
   } catch (e) {
     logger.error({ err: e.message }, "webhook forward failed");
   }
 }
 
 // ---------------------------------------------------------------
-// Baileys socket
+// Session Starter
 // ---------------------------------------------------------------
-async function startSocket() {
+async function startSession(tenantId, phoneNumber) {
+  const authFolder = `./auth_info/${tenantId}`;
+  
+  const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   const { version } = await fetchLatestBaileysVersion();
 
-  sock = makeWASocket({
+  const sock = makeWASocket({
     version,
     logger,
     printQRInTerminal: false,
@@ -115,55 +95,53 @@ async function startSocket() {
     generateHighQualityLinkPreview: false,
   });
 
+  const sessionData = {
+    sock,
+    state,
+    phoneNumber,
+    pairingCode: null,
+    connectionState: "starting",
+    connectedPhone: null,
+    pairingRequested: false
+  };
+  
+  sessions.set(tenantId, sessionData);
+
   sock.ev.on("creds.update", saveCreds);
 
   sock.ev.on("connection.update", async (u) => {
     const { connection, lastDisconnect, qr } = u;
 
-    // --- Pairing-code path (PAIRING_PHONE set, not yet registered) ---
-    if (qr && PAIRING_PHONE && !state.creds.registered && !pairingRequested) {
-      pairingRequested = true;
+    if (qr && phoneNumber && !state.creds.registered && !sessionData.pairingRequested) {
+      sessionData.pairingRequested = true;
       try {
-        const digits = PAIRING_PHONE.replace(/\D/g, "");
-        pairingCode = await sock.requestPairingCode(digits);
-        connectionState = "pairing_code";
-        console.log(`\n========================================`);
-        console.log(`  WHATSAPP PAIRING CODE: ${pairingCode}`);
-        console.log(`========================================\n`);
+        const digits = phoneNumber.replace(/\D/g, "");
+        sessionData.pairingCode = await sock.requestPairingCode(digits);
+        sessionData.connectionState = "pairing_code";
+        console.log(`\n[${tenantId}] WHATSAPP PAIRING CODE: ${sessionData.pairingCode}\n`);
       } catch (err) {
-        console.error("pairing code failed:", err.message);
-        pairingRequested = false; // allow retry on next qr rotation
+        console.error(`[${tenantId}] pairing code failed:`, err.message);
+        sessionData.pairingRequested = false;
       }
     }
 
-    // --- QR fallback path (no PAIRING_PHONE) ---
-    if (qr && !PAIRING_PHONE) {
-      currentQR = qr;
-      connectionState = "qr";
-      console.log("── SCAN QR ──");
-      QRCode.generate(qr, { small: true });
-    }
-
     if (connection === "open") {
-      currentQR = null;
-      pairingCode = null;
-      pairingRequested = false;
-      connectionState = "connected";
-      connectedPhone = sock?.user?.id?.split(":")[0] || null;
-      logger.info({ phone: connectedPhone }, "connected");
+      sessionData.pairingCode = null;
+      sessionData.pairingRequested = false;
+      sessionData.connectionState = "connected";
+      sessionData.connectedPhone = sock?.user?.id?.split(":")[0] || null;
+      logger.info({ tenantId, phone: sessionData.connectedPhone }, "connected");
     }
 
     if (connection === "close") {
       const code = lastDisconnect?.error?.output?.statusCode;
-      logger.warn({ code }, "connection closed");
-      connectionState = "disconnected";
-      pairingRequested = false;
+      sessionData.connectionState = "disconnected";
+      sessionData.pairingRequested = false;
+      
       if (code !== DisconnectReason.loggedOut) {
-        setTimeout(() => {
-          startSocket().catch((e) => logger.error(e, "restart failed"));
-        }, 3000);
+        setTimeout(() => startSession(tenantId, phoneNumber), 3000);
       } else {
-        logger.error("logged out — delete auth_info folder and rescan");
+        logger.error(`[${tenantId}] logged out — delete auth_info folder`);
       }
     }
   });
@@ -171,9 +149,8 @@ async function startSocket() {
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
     if (type !== "notify") return;
     for (const m of messages) {
-      if (!m.message) continue;
-      if (m.key?.fromMe) continue;
-      await forwardInbound(m);
+      if (!m.message || m.key?.fromMe) continue;
+      await forwardInbound(m, tenantId);
     }
   });
 }
@@ -182,135 +159,59 @@ async function startSocket() {
 // REST API
 // ---------------------------------------------------------------
 
-// Health + status
-app.get("/", (_req, res) => {
+app.post("/api/connect", auth, async (req, res) => {
+  const { tenantId, phone } = req.body || {};
+  if (!tenantId || !phone) return res.status(400).json({ error: "tenantId and phone required" });
+  
+  if (sessions.has(tenantId)) {
+    return res.status(400).json({ error: "Session already exists" });
+  }
+
+  startSession(tenantId, phone);
+  res.json({ ok: true, message: "Session starting" });
+});
+
+app.get("/api/sessions/:tenantId/status", auth, (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session) return res.status(404).json({ error: "Session not found" });
+  
   res.json({
-    service: "ai-growth-whatsapp-bridge",
-    state: connectionState,
-    phone: connectedPhone,
+    state: session.connectionState,
+    code: session.pairingCode,
+    phone: session.connectedPhone
   });
 });
 
-// Pairing code (poll this when PAIRING_PHONE is set)
-app.get("/pair", auth, (_req, res) => {
-  res.json({
-    state: connectionState,
-    code: pairingCode,
-    phone: connectedPhone,
-  });
-});
-
-// QR as HTML (open in browser) — used when PAIRING_PHONE is empty
-app.get("/qr", (_req, res) => {
-  if (connectionState === "connected") {
-    return res.send(
-      `<html><body style="font-family:sans-serif;padding:40px;text-align:center">
-        <h2 style="color:#1aa76c">✓ Connected</h2>
-        <p>Phone: ${connectedPhone || "unknown"}</p>
-      </body></html>`
-    );
-  }
-  if (!currentQR) {
-    return res.send(
-      `<html><body style="font-family:sans-serif;padding:40px;text-align:center">
-        <h2>Waiting for QR…</h2>
-        <p>Refresh in a few seconds.</p>
-        <p>State: ${connectionState}</p>
-      </body></html>`
-    );
-  }
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(
-    currentQR
-  )}`;
-  res.send(
-    `<html><body style="font-family:sans-serif;padding:40px;text-align:center;background:#fafbfc">
-      <h2>Scan with WhatsApp</h2>
-      <p>WhatsApp → Linked devices → Link a device</p>
-      <img src="${qrUrl}" alt="QR" style="border:8px solid #fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1)" />
-      <p style="color:#75839a;font-size:12px;margin-top:20px">Refresh if this QR expires.</p>
-    </body></html>`
-  );
-});
-
-// Send a text message
-app.post("/send", auth, async (req, res) => {
-  if (connectionState !== "connected" || !sock) {
+app.post("/api/sessions/:tenantId/messages/send-text", auth, async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (!session || session.connectionState !== "connected") {
     return res.status(503).json({ error: "not connected" });
   }
-  const { to, text } = req.body || {};
-  if (!to || !text) return res.status(400).json({ error: "to and text required" });
-  const jid = to.includes("@") ? to : `${to.replace(/\D/g, "")}@s.whatsapp.net`;
-  try {
-    const result = await sock.sendMessage(jid, { text });
-    res.json({ ok: true, id: result?.key?.id });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// OpenWA-compatible session status endpoint
-app.get("/api/sessions/:session_id", auth, (req, res) => {
-  if (connectionState === "connected") {
-    return res.json({
-      status: "connected",
-      session_id: req.params.session_id,
-      phoneNumber: connectedPhone,
-    });
-  }
-  const status =
-    connectionState === "qr" || connectionState === "pairing_code"
-      ? "qr_pending"
-      : connectionState;
-  res.json({
-    status,
-    session_id: req.params.session_id,
-    phoneNumber: null,
-  });
-});
-
-// OpenWA-compatible send-text endpoint (so existing backend keeps working)
-app.post("/api/sessions/:session_id/messages/send-text", auth, async (req, res) => {
-  if (connectionState !== "connected" || !sock) {
-    return res.status(503).json({ error: "not connected" });
-  }
+  
   const { chatId, text } = req.body || {};
-  if (!chatId || !text) {
-    return res.status(400).json({ error: "chatId and text required" });
-  }
+  if (!chatId || !text) return res.status(400).json({ error: "chatId and text required" });
+  
   const jid = chatId.includes("@") ? chatId : `${chatId.replace(/\D/g, "")}@s.whatsapp.net`;
   try {
-    const result = await sock.sendMessage(jid, { text });
+    const result = await session.sock.sendMessage(jid, { text });
     res.json({ ok: true, id: result?.key?.id, chatId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// Manual reset (delete session + restart, forces fresh pairing/QR)
-app.post("/reset", auth, async (req, res) => {
-  try {
-    if (sock) {
-      try { await sock.logout(); } catch {}
-      try { sock.end?.(); } catch {}
-    }
-    const fs = await import("fs");
-    fs.rmSync(authFolder, { recursive: true, force: true });
-    connectionState = "starting";
-    currentQR = null;
-    pairingCode = null;
-    pairingRequested = false;
-    connectedPhone = null;
-    setTimeout(() => startSocket().catch((e) => logger.error(e, "restart failed")), 500);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+app.post("/api/sessions/:tenantId/reset", auth, async (req, res) => {
+  const session = sessions.get(req.params.tenantId);
+  if (session) {
+    try { await session.sock.logout(); } catch {}
+    try { session.sock.end?.(); } catch {}
+    
+    fs.rmSync(`./auth_info/${req.params.tenantId}`, { recursive: true, force: true });
+    sessions.delete(req.params.tenantId);
   }
+  res.json({ ok: true });
 });
 
-// ---------------------------------------------------------------
-// Boot
-// ---------------------------------------------------------------
 app.listen(PORT, () => {
   logger.info({ port: PORT }, "bridge listening");
-  startSocket().catch((e) => logger.error(e, "socket start failed"));
 });
