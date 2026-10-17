@@ -1,7 +1,6 @@
 import express from "express";
 import makeWASocket, {
   DisconnectReason,
-  fetchLatestWaWebVersion,
   Browsers,
 } from "@whiskeysockets/baileys";
 import P from "pino";
@@ -13,7 +12,7 @@ const API_KEY = process.env.BRIDGE_API_KEY || "change-me-in-render";
 const WEBHOOK_BASE_URL = process.env.WEBHOOK_BASE_URL || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const PAIRING_PHONE = process.env.PAIRING_PHONE || "";
-const TENANT_ID = process.env.TENANT_ID || "tenant_1"; // This will route to the Admin
+const TENANT_ID = process.env.TENANT_ID || "tenant_1";
 
 const logger = P({ level: process.env.LOG_LEVEL || "warn" });
 const app = express();
@@ -59,7 +58,8 @@ async function startSocket() {
   const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
   
-  const { version } = await fetchLatestWaWebVersion();
+  // This is the exact version that worked this morning
+  const version = [2, 3000, 1043857760]; 
 
   sock = makeWASocket({
     version,
