@@ -2,7 +2,7 @@
 import express from "express";
 import makeWASocket, {
   DisconnectReason,
-  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   Browsers,
 } from "@whiskeysockets/baileys";
 import P from "pino";
@@ -18,7 +18,6 @@ const logger = P({ level: process.env.LOG_LEVEL || "warn" });
 const app = express();
 app.use(express.json({ limit: "2mb" }));
 
-// In-memory session manager
 const sessions = new Map(); 
 
 function auth(req, res, next) {
@@ -27,9 +26,6 @@ function auth(req, res, next) {
   next();
 }
 
-// ---------------------------------------------------------------
-// Webhook Forwarder
-// ---------------------------------------------------------------
 async function forwardInbound(msg, tenantId) {
   if (!WEBHOOK_BASE_URL || !tenantId) return;
   
@@ -58,9 +54,7 @@ async function forwardInbound(msg, tenantId) {
   };
 
   try {
-    // Replace {tenant_id} in the URL
     const url = WEBHOOK_BASE_URL.replace("{tenant_id}", tenantId);
-    
     const r = await fetch(url, {
       method: "POST",
       headers: {
@@ -69,22 +63,20 @@ async function forwardInbound(msg, tenantId) {
       },
       body: JSON.stringify(payload),
     });
-    
     if (!r.ok) logger.warn({ status: r.status, tenantId }, "webhook rejected inbound");
   } catch (e) {
     logger.error({ err: e.message }, "webhook forward failed");
   }
 }
 
-// ---------------------------------------------------------------
-// Session Starter
-// ---------------------------------------------------------------
 async function startSession(tenantId, phoneNumber) {
   const authFolder = `./auth_info/${tenantId}`;
   
   const { useMultiFileAuthState } = await import("@whiskeysockets/baileys");
   const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-  const { version } = await fetchLatestBaileysVersion();
+  
+  // FIX 1: Use fetchLatestWaWebVersion instead of fetchLatestBaileysVersion
+  const { version } = await fetchLatestWaWebVersion();
 
   const sock = makeWASocket({
     version,
@@ -112,7 +104,12 @@ async function startSession(tenantId, phoneNumber) {
   sock.ev.on("connection.update", async (u) => {
     const { connection, lastDisconnect, qr } = u;
 
-    if (qr && phoneNumber && !state.creds.registered && !sessionData.pairingRequested) {
+    if (connection === "connecting") {
+        sessionData.connectionState = "connecting";
+    }
+
+    // FIX 2: Trigger pairing code on QR event AND connection state
+    if ((qr || connection === "connecting") && phoneNumber && !state.creds.registered && !sessionData.pairingRequested) {
       sessionData.pairingRequested = true;
       try {
         const digits = phoneNumber.replace(/\D/g, "");
@@ -123,6 +120,13 @@ async function startSession(tenantId, phoneNumber) {
         console.error(`[${tenantId}] pairing code failed:`, err.message);
         sessionData.pairingRequested = false;
       }
+    }
+
+    if (qr && !phoneNumber) {
+      sessionData.pairingCode = null;
+      sessionData.connectionState = "qr";
+      console.log(`\n[${tenantId}] SCAN QR`);
+      QRCode.generate(qr, { small: true });
     }
 
     if (connection === "open") {
@@ -154,10 +158,6 @@ async function startSession(tenantId, phoneNumber) {
     }
   });
 }
-
-// ---------------------------------------------------------------
-// REST API
-// ---------------------------------------------------------------
 
 app.post("/api/connect", auth, async (req, res) => {
   const { tenantId, phone } = req.body || {};
