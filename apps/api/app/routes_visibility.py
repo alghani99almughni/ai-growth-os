@@ -4,15 +4,17 @@ This first slice intentionally stores configuration and questions only. It does 
 pretend to run live AI search checks; provider adapters and SSRF-safe auditing are
 separate follow-up work.
 """
-import re
-from urllib.parse import urlsplit
+import re, json, socket, ipaddress
+from datetime import datetime
+from html.parser import HTMLParser
+from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from .db import SessionLocal
 from .models import User
-from .models_visibility import VisibilityBrand, VisibilityCompetitor, VisibilityQuery
+from .models_visibility import VisibilityBrand, VisibilityCompetitor, VisibilityQuery, VisibilityAudit, VisibilityAuditFinding
 
 # Imported by main.py at the end of module initialization to avoid an import cycle.
 from .main import get_current_user, get_db, require_tenant
@@ -117,3 +119,136 @@ def add_query(tenant_id: str, payload: QueryPayload, user: User = Depends(get_cu
     row = VisibilityQuery(tenant_id=tenant_id, query_text=payload.query_text.strip(), intent=payload.intent, locale=payload.locale.strip(), topic=payload.topic.strip(), is_active=payload.is_active)
     db.add(row); db.commit(); db.refresh(row)
     return {"id": row.id, "query_text": row.query_text, "intent": row.intent, "locale": row.locale, "topic": row.topic, "is_active": row.is_active}
+
+
+class _SEOParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.title_parts = []
+        self.in_title = False
+        self.description = ""
+        self.canonical = ""
+        self.robots = ""
+        self.h1_count = 0
+        self.structured_data = False
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag.lower() == "title": self.in_title = True
+        if tag.lower() == "h1": self.h1_count += 1
+        if tag.lower() == "meta" and a.get("name", "").lower() == "description": self.description = a.get("content", "").strip()
+        if tag.lower() == "meta" and a.get("name", "").lower() == "robots": self.robots = a.get("content", "").strip()
+        if tag.lower() == "link" and "canonical" in a.get("rel", "").lower().split(): self.canonical = a.get("href", "").strip()
+        if tag.lower() == "script" and a.get("type", "").lower() == "application/ld+json": self.structured_data = True
+    def handle_endtag(self, tag):
+        if tag.lower() == "title": self.in_title = False
+    def handle_data(self, data):
+        if self.in_title: self.title_parts.append(data.strip())
+
+def _validated_public_url(value: str) -> str:
+    host = _domain(value)
+    parts = urlsplit(value if "://" in value else "https://" + value)
+    try:
+        addresses = {item[4][0].split("%")[0] for item in socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80), type=socket.SOCK_STREAM)}
+    except (socket.gaierror, OSError):
+        raise HTTPException(422, "Website domain could not be resolved")
+    if not addresses:
+        raise HTTPException(422, "Website domain could not be resolved")
+    for address in addresses:
+        try: ip = ipaddress.ip_address(address)
+        except ValueError: raise HTTPException(422, "Website domain resolved to an invalid address")
+        if not ip.is_global:
+            raise HTTPException(422, "Private or reserved network addresses are not allowed")
+    path = parts.path or "/"
+    return urlunsplit((parts.scheme, host, path, parts.query, ""))
+
+@router.post("/audits", status_code=201)
+def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Run a small, bounded first-page audit. No redirects, scripts, or arbitrary page crawling."""
+    import httpx
+    _authorize(user, tenant_id)
+    brand = db.scalar(select(VisibilityBrand).where(VisibilityBrand.tenant_id == tenant_id).order_by(VisibilityBrand.created_at.asc()))
+    if not brand:
+        raise HTTPException(400, "Save your brand profile before starting a website audit")
+    url = _validated_public_url("https://" + brand.primary_domain)
+    try:
+        with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
+                          headers={"User-Agent": "AIGrowthOS-VisibilityAudit/1.0"}) as client:
+            response = client.get(url)
+    except httpx.TimeoutException:
+        raise HTTPException(422, "Website request timed out. Try again later.")
+    except httpx.HTTPError:
+        raise HTTPException(422, "Website could not be reached safely.")
+    if 300 <= response.status_code < 400:
+        findings = [{"category":"crawlability","severity":"warning","title":"Website redirects",
+                     "recommendation":"Review the redirect destination and canonical domain. Redirect following is disabled for safety.",
+                     "evidence":str(response.status_code)}]
+        body = ""
+    elif response.status_code >= 400:
+        findings = [{"category":"availability","severity":"high","title":"Website returned an HTTP error",
+                     "recommendation":"Check that the public website is available to visitors and crawlers.",
+                     "evidence":str(response.status_code)}]
+        body = ""
+    elif "text/html" not in response.headers.get("content-type", "").lower():
+        findings = [{"category":"content","severity":"warning","title":"Homepage is not HTML",
+                     "recommendation":"Confirm that the brand URL points to the public website homepage.",
+                     "evidence":response.headers.get("content-type", "unknown")[:120]}]
+        body = ""
+    else:
+        body = response.text[:500000]
+        parser = _SEOParser()
+        parser.feed(body)
+        title = " ".join(parser.title_parts).strip()
+        description = parser.description
+        findings = []
+        if not title:
+            findings.append({"category":"metadata","severity":"high","title":"Missing page title","recommendation":"Add a unique, descriptive HTML title for the homepage.","evidence":""})
+        elif len(title) > 60:
+            findings.append({"category":"metadata","severity":"low","title":"Page title may be too long","recommendation":"Review whether the title can be shortened while keeping the main service and brand.","evidence":title[:240]})
+        if not description:
+            findings.append({"category":"metadata","severity":"medium","title":"Missing meta description","recommendation":"Add a concise, unique meta description that explains the business and its main value.","evidence":""})
+        if parser.h1_count == 0:
+            findings.append({"category":"content","severity":"medium","title":"No H1 heading detected","recommendation":"Add a clear main heading that describes the page purpose.","evidence":""})
+        elif parser.h1_count > 1:
+            findings.append({"category":"content","severity":"low","title":"Multiple H1 headings detected","recommendation":"Review the heading hierarchy so the primary page topic is clear.","evidence":str(parser.h1_count)})
+        if not parser.canonical:
+            findings.append({"category":"technical","severity":"low","title":"No canonical link detected","recommendation":"Consider adding a canonical URL when the page has duplicate or alternate URL variants.","evidence":""})
+        if not parser.structured_data:
+            findings.append({"category":"structured_data","severity":"medium","title":"No JSON-LD structured data detected","recommendation":"Consider adding appropriate Organization or LocalBusiness structured data when accurate for the business.","evidence":""})
+        if "noindex" in parser.robots.lower():
+            findings.append({"category":"indexing","severity":"high","title":"Robots meta tag includes noindex","recommendation":"Confirm whether search engines should be allowed to index this public page.","evidence":parser.robots[:200]})
+        if not findings:
+            findings.append({"category":"metadata","severity":"info","title":"No basic homepage metadata issues detected","recommendation":"Continue with deeper content, sitemap, internal-link and structured-data validation.","evidence":"First-page checks only"})
+    record = VisibilityAudit(tenant_id=tenant_id, target_url=url, status="completed" if response.status_code < 400 else "partial",
+                             http_status=response.status_code, pages_checked=1,
+                             summary_json=json.dumps({"finding_count":len(findings),"content_type":response.headers.get("content-type","")[:120],
+                                                      "title_detected": bool(body and "<title" in body.lower()),
+                                                      "scope":"single public homepage; basic HTML checks only"}))
+    db.add(record); db.flush()
+    for item in findings:
+        db.add(VisibilityAuditFinding(tenant_id=tenant_id,audit_id=record.id,category=item["category"],severity=item["severity"],
+                                      title=item["title"],recommendation=item["recommendation"],evidence=item["evidence"][:500]))
+    db.commit(); db.refresh(record)
+    return {"id":record.id,"status":record.status,"target_url":record.target_url,"http_status":record.http_status,
+            "pages_checked":1,"findings":findings,"scope":"Single homepage only. No AI visibility score or live AI answer check is included.",
+            "created_at":record.created_at.isoformat() if record.created_at else None}
+
+@router.get("/audits")
+def list_website_audits(tenant_id: str, limit: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _authorize(user, tenant_id)
+    rows = db.scalars(select(VisibilityAudit).where(VisibilityAudit.tenant_id == tenant_id)
+                      .order_by(VisibilityAudit.created_at.desc()).limit(min(max(limit, 1), 50))).all()
+    return {"items":[{"id":r.id,"target_url":r.target_url,"status":r.status,"http_status":r.http_status,
+                      "pages_checked":r.pages_checked,"summary":json.loads(r.summary_json or "{}"),
+                      "created_at":r.created_at.isoformat() if r.created_at else None} for r in rows]}
+
+@router.get("/audits/{audit_id}")
+def get_website_audit(tenant_id: str, audit_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _authorize(user, tenant_id)
+    record = db.scalar(select(VisibilityAudit).where(VisibilityAudit.id == audit_id, VisibilityAudit.tenant_id == tenant_id))
+    if not record: raise HTTPException(404, "Audit not found")
+    rows = db.scalars(select(VisibilityAuditFinding).where(VisibilityAuditFinding.audit_id == record.id,
+                            VisibilityAuditFinding.tenant_id == tenant_id).order_by(VisibilityAuditFinding.created_at.asc())).all()
+    return {"id":record.id,"target_url":record.target_url,"status":record.status,"http_status":record.http_status,
+            "pages_checked":record.pages_checked,"summary":json.loads(record.summary_json or "{}"),
+            "findings":[{"category":r.category,"severity":r.severity,"title":r.title,"recommendation":r.recommendation,"evidence":r.evidence}
+                        for r in rows],"created_at":record.created_at.isoformat() if record.created_at else None}
