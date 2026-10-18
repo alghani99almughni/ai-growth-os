@@ -12,7 +12,9 @@ const PERMISSIONS = [
   ["services.manage","Manage services"],["calls.view","Calls"],["calls.manage","Manage calls"],
   ["campaigns.view","Marketing campaigns"],["campaigns.manage","Send campaigns"],
   ["communications.view","WhatsApp & email inbox"],["communications.reply","Reply to messages"],
-  ["reports.view","Reports"],["team.manage","Manage team"],["settings.manage","Business settings"]
+  ["reports.view","Reports"],["team.manage","Manage team"],["settings.manage","Business settings"],
+  ["security.view","View security & visitor management"],["security.manage","Manage security sites"],
+  ["visitors.view","View visitor passes"],["visitors.manage","Manage visitor passes"]
 ];
 export default function TeamPanel({tenantId,token}:{tenantId:string;token:string}) {
   const [items,setItems]=useState<Staff[]>([]);
