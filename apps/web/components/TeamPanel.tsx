@@ -26,7 +26,9 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
   const [error,setError]=useState("");
   const [status,setStatus]=useState("");
   const [tab,setTab]=useState<"members"|"roles"|"departments">("members");
-  const [staff,setStaff]=useState({name:"",email:"",password:"",role:"",department_id:"",skills:""});
+  const [staff,setStaff]=useState({name:"",email:"",password:"",role:"",department_id:"",skills:"",chat_enabled:true});
+  const [createdLoginUrl,setCreatedLoginUrl]=useState("");
+  const [editingRoleId,setEditingRoleId]=useState("");
   const [roleName,setRoleName]=useState("");
   const [permissions,setPermissions]=useState<string[]>(["dashboard.view"]);
   const [dept,setDept]=useState({name:"",description:"",skills:""});
@@ -56,14 +58,23 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
     e.preventDefault();setBusy(true);setStatus("");setError("");
     try {
       await request(`/api/v1/tenants/${tenantId}/staff`,{method:"POST",body:JSON.stringify({...staff,service_ids:selectedServiceIds,skills:staff.skills.split(",").map(x=>x.trim()).filter(Boolean).join(",")})});
-      setStatus("Team member created. They can sign in using the email and password you set.");
-      setStaff({name:"",email:"",password:"",role:roles[0]?.name||"",department_id:"",skills:""});setSelectedServiceIds([]);await loadAll();
+      setStatus("Team member created. Share the sign-in link and credentials with them.");
+      setCreatedLoginUrl(typeof window!=="undefined"?window.location.origin+"/login":"/login");
+      setStaff({name:"",email:"",password:"",role:roles[0]?.name||"",department_id:"",skills:"",chat_enabled:true});setSelectedServiceIds([]);await loadAll();
     } catch(e:any){setError(e.message||"Could not create team member")} setBusy(false);
   }
   async function createRole(e:any) {
     e.preventDefault();setBusy(true);setError("");setStatus("");
-    try {await request(`/api/v1/tenants/${tenantId}/roles`,{method:"POST",body:JSON.stringify({name:roleName,permissions})});setRoleName("");setStatus("Role and permissions saved.");await loadAll();}
-    catch(e:any){setError(e.message||"Could not create role")}setBusy(false);
+    try {
+      if(editingRoleId){await request(`/api/v1/tenants/${tenantId}/roles/${editingRoleId}`,{method:"PUT",body:JSON.stringify({name:roleName,permissions})});setStatus("Role permissions updated.");}
+      else {await request(`/api/v1/tenants/${tenantId}/roles`,{method:"POST",body:JSON.stringify({name:roleName,permissions})});setStatus("Role and permissions saved.");}
+      setRoleName("");setPermissions(["dashboard.view"]);setEditingRoleId("");await loadAll();
+    } catch(e:any){setError(e.message||"Could not save role")}setBusy(false);
+  }
+  async function removeRole(r:Role){
+    if(!window.confirm("Delete role "+r.name+"? System roles and roles assigned to members cannot be deleted."))return;
+    try{await request(`/api/v1/tenants/${tenantId}/roles/${r.id}`,{method:"DELETE"});setStatus("Role deleted.");await loadAll();}
+    catch(e:any){setError(e.message||"Could not delete role")}
   }
   async function createDepartment(e:any) {
     e.preventDefault();setBusy(true);setError("");setStatus("");
@@ -104,6 +115,7 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
           {services.length?services.map(s=><label key={s.id} style={{display:"flex",gap:8,alignItems:"center",marginTop:7,fontSize:13,color:"#344054"}}><input type="checkbox" checked={selectedServiceIds.includes(s.id)} onChange={e=>setSelectedServiceIds(ids=>e.target.checked?[...ids,s.id]:ids.filter(id=>id!==s.id))}/>{s.name}</label>):<p style={{fontSize:12,color:"#667085"}}>No active services configured. Service assignment is optional; you can create the member without selecting services.</p>}
         </div>
         <label style={{display:"block",marginTop:10}}>Additional skills (optional, comma separated)<input value={staff.skills} onChange={e=>setStaff({...staff,skills:e.target.value})} placeholder="Customer support, follow-ups" style={input}/></label>
+        <label style={{display:"flex",gap:8,alignItems:"center",marginTop:12,fontSize:13}}><input type="checkbox" checked={staff.chat_enabled} onChange={e=>setStaff({...staff,chat_enabled:e.target.checked})}/> Enable Team Communications chat for this member</label>
         <button disabled={busy||!roles.length} style={{...btn,marginTop:14,background:"#4f46e5",color:"#fff",borderColor:"#4f46e5"}}>{busy?"Saving…":"Create member & login"}</button>
         {!roles.length&&<div style={{marginTop:12,padding:12,border:"1px solid #fed7aa",background:"#fff7ed",borderRadius:9,color:"#9a3412",fontSize:13}}>
           <strong style={{display:"block",marginBottom:4}}>Role setup required</strong>
@@ -123,12 +135,12 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
     </div>}
     {tab==="roles"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:20}}>
       <form onSubmit={createRole} style={{border:"1px solid #e8ecf3",borderRadius:12,padding:16}}>
-        <h3 style={{marginTop:0}}>Create role</h3><label>Role name<input required minLength={2} value={roleName} onChange={e=>setRoleName(e.target.value)} placeholder="e.g. Receptionist, Sales, Nutritionist" style={input}/></label>
+        <h3 style={{marginTop:0}}>{editingRoleId?"Edit role permissions":"Create role"}</h3><label>Role name<input required minLength={2} value={roleName} onChange={e=>setRoleName(e.target.value)} placeholder="e.g. Receptionist, Sales, Nutritionist" style={input}/></label>
         <p style={{fontSize:12,color:"#667085"}}>Select the dashboard areas and actions this role is allowed to handle.</p>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:9}}>{PERMISSIONS.map(([key,label])=><label key={key} style={{display:"flex",gap:7,alignItems:"flex-start",fontSize:12,color:"#344054"}}><input type="checkbox" checked={permissions.includes(key)} onChange={e=>setPermissions(p=>e.target.checked?[...p,key]:p.filter(x=>x!==key))}/>{label}</label>)}</div>
-        <button disabled={busy} style={{...btn,marginTop:14,background:"#4f46e5",color:"#fff",borderColor:"#4f46e5"}}>{busy?"Saving…":"Save role & permissions"}</button>
+        <button disabled={busy} style={{...btn,marginTop:14,background:"#4f46e5",color:"#fff",borderColor:"#4f46e5"}}>{busy?"Saving…":editingRoleId?"Update role & permissions":"Save role & permissions"}</button>
       </form>
-      <div><h3 style={{marginTop:0}}>Configured roles</h3>{roles.map(r=><article key={r.id} style={{border:"1px solid #e8ecf3",borderRadius:10,padding:13,marginBottom:10}}><strong>{r.name}</strong>{r.is_system&&<span style={{marginLeft:8,fontSize:11,color:"#667085"}}>System</span>}<p style={{fontSize:12,color:"#667085",marginBottom:0}}>{(r.permissions||[]).map(p=>PERMISSIONS.find(x=>x[0]===p)?.[1]||p).join(" · ")||"No permissions selected"}</p></article>)}</div>
+      <div><h3 style={{marginTop:0}}>Configured roles</h3>{roles.map(r=><article key={r.id} style={{border:"1px solid #e8ecf3",borderRadius:10,padding:13,marginBottom:10}}><strong>{r.name}</strong>{r.is_system&&<span style={{marginLeft:8,fontSize:11,color:"#667085"}}>System</span>}<p style={{fontSize:12,color:"#667085",marginBottom:8}}>{(r.permissions||[]).map(p=>PERMISSIONS.find(x=>x[0]===p)?.[1]||p).join(" · ")||"No permissions selected"}</p><div style={{display:"flex",gap:8}}><button type="button" style={btn} onClick={()=>{setEditingRoleId(r.id);setRoleName(r.name);setPermissions(r.permissions||[]);}}>Edit permissions</button>{!r.is_system&&<button type="button" style={btn} onClick={()=>void removeRole(r)}>Delete role</button>}</div></article>)}</div>
     </div>}
     {tab==="departments"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:20}}>
       <form onSubmit={createDepartment} style={{border:"1px solid #e8ecf3",borderRadius:12,padding:16}}><h3 style={{marginTop:0}}>Create department / service group</h3>
