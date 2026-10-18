@@ -10,6 +10,8 @@ export default function VisibilityWorkspace() {
   const [brand, setBrand] = useState<any>({ name: "", primary_domain: "", description: "", locale: "en" });
   const [competitors, setCompetitors] = useState<any[]>([]);
   const [queries, setQueries] = useState<any[]>([]);
+  const [audits, setAudits] = useState<any[]>([]);
+  const [auditBusy, setAuditBusy] = useState(false);
   const [competitor, setCompetitor] = useState({ name: "", domain: "", notes: "" });
   const [query, setQuery] = useState({ query_text: "", intent: "local", locale: "en", topic: "" });
   const [status, setStatus] = useState("");
@@ -27,6 +29,9 @@ export default function VisibilityWorkspace() {
     if ([b, c, q].some(r => r.status === 401 || r.status === 403)) throw new Error("Your session does not have access to this business. Please sign in again.");
     if (![b, c, q].every(r => r.ok)) throw new Error("Visibility API is not available yet. Please check the backend deployment.");
     const [bd, cd, qd] = await Promise.all([b.json(), c.json(), q.json()]);
+    const ar = await fetch(endpoint(id, "audits"), { headers: headers(), cache: "no-store" });
+    const ad = ar.ok ? await ar.json() : { items: [] };
+    setAudits(ad.items || []);
     if (bd.brand) setBrand(bd.brand);
     setCompetitors(cd.items || []);
     setQueries(qd.items || []);
@@ -41,6 +46,19 @@ export default function VisibilityWorkspace() {
       load(t.id).catch(e => setStatus(e.message));
     } catch { setStatus("Could not load your business workspace."); }
   }, []);
+
+  async function runAudit() {
+    if (!tenant) return;
+    setAuditBusy(true); setStatus("");
+    try {
+      const r = await fetch(endpoint(tenant.id, "audits"), { method: "POST", headers: headers() });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "Website audit failed.");
+      setStatus("Website audit completed. " + (d.findings || []).length + " finding(s) recorded.");
+      await load(tenant.id);
+    } catch (e: any) { setStatus(e.message || "Website audit failed."); }
+    finally { setAuditBusy(false); }
+  }
 
   async function saveBrand(e: React.FormEvent) {
     e.preventDefault(); if (!tenant) return; setBusy(true); setStatus("");
@@ -107,6 +125,9 @@ export default function VisibilityWorkspace() {
       </form>
       <div style={{ display: "grid", gap: 8, marginTop: 16 }}>{queries.map(q => <article key={q.id} style={{ padding: 12, border: "1px solid #e8edf4", borderRadius: 10 }}><strong>{q.query_text}</strong><div style={{ color: "#69778a", fontSize: 13, marginTop: 5 }}>{q.intent} · {q.locale}{q.topic ? " · " + q.topic : ""}</div></article>)}</div>
     </section>
-    <section style={{ ...panel, background: "#f8fafc" }}><h2>Coming next</h2><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}><div><strong>Website audit</strong><p>Technical/content checks with evidence and safe public URL fetching.</p></div><div><strong>AI answer observations</strong><p>Provider-backed checks with timestamps, cited URLs and method labels.</p></div><div><strong>Reports and trends</strong><p>Historical changes and recommendations tied to actual evidence.</p></div></div><small>We will not report AI rankings or citations until a real provider check has completed.</small></section>
+    <section style={panel}><h2>4. Website audit</h2><p>Run a bounded check of the saved public homepage for basic SEO and discoverability issues. This is a single-page audit, not a guarantee of search ranking.</p><button onClick={runAudit} disabled={auditBusy || busy || !brand.primary_domain} style={{ padding: "12px 18px", border: 0, borderRadius: 9, background: "#176b63", color: "white", cursor: "pointer" }}>{auditBusy ? "Checking website…" : "Run homepage audit"}</button>
+      {audits.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>Audit history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Website</th><th>Status</th><th>HTTP</th><th>Findings</th></tr></thead><tbody>{audits.map(a => <tr key={a.id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{a.created_at ? new Date(a.created_at).toLocaleString() : "—"}</td><td>{a.target_url}</td><td>{a.status}</td><td>{a.http_status ?? "—"}</td><td>{a.summary?.finding_count ?? "—"}</td></tr>)}</tbody></table></div>}
+    </section>
+    <section style={{ ...panel, background: "#f8fafc" }}><h2>Next development milestone</h2><div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}><div><strong>Deeper website audits</strong><p>Sitemap, internal links and content coverage with strict crawl limits.</p></div><div><strong>AI answer observations</strong><p>Provider-backed checks with timestamps, cited URLs and method labels.</p></div><div><strong>Reports and trends</strong><p>Historical changes and recommendations tied to actual evidence.</p></div></div><small>AI rankings and citations will only be reported after real provider checks complete.</small></section>
   </main>;
 }
