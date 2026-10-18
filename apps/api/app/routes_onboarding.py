@@ -14,6 +14,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,10 +25,13 @@ from .services import create_tenant, create_owner, hash_password
 from .industry_templates import seed_industry_defaults, available_industries
 from .industry_catalog import IndustryCatalogEntry
 from .models_growth import TenantSetting
+from .config import settings
+from .security import decode_token_strict
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+security = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
@@ -189,5 +193,62 @@ def public_onboard(payload: OnboardRequest):
         db.rollback()
         logger.exception("public_onboard failed: %s", exc)
         raise HTTPException(500, "Could not complete signup. Please try again.")
+    finally:
+        db.close()
+
+class TenantDuplicateCheck(BaseModel):
+    business_name: str = ""
+    owner_email: str = ""
+    phone: str = ""
+    whatsapp_number: str = ""
+
+
+@router.post("/api/v1/platform/tenants/check-duplicates")
+def check_tenant_duplicates(
+    payload: TenantDuplicateCheck,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+):
+    """Preflight duplicate check for Super Admin tenant provisioning."""
+    if not credentials:
+        raise HTTPException(401, "Authentication required")
+    db: Session = SessionLocal()
+    try:
+        try:
+            claims = decode_token_strict(credentials.credentials, settings.jwt_secret, settings.jwt_algorithm)
+        except ValueError:
+            raise HTTPException(401, "Invalid authentication token")
+        user = db.get(User, claims.get("sub"))
+        if not user or not user.is_active or claims.get("tenant_id") != user.tenant_id:
+            raise HTTPException(401, "Invalid authentication context")
+        if user.role not in ("platform_admin", "super_admin"):
+            raise HTTPException(403, "Platform admin access required")
+
+        duplicates = {}
+        name = payload.business_name.strip()
+        email = payload.owner_email.strip().lower()
+        phone = "".join(ch for ch in payload.phone if ch.isdigit())
+        whatsapp = "".join(ch for ch in payload.whatsapp_number if ch.isdigit())
+
+        if name:
+            matches = db.scalars(select(Tenant).where(Tenant.name.ilike(name))).all()
+            if matches:
+                duplicates["business_name"] = {"message": "A business with this name already exists.", "matches": [x.name for x in matches[:3]]}
+        if email:
+            matches = db.scalars(select(User).where(User.email.ilike(email))).all()
+            if matches:
+                duplicates["owner_email"] = {"message": "This email is already registered.", "matches": [x.email for x in matches[:3]]}
+        rows = db.scalars(select(Tenant).where((Tenant.phone.is_not(None)) | (Tenant.whatsapp_number.is_not(None)))).all()
+        for field, digits in (("phone", phone), ("whatsapp_number", whatsapp)):
+            if len(digits) >= 7:
+                matched = [
+                    x for x in rows
+                    if digits in (
+                        "".join(ch for ch in (x.phone or "") if ch.isdigit()),
+                        "".join(ch for ch in (x.whatsapp_number or "") if ch.isdigit()),
+                    )
+                ]
+                if matched:
+                    duplicates[field] = {"message": "This number is already used as a contact or WhatsApp number by another tenant.", "matches": [x.name for x in matched[:3]]}
+        return {"ok": not duplicates, "duplicates": duplicates}
     finally:
         db.close()
