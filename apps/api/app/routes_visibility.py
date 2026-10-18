@@ -173,28 +173,41 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
     try:
         with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
                           headers={"User-Agent": "AIGrowthOS-VisibilityAudit/1.0"}) as client:
-            response = client.get(url)
+            with client.stream("GET", url) as response:
+                status_code = response.status_code
+                content_type = response.headers.get("content-type", "")
+                if status_code < 300 and "text/html" in content_type.lower():
+                    chunks = []
+                    total = 0
+                    for chunk in response.iter_bytes():
+                        total += len(chunk)
+                        if total > 500000:
+                            break
+                        chunks.append(chunk)
+                    body_bytes = b"".join(chunks)
+                    body = body_bytes.decode(response.encoding or "utf-8", errors="replace")
+                else:
+                    body = ""
     except httpx.TimeoutException:
         raise HTTPException(422, "Website request timed out. Try again later.")
     except httpx.HTTPError:
         raise HTTPException(422, "Website could not be reached safely.")
-    if 300 <= response.status_code < 400:
+    if 300 <= status_code < 400:
         findings = [{"category":"crawlability","severity":"warning","title":"Website redirects",
                      "recommendation":"Review the redirect destination and canonical domain. Redirect following is disabled for safety.",
                      "evidence":str(response.status_code)}]
         body = ""
-    elif response.status_code >= 400:
+    elif status_code >= 400:
         findings = [{"category":"availability","severity":"high","title":"Website returned an HTTP error",
                      "recommendation":"Check that the public website is available to visitors and crawlers.",
                      "evidence":str(response.status_code)}]
         body = ""
-    elif "text/html" not in response.headers.get("content-type", "").lower():
+    elif "text/html" not in content_type.lower():
         findings = [{"category":"content","severity":"warning","title":"Homepage is not HTML",
                      "recommendation":"Confirm that the brand URL points to the public website homepage.",
-                     "evidence":response.headers.get("content-type", "unknown")[:120]}]
+                     "evidence":content_type or "unknown"}]
         body = ""
     else:
-        body = response.text[:500000]
         parser = _SEOParser()
         parser.feed(body)
         title = " ".join(parser.title_parts).strip()
@@ -218,9 +231,9 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
             findings.append({"category":"indexing","severity":"high","title":"Robots meta tag includes noindex","recommendation":"Confirm whether search engines should be allowed to index this public page.","evidence":parser.robots[:200]})
         if not findings:
             findings.append({"category":"metadata","severity":"info","title":"No basic homepage metadata issues detected","recommendation":"Continue with deeper content, sitemap, internal-link and structured-data validation.","evidence":"First-page checks only"})
-    record = VisibilityAudit(tenant_id=tenant_id, target_url=url, status="completed" if response.status_code < 400 else "partial",
-                             http_status=response.status_code, pages_checked=1,
-                             summary_json=json.dumps({"finding_count":len(findings),"content_type":response.headers.get("content-type","")[:120],
+    record = VisibilityAudit(tenant_id=tenant_id, target_url=url, status="completed" if status_code < 400 else "partial",
+                             http_status=status_code, pages_checked=1,
+                             summary_json=json.dumps({"finding_count":len(findings),"content_type":content_type[:120],
                                                       "title_detected": bool(body and "<title" in body.lower()),
                                                       "scope":"single public homepage; basic HTML checks only"}))
     db.add(record); db.flush()
