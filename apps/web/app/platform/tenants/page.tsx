@@ -23,14 +23,14 @@ export default function TenantsPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [industryFilter, setIndustryFilter] = useState("");
+  const [searchField, setSearchField] = useState("all");
+  const [sortOrder, setSortOrder] = useState("newest");
 
   useEffect(() => {
     const token = localStorage.getItem("ago_access_token") || "";
     if (!token) { window.location.href = "/login"; return; }
-    const params = new URLSearchParams();
-    if (search) params.set("search", search);
-    if (statusFilter) params.set("status", statusFilter);
-    fetch(api() + "/api/v1/platform/tenants?" + params.toString(), {
+    fetch(api() + "/api/v1/platform/tenants", {
       headers: { Authorization: "Bearer " + token },
       cache: "no-store",
     })
@@ -40,7 +40,27 @@ export default function TenantsPage() {
       })
       .then((x) => { setItems(x.items || []); setLoading(false); })
       .catch((e) => { if (e.message !== "auth") setError(e.message || "Failed to load"); setLoading(false); });
-  }, [search, statusFilter]);
+  }, []);
+
+  const industries = Array.from(new Set(items.map((t) => (t.industry || "Unknown").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  const filteredItems = items.filter((t) => {
+    const name = (t.name || "").toLocaleLowerCase();
+    const industry = (t.industry || "").toLocaleLowerCase();
+    const slug = (t.slug || "").toLocaleLowerCase();
+    const matchesSearch = !normalizedSearch ||
+      (searchField === "name" ? name.includes(normalizedSearch) :
+       searchField === "industry" ? industry.includes(normalizedSearch) :
+       searchField === "slug" ? slug.includes(normalizedSearch) :
+       name.includes(normalizedSearch) || industry.includes(normalizedSearch) || slug.includes(normalizedSearch));
+    const matchesStatus = !statusFilter || (t.status || "").toLowerCase() === statusFilter;
+    const matchesIndustry = !industryFilter || (t.industry || "Unknown").trim() === industryFilter;
+    return matchesSearch && matchesStatus && matchesIndustry;
+  }).sort((a, b) => {
+    if (sortOrder === "name") return (a.name || "").localeCompare(b.name || "");
+    if (sortOrder === "oldest") return (a.created_at || "").localeCompare(b.created_at || "");
+    return (b.created_at || "").localeCompare(a.created_at || "");
+  });
 
   function bandColor(band: string) {
     if (band === "healthy") return { bg: "#e9faf2", fg: "#1d9c68" };
@@ -54,30 +74,47 @@ export default function TenantsPage() {
     <div>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ margin: 0, fontSize: 26, letterSpacing: "-0.03em", color: "#17213a" }}>Tenants</h1>
-        <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>{items.length} total · click a row to open</p>
+        <p style={{ margin: "6px 0 0", color: "#75839a", fontSize: 13 }}>{filteredItems.length} shown · {items.length} total · click a row to open</p>
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 2fr) repeat(auto-fit, minmax(155px, 1fr))", gap: 10, marginBottom: 16 }}>
         <input
-          placeholder="Search by name or slug…"
+          aria-label="Search tenants"
+          placeholder={searchField === "name" ? "Enter business name…" : searchField === "industry" ? "Enter industry type…" : searchField === "slug" ? "Enter tenant slug…" : "Search business, industry or slug…"}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: 1, minWidth: 220, padding: "11px 14px", border: "1px solid #d7dce5", borderRadius: 10, fontSize: 13, outline: "none" }}
+          style={{ width: "100%", boxSizing: "border-box", padding: "11px 14px", border: "1px solid #d7dce5", borderRadius: 10, fontSize: 13, outline: "none" }}
         />
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={{ padding: "11px 14px", border: "1px solid #d7dce5", borderRadius: 10, fontSize: 13, background: "#fff", minWidth: 150 }}>
+        <select aria-label="Search field" value={searchField} onChange={(e) => setSearchField(e.target.value)} style={filterStyle}>
+          <option value="all">Search all fields</option>
+          <option value="name">Business name</option>
+          <option value="industry">Industry type</option>
+          <option value="slug">Tenant slug</option>
+        </select>
+        <select aria-label="Filter by industry" value={industryFilter} onChange={(e) => setIndustryFilter(e.target.value)} style={filterStyle}>
+          <option value="">All industries</option>
+          {industries.map((industry) => <option key={industry} value={industry}>{industry}</option>)}
+        </select>
+        <select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={filterStyle}>
           <option value="">All statuses</option>
           <option value="active">Active</option>
           <option value="suspended">Suspended</option>
           <option value="pending">Pending</option>
           <option value="closed">Closed</option>
         </select>
+        <select aria-label="Sort tenants" value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} style={filterStyle}>
+          <option value="newest">Recently created</option>
+          <option value="oldest">Oldest created</option>
+          <option value="name">Business name A–Z</option>
+        </select>
+        <button type="button" onClick={() => { setSearch(""); setSearchField("all"); setStatusFilter(""); setIndustryFilter(""); setSortOrder("newest"); }} style={clearButtonStyle}>Clear filters</button>
       </div>
 
       {error && <p style={{ color: "#b00", marginBottom: 12 }}>{error}</p>}
 
       {loading ? (
         <div style={{ padding: 40, textAlign: "center", color: "#75839a" }}>Loading…</div>
-      ) : items.length === 0 ? (
+      ) : filteredItems.length === 0 ? (
         <div style={{ padding: 60, textAlign: "center", color: "#75839a", background: "#fff", border: "1px dashed #dbe1ea", borderRadius: 14 }}>
           <h3 style={{ margin: "0 0 6px", color: "#17213a", fontSize: 15 }}>No tenants match</h3>
           <p style={{ margin: 0, fontSize: 13 }}>Try a different search or clear the filter.</p>
@@ -97,7 +134,7 @@ export default function TenantsPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((t) => {
+              {filteredItems.map((t) => {
                 const c = bandColor(t.health_band);
                 return (
                   <tr key={t.id} style={{ borderTop: "1px solid #f1f4f8" }}>
@@ -134,6 +171,9 @@ export default function TenantsPage() {
     </div>
   );
 }
+
+const filterStyle: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "11px 12px", border: "1px solid #d7dce5", borderRadius: 10, fontSize: 13, background: "#fff", minWidth: 0, color: "#344054" };
+const clearButtonStyle: React.CSSProperties = { padding: "11px 14px", border: "1px solid #d7dce5", borderRadius: 10, fontSize: 13, background: "#f8fafc", color: "#344054", cursor: "pointer" };
 
 const thStyle: React.CSSProperties = { textAlign: "left", padding: "12px 16px", fontSize: 11, color: "#8b97a9", textTransform: "uppercase", letterSpacing: "0.04em", fontWeight: 600, borderBottom: "1px solid #edf0f5" };
 
