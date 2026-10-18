@@ -237,12 +237,18 @@ def check_tenant_duplicates(
             matches = db.scalars(select(User).where(User.email.ilike(email))).all()
             if matches:
                 duplicates["owner_email"] = {"message": "This email is already registered.", "matches": [x.email for x in matches[:3]]}
-        for field, digits, attr in (("phone", phone, Tenant.phone), ("whatsapp_number", whatsapp, Tenant.whatsapp_number)):
+        rows = db.scalars(select(Tenant).where((Tenant.phone.is_not(None)) | (Tenant.whatsapp_number.is_not(None)))).all()
+        for field, digits in (("phone", phone), ("whatsapp_number", whatsapp)):
             if len(digits) >= 7:
-                rows = db.scalars(select(Tenant).where(attr.is_not(None))).all()
-                matched = [x for x in rows if "".join(ch for ch in (getattr(x, "phone" if field == "phone" else "whatsapp_number") or "") if ch.isdigit()) == digits]
+                matched = [
+                    x for x in rows
+                    if digits in (
+                        "".join(ch for ch in (x.phone or "") if ch.isdigit()),
+                        "".join(ch for ch in (x.whatsapp_number or "") if ch.isdigit()),
+                    )
+                ]
                 if matched:
-                    duplicates[field] = {"message": "This number is already used by another tenant.", "matches": [x.name for x in matched[:3]]}
+                    duplicates[field] = {"message": "This number is already used as a contact or WhatsApp number by another tenant.", "matches": [x.name for x in matched[:3]]}
         return {"ok": not duplicates, "duplicates": duplicates}
     finally:
         db.close()
