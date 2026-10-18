@@ -230,25 +230,25 @@ def check_tenant_duplicates(
         whatsapp = "".join(ch for ch in payload.whatsapp_number if ch.isdigit())
 
         if name:
-            matches = db.scalars(select(Tenant).where(Tenant.name.ilike(name))).all()
+            matches = db.scalars(select(Tenant).where(Tenant.status == "active", Tenant.name.ilike(name))).all()
             if matches:
                 duplicates["business_name"] = {"message": "A business with this name already exists.", "matches": [x.name for x in matches[:3]]}
         if email:
             matches = db.scalars(select(User).where(User.email.ilike(email))).all()
             if matches:
                 duplicates["owner_email"] = {"message": "This email is already registered.", "matches": [x.email for x in matches[:3]]}
-        rows = db.scalars(select(Tenant).where((Tenant.phone.is_not(None)) | (Tenant.whatsapp_number.is_not(None)))).all()
-        for field, digits in (("phone", phone), ("whatsapp_number", whatsapp)):
+        rows = db.scalars(select(Tenant).where(Tenant.status == "active")).all()
+        # Compare each number only against the same field on other active tenants.
+        # A tenant may use one number for both its contact and WhatsApp fields.
+        for field, digits, existing_attr in (("phone", phone, "phone"), ("whatsapp_number", whatsapp, "whatsapp_number")):
             if len(digits) >= 7:
                 matched = [
                     x for x in rows
-                    if digits in (
-                        "".join(ch for ch in (x.phone or "") if ch.isdigit()),
-                        "".join(ch for ch in (x.whatsapp_number or "") if ch.isdigit()),
-                    )
+                    if digits == "".join(ch for ch in (getattr(x, existing_attr) or "") if ch.isdigit())
                 ]
                 if matched:
-                    duplicates[field] = {"message": "This number is already used as a contact or WhatsApp number by another tenant.", "matches": [x.name for x in matched[:3]]}
+                    label = "contact number" if field == "phone" else "WhatsApp number"
+                    duplicates[field] = {"message": f"This {label} is already used by another active tenant.", "matches": [x.name for x in matched[:3]]}
         return {"ok": not duplicates, "duplicates": duplicates}
     finally:
         db.close()
