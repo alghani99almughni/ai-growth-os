@@ -37,7 +37,20 @@ def _domain(value: str) -> str:
     host = parts.hostname.lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost") or "." not in host:
         raise HTTPException(422, "Enter a public internet domain")
+    # Reject IP literals at profile-entry time. The audit accepts hostnames only,
+    # then independently checks every DNS answer is globally routable.
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise HTTPException(422, "Enter a public website domain, not an IP address")
     if not re.fullmatch(r"[a-z0-9.-]+", host) or ".." in host:
+        raise HTTPException(422, "Enter a valid public internet domain")
+    labels = host.split(".")
+    if any(not label or label.startswith("-") or label.endswith("-") or len(label) > 63 for label in labels):
+        raise HTTPException(422, "Enter a valid public internet domain")
+    if len(host) > 253:
         raise HTTPException(422, "Enter a valid public internet domain")
     return host
 
