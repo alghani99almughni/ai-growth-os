@@ -145,7 +145,7 @@ def get_preferences(authorization: str | None = Header(default=None), db: Sessio
 
 @router.put("/preferences")
 def save_preferences(payload: PreferenceIn, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user=actor(authorization,db); row=db.get(TeamCommsPreference,user.id)
+    user=actor(authorization,db); require_permission(user, db, "communications.view"); row=db.get(TeamCommsPreference,user.id)
     if not row:
         row=TeamCommsPreference(user_id=user.id,tenant_id=user.tenant_id); db.add(row)
     row.notifications_enabled=payload.notifications_enabled; row.ringtone=payload.ringtone; row.accent_color=payload.accent_color; row.chat_background=payload.chat_background
