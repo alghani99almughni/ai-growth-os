@@ -1,6 +1,6 @@
 from datetime import datetime
 from uuid import uuid4
-import base64, csv, io, re
+import base64, csv, io, re, json
 from fastapi import APIRouter, Depends, HTTPException, Header, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -10,7 +10,7 @@ import jwt
 from .db import Base, SessionLocal
 from .config import settings
 from .models import User
-from .models_ai import StaffMember, Department
+from .models_ai import StaffMember, Department, RoleDefinition
 
 router = APIRouter(prefix="/api/v1/team-comms", tags=["team-comms"])
 MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
@@ -96,16 +96,26 @@ def actor(authorization: str | None, db: Session):
         raise HTTPException(403, "Team chat is disabled for this member")
     return user
 
-def require_admin(user: User):
-    if user.role not in {"owner", "tenant_admin", "admin", "manager", "platform_admin", "super_admin"}:
-        raise HTTPException(403, "Team communications administration permission required")
+def require_permission(user: User, db: Session, permission: str):
+    if user.role in {"owner", "tenant_admin", "admin", "platform_admin", "super_admin"}:
+        return
+    role = db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id == user.tenant_id, RoleDefinition.name == user.role))
+    try:
+        permissions = json.loads(role.permissions_json or "[]") if role else []
+    except Exception:
+        permissions = []
+    if permission not in permissions and "*" not in permissions:
+        raise HTTPException(403, "Role permission required: " + permission)
+
+def require_admin(user: User, db: Session):
+    require_permission(user, db, "team.manage")
 
 def message_json(m):
     return {"id":m.id,"sender_id":m.sender_id,"sender_name":m.sender_name,"recipient_id":m.recipient_id,"room":m.room,"message":m.message,"formatting":m.formatting,"attachment_id":m.attachment_id,"created_at":m.created_at.isoformat()+"Z"}
 
 @router.get("/users")
 def team_users(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user = actor(authorization, db)
+    user = actor(authorization, db); require_permission(user, db, "communications.view")
     users = db.scalars(select(User).where(User.tenant_id == user.tenant_id, User.is_active == True).order_by(User.name)).all()
     staff = db.scalars(select(StaffMember).where(StaffMember.tenant_id == user.tenant_id, StaffMember.is_active == True)).all()
     departments = {d.id:d.name for d in db.scalars(select(Department).where(Department.tenant_id == user.tenant_id)).all()}
@@ -116,7 +126,7 @@ def team_users(authorization: str | None = Header(default=None), db: Session = D
 
 @router.patch("/users/{target_id}/access")
 def set_chat_access(target_id: str, payload: AccessIn, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user = actor(authorization, db); require_admin(user)
+    user = actor(authorization, db); require_admin(user, db)
     target = db.get(User, target_id)
     if not target or target.tenant_id != user.tenant_id:
         raise HTTPException(404, "Member not found in this workspace")
@@ -130,7 +140,7 @@ def set_chat_access(target_id: str, payload: AccessIn, authorization: str | None
 
 @router.get("/preferences")
 def get_preferences(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user=actor(authorization,db); row=db.get(TeamCommsPreference,user.id)
+    user=actor(authorization,db); require_permission(user, db, "communications.view"); row=db.get(TeamCommsPreference,user.id)
     return {"notifications_enabled":row.notifications_enabled if row else True,"ringtone":row.ringtone if row else "classic","accent_color":row.accent_color if row else "#293dbd","chat_background":row.chat_background if row else "#fbfcfe"}
 
 @router.put("/preferences")
@@ -144,13 +154,13 @@ def save_preferences(payload: PreferenceIn, authorization: str | None = Header(d
 
 @router.get("/messages")
 def list_messages(room: str = "team", limit: int = Query(default=100, ge=1, le=500), authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user = actor(authorization, db)
+    user = actor(authorization, db); require_permission(user, db, "communications.view")
     rows = db.scalars(select(TeamMessage).where(TeamMessage.tenant_id == user.tenant_id, TeamMessage.room == room, ((TeamMessage.recipient_id == None) | (TeamMessage.recipient_id == user.id) | (TeamMessage.sender_id == user.id))).order_by(TeamMessage.created_at.desc()).limit(limit)).all()
     return [message_json(m) for m in reversed(rows)]
 
 @router.post("/attachments")
 def upload_attachment(payload: AttachmentIn, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user=actor(authorization,db)
+    user=actor(authorization,db); require_permission(user, db, "communications.reply")
     content_type=payload.content_type.lower().split(";")[0].strip()
     if content_type not in ALLOWED_MIME:
         raise HTTPException(415,"This file type is not allowed")
@@ -165,7 +175,7 @@ def upload_attachment(payload: AttachmentIn, authorization: str | None = Header(
 
 @router.get("/attachments/{attachment_id}")
 def download_attachment(attachment_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user=actor(authorization,db)
+    user=actor(authorization,db); require_permission(user, db, "communications.view")
     row=db.get(TeamAttachment,attachment_id)
     if not row or row.tenant_id!=user.tenant_id:
         raise HTTPException(404,"Attachment not found")
@@ -173,7 +183,7 @@ def download_attachment(attachment_id: str, authorization: str | None = Header(d
 
 @router.post("/messages")
 def send_message(payload: MessageIn, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user = actor(authorization, db)
+    user = actor(authorization, db); require_permission(user, db, "communications.reply")
     if not payload.message.strip() and not payload.attachment_id:
         raise HTTPException(422,"Add a message or attachment")
     if payload.recipient_id:
@@ -194,7 +204,7 @@ def send_message(payload: MessageIn, authorization: str | None = Header(default=
 
 @router.get("/export.csv")
 def export_messages(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
-    user = actor(authorization, db); require_admin(user)
+    user = actor(authorization, db); require_admin(user, db)
     rows = db.scalars(select(TeamMessage).where(TeamMessage.tenant_id == user.tenant_id).order_by(TeamMessage.created_at)).all()
     out = io.StringIO(); writer = csv.writer(out)
     writer.writerow(["timestamp_utc","room","sender","sender_id","recipient_id","message","formatting","attachment_id"])
