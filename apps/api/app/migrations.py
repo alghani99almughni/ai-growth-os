@@ -1,10 +1,22 @@
 from .db import Base,engine
 from . import models,models_growth,models_ai,models_integrations,models_security,models_email
 from . import industry_catalog
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 
 def ensure_schema():
     Base.metadata.create_all(bind=engine)
+    # Additive compatibility migration for the already-deployed team_messages table.
+    # create_all() creates new tables but does not add columns to existing tables.
+    try:
+        existing = {column["name"] for column in inspect(engine).get_columns("team_messages")}
+        with engine.begin() as conn:
+            if "formatting" not in existing:
+                conn.execute(text("ALTER TABLE team_messages ADD COLUMN formatting VARCHAR(40) NOT NULL DEFAULT 'plain'"))
+            if "attachment_id" not in existing:
+                conn.execute(text("ALTER TABLE team_messages ADD COLUMN attachment_id VARCHAR(36)"))
+    except Exception:
+        # Do not hide schema failures during app startup; surface them to logs/health.
+        raise
     # Lightweight compatibility migration for deployments created before call handoff fields existed.
     with engine.begin() as conn:
         dialect=engine.dialect.name
