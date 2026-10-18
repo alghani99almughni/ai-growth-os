@@ -66,3 +66,29 @@ class VisibilityObservation(Base):
 
 Index("ix_visibility_queries_tenant_created", VisibilityQuery.tenant_id, VisibilityQuery.created_at)
 Index("ix_visibility_runs_tenant_created", VisibilityCheckRun.tenant_id, VisibilityCheckRun.created_at)
+
+class VisibilityAudit(Base):
+    __tablename__ = "visibility_audits"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    target_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="completed", nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pages_checked: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    summary_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+class VisibilityAuditFinding(Base):
+    __tablename__ = "visibility_audit_findings"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    audit_id: Mapped[str] = mapped_column(ForeignKey("visibility_audits.id"), nullable=False, index=True)
+    category: Mapped[str] = mapped_column(String(50), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    recommendation: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+Index("ix_visibility_audits_tenant_created", VisibilityAudit.tenant_id, VisibilityAudit.created_at)
+Index("ix_visibility_findings_tenant_audit", VisibilityAuditFinding.tenant_id, VisibilityAuditFinding.audit_id)
