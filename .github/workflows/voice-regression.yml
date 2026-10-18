@@ -31,4 +31,4 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run deterministic voice regression
-        run: pytest -q tests/test_voice_agent_regression.py
+        run: pytest -q tests/test_voice_agent_regression.py tests/test_visibility_audit.py
