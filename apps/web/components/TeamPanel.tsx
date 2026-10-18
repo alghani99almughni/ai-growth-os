@@ -102,7 +102,7 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
       {([{id:"members",label:"Team members"},{id:"roles",label:"Roles & permissions"},{id:"departments",label:"Departments / services"}] as const).map(t=><button key={t.id} style={{...btn,background:tab===t.id?"#4f46e5":"#fff",color:tab===t.id?"#fff":"#344054",borderColor:tab===t.id?"#4f46e5":"#d8deea"}} onClick={()=>setTab(t.id)}>{t.label}</button>)}
     </div>
     {error&&<p style={{padding:10,borderRadius:8,background:"#fff1f0",color:"#b42318"}}>{error}</p>}
-    {status&&<p style={{padding:10,borderRadius:8,background:"#ecfdf3",color:"#067647"}}>{status}</p>}
+    {status&&<p style={{padding:10,borderRadius:8,background:"#ecfdf3",color:"#067647"}}>{status}{createdLoginUrl&&<span style={{display:"block",marginTop:5}}>Member sign-in: <a href={createdLoginUrl} target="_blank" rel="noreferrer">{createdLoginUrl}</a></span>}</p>}
     {tab==="members"&&<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:20}}>
       <form onSubmit={createStaff} style={{border:"1px solid #e8ecf3",borderRadius:12,padding:16}}>
         <h3 style={{marginTop:0}}>Add team member / dashboard login</h3>
