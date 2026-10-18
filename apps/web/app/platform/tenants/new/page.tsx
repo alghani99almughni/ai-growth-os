@@ -149,7 +149,7 @@ export default function NewTenantPage() {
       <Field label="AI starter template (auto-mapped from subcategory)">
         <select value={industry} onChange={e=>setIndustry(e.target.value)} style={inp}>{STARTER_TEMPLATES.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}</select>
       </Field>
-      <Field label="Business name"><input value={businessName} onChange={e=>{setBusinessName(e.target.value);clearDuplicate("business_name");}} placeholder="Business name" style={fieldStyle("business_name")}/>{duplicates.business_name && <small style={{color:"#dc2626"}}>{duplicates.business_name.message}</small>}</Field>
+      <Field label="Business name"><input value={businessName} onChange={e=>{setBusinessName(e.target.value);clearDuplicate("business_name");}} placeholder="Business name" style={fieldStyle("business_name")}/>{duplicates.business_name && <small style={{color:"#dc2626"}}>{duplicates.business_name.message}{duplicates.business_name.matches?.length ? " Matching active tenant: " + duplicates.business_name.matches.join(", ") + "." : ""}</small>}</Field>
       <hr style={rule}/>
       <Field label="Owner name"><input value={ownerName} onChange={e=>setOwnerName(e.target.value)} placeholder="Owner name" style={inp}/></Field>
       <Field label="Owner email (used to sign in)"><input type="email" value={ownerEmail} onChange={e=>{setOwnerEmail(e.target.value);clearDuplicate("owner_email");}} placeholder="owner@example.com" style={fieldStyle("owner_email")}/>{duplicates.owner_email && <small style={{color:"#dc2626"}}>{duplicates.owner_email.message}</small>}</Field>
