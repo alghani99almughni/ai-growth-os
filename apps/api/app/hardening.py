@@ -77,13 +77,16 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         cl = request.headers.get("content-length")
+        # Base64 expands an 8 MB attachment to about 10.7 MB. Raise the limit
+        # only for team-chat uploads; keep the global limit for all other routes.
+        limit = 12 * 1024 * 1024 if request.url.path == "/api/v1/team-comms/attachments" else self.max_bytes
         if cl:
             try:
-                if int(cl) > self.max_bytes:
+                if int(cl) > limit:
                     return JSONResponse(
                         status_code=413,
                         content={"error": {"code": "payload_too_large",
-                                           "message": f"Request body exceeds {self.max_bytes} bytes"}},
+                                           "message": f"Request body exceeds {limit} bytes"}},
                     )
             except ValueError:
                 pass
