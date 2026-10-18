@@ -1302,9 +1302,65 @@ def create_department(tenant_id,payload:DepartmentCreate,user=Depends(get_curren
     x=Department(tenant_id=tenant_id,**payload.model_dump()); db.add(x); db.commit(); db.refresh(x)
     return {"id":x.id,"name":x.name,"description":x.description,"skills":x.skills,"is_active":x.is_active}
 
+def _security_visitor_feature_enabled(db: Session, tenant_id: str) -> bool:
+    """Read the same tenant feature override used by Security & Visitor Management."""
+    row = db.scalar(select(TenantSetting).where(
+        TenantSetting.tenant_id == tenant_id, TenantSetting.key == "features"
+    ))
+    defaults_row = db.scalar(select(PlatformSetting).where(
+        PlatformSetting.key == "feature_defaults"
+    ))
+    try:
+        features = json.loads(row.value_json) if row else {}
+    except (TypeError, ValueError):
+        features = {}
+    try:
+        defaults = json.loads(defaults_row.value_json) if defaults_row else {}
+    except (TypeError, ValueError):
+        defaults = {}
+    return bool(features.get(
+        "security_visitor_management",
+        defaults.get("security_visitor_management", False)
+    ))
+
+
+def _ensure_security_visitor_roles(db: Session, tenant_id: str) -> None:
+    """Provision least-privilege security roles for existing and new enabled tenants."""
+    presets = {
+        "security_admin": [
+            "dashboard.view", "team.manage", "security.view", "security.manage",
+            "visitors.view", "visitors.manage"
+        ],
+        "security_guard": [
+            "dashboard.view", "security.view", "visitors.view", "visitors.manage"
+        ],
+        "security": [
+            "dashboard.view", "customers.view", "security.view", "visitors.view",
+            "visitors.manage"
+        ],
+    }
+    changed = False
+    for name, permissions in presets.items():
+        exists = db.scalar(select(RoleDefinition.id).where(
+            RoleDefinition.tenant_id == tenant_id, RoleDefinition.name == name
+        ))
+        if not exists:
+            db.add(RoleDefinition(
+                tenant_id=tenant_id, name=name,
+                permissions_json=json.dumps(permissions), is_system=True
+            ))
+            changed = True
+    if changed:
+        db.commit()
+
+
 @app.get("/api/v1/tenants/{tenant_id}/roles")
 def list_roles(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
+    # Feature activation must work for existing tenants too, not only tenants
+    # provisioned after these defaults were introduced.
+    if _security_visitor_feature_enabled(db, tenant_id):
+        _ensure_security_visitor_roles(db, tenant_id)
     rows=db.scalars(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id).order_by(RoleDefinition.name)).all()
     return {"items":[{"id":x.id,"name":x.name,"permissions":json.loads(x.permissions_json or "[]"),"is_system":x.is_system} for x in rows]}
 

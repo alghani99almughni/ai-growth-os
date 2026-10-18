@@ -12,7 +12,9 @@ const PERMISSIONS = [
   ["services.manage","Manage services"],["calls.view","Calls"],["calls.manage","Manage calls"],
   ["campaigns.view","Marketing campaigns"],["campaigns.manage","Send campaigns"],
   ["communications.view","WhatsApp & email inbox"],["communications.reply","Reply to messages"],
-  ["reports.view","Reports"],["team.manage","Manage team"],["settings.manage","Business settings"]
+  ["reports.view","Reports"],["team.manage","Manage team"],["settings.manage","Business settings"],
+  ["security.view","View security & visitor management"],["security.manage","Manage security sites"],
+  ["visitors.view","View visitor passes"],["visitors.manage","Manage visitor passes"]
 ];
 export default function TeamPanel({tenantId,token}:{tenantId:string;token:string}) {
   const [items,setItems]=useState<Staff[]>([]);
@@ -99,11 +101,15 @@ export default function TeamPanel({tenantId,token}:{tenantId:string;token:string
         <label style={{display:"block",marginTop:10}}>Role<select required value={staff.role} onChange={e=>setStaff({...staff,role:e.target.value})} style={input}><option value="">Select a role…</option>{roles.map(r=><option key={r.id} value={r.name}>{r.name}</option>)}</select></label>
         <label style={{display:"block",marginTop:10}}>Department<select value={staff.department_id} onChange={e=>setStaff({...staff,department_id:e.target.value})} style={input}><option value="">Unassigned</option>{departments.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
         <div style={{marginTop:12}}><strong style={{fontSize:13}}>Map services to this member</strong>
-          {services.length?services.map(s=><label key={s.id} style={{display:"flex",gap:8,alignItems:"center",marginTop:7,fontSize:13,color:"#344054"}}><input type="checkbox" checked={selectedServiceIds.includes(s.id)} onChange={e=>setSelectedServiceIds(ids=>e.target.checked?[...ids,s.id]:ids.filter(id=>id!==s.id))}/>{s.name}</label>):<p style={{fontSize:12,color:"#b54708"}}>Add services under Services first. You can still create a team member.</p>}
+          {services.length?services.map(s=><label key={s.id} style={{display:"flex",gap:8,alignItems:"center",marginTop:7,fontSize:13,color:"#344054"}}><input type="checkbox" checked={selectedServiceIds.includes(s.id)} onChange={e=>setSelectedServiceIds(ids=>e.target.checked?[...ids,s.id]:ids.filter(id=>id!==s.id))}/>{s.name}</label>):<p style={{fontSize:12,color:"#667085"}}>No active services configured. Service assignment is optional; you can create the member without selecting services.</p>}
         </div>
         <label style={{display:"block",marginTop:10}}>Additional skills (optional, comma separated)<input value={staff.skills} onChange={e=>setStaff({...staff,skills:e.target.value})} placeholder="Customer support, follow-ups" style={input}/></label>
         <button disabled={busy||!roles.length} style={{...btn,marginTop:14,background:"#4f46e5",color:"#fff",borderColor:"#4f46e5"}}>{busy?"Saving…":"Create member & login"}</button>
-        {!roles.length&&<p style={{fontSize:12,color:"#b54708"}}>Create a role first under Roles & permissions.</p>}
+        {!roles.length&&<div style={{marginTop:12,padding:12,border:"1px solid #fed7aa",background:"#fff7ed",borderRadius:9,color:"#9a3412",fontSize:13}}>
+          <strong style={{display:"block",marginBottom:4}}>Role setup required</strong>
+          Create at least one role with its permissions before creating a login. This is separate from enabling Security & Visitors in Super Admin.
+          <button type="button" onClick={()=>setTab("roles")} style={{...btn,display:"block",marginTop:10,background:"#fff",color:"#4338ca"}}>Create a role now</button>
+        </div>}
       </form>
       <div><h3 style={{marginTop:0}}>Current team ({items.length})</h3>{items.map(s=><article key={s.id} style={{border:"1px solid #e8ecf3",borderRadius:10,padding:13,marginBottom:10}}>
         <div style={{display:"flex",justifyContent:"space-between",gap:8}}><strong>{s.name}</strong><span style={{fontSize:12,color:s.is_active?"#067647":"#b42318"}}>{s.is_active?"Active":"Inactive"}</span></div>
