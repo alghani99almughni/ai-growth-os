@@ -16,8 +16,31 @@ export default function PlatformSecurityPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [tenantSearch, setTenantSearch] = useState("");
+  const [searchField, setSearchField] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [industryFilter, setIndustryFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState("newest");
 
   const selected = useMemo(() => tenants.find(t => t.id === tenantId), [tenants, tenantId]);
+  const industries = useMemo(() => Array.from(new Set(tenants.map(t => (t.industry || "Unknown").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [tenants]);
+  const filteredTenants = useMemo(() => {
+    const q = tenantSearch.trim().toLocaleLowerCase();
+    return tenants.filter(t => {
+      const name = (t.name || "").toLocaleLowerCase();
+      const industry = (t.industry || "").toLocaleLowerCase();
+      const slug = (t.slug || "").toLocaleLowerCase();
+      const matchesQuery = !q || (searchField === "name" ? name.includes(q) :
+        searchField === "industry" ? industry.includes(q) :
+        searchField === "status" ? (t.status || "").toLocaleLowerCase().includes(q) :
+        searchField === "slug" ? slug.includes(q) :
+        name.includes(q) || industry.includes(q) || slug.includes(q) || (t.status || "").toLocaleLowerCase().includes(q));
+      return matchesQuery && (!statusFilter || (t.status || "").toLowerCase() === statusFilter) &&
+        (!industryFilter || (t.industry || "Unknown").trim() === industryFilter);
+    }).sort((a, b) => sortOrder === "name" ? a.name.localeCompare(b.name) :
+      sortOrder === "oldest" ? (a as any).created_at?.localeCompare((b as any).created_at || "") || 0 :
+      ((b as any).created_at || "").localeCompare((a as any).created_at || ""));
+  }, [tenants, tenantSearch, searchField, statusFilter, industryFilter, sortOrder]);
   const token = () => typeof window === "undefined" ? "" : localStorage.getItem("ago_access_token") || "";
   async function request(path: string, init: RequestInit = {}) {
     const response = await fetch(api() + path, {
@@ -78,10 +101,28 @@ export default function PlatformSecurityPage() {
     </header>
     {error && <div role="alert" style={{ padding: 12, marginBottom: 14, background: "#fff1f1", color: "#b42318", borderRadius: 9 }}>{error}</div>}
     <section style={{ background: "#fff", border: "1px solid #e7ebf2", borderRadius: 14, padding: 22, marginBottom: 16 }}>
-      <label htmlFor="tenant" style={labelStyle}>Select tenant</label>
+      <label htmlFor="tenant-search" style={labelStyle}>Find tenant</label>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 2fr) repeat(auto-fit, minmax(145px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <input id="tenant-search" aria-label="Search tenants" placeholder="Search business, industry, status or slug…" value={tenantSearch} onChange={e => setTenantSearch(e.target.value)} style={inputStyle} />
+        <select aria-label="Search field" value={searchField} onChange={e => setSearchField(e.target.value)} style={inputStyle}>
+          <option value="all">Search all fields</option><option value="name">Business name</option><option value="industry">Industry type</option><option value="status">Status</option><option value="slug">Tenant slug</option>
+        </select>
+        <select aria-label="Filter industry" value={industryFilter} onChange={e => setIndustryFilter(e.target.value)} style={inputStyle}>
+          <option value="">All industries</option>{industries.map(i => <option key={i} value={i}>{i}</option>)}
+        </select>
+        <select aria-label="Filter status" value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={inputStyle}>
+          <option value="">All statuses</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="pending">Pending</option><option value="closed">Closed</option>
+        </select>
+        <select aria-label="Sort tenants" value={sortOrder} onChange={e => setSortOrder(e.target.value)} style={inputStyle}>
+          <option value="newest">Recently created</option><option value="oldest">Oldest created</option><option value="name">Business name A–Z</option>
+        </select>
+        <button type="button" onClick={() => { setTenantSearch(""); setSearchField("all"); setStatusFilter(""); setIndustryFilter(""); setSortOrder("newest"); }} style={{ ...inputStyle, cursor: "pointer", fontWeight: 600 }}>Clear filters</button>
+      </div>
+      <label htmlFor="tenant" style={labelStyle}>Select tenant ({filteredTenants.length} matches)</label>
       <select id="tenant" value={tenantId} onChange={e => setTenantId(e.target.value)} style={{ ...inputStyle, maxWidth: 560 }}>
-        {tenants.map(t => <option key={t.id} value={t.id}>{t.name} · {t.industry} · {t.status}</option>)}
+        {filteredTenants.map(t => <option key={t.id} value={t.id}>{t.name} · {t.industry} · {t.status}</option>)}
       </select>
+      {filteredTenants.length === 0 && <p style={{ color: "#b42318" }}>No tenants match these filters. Clear filters or try another search.</p>}
       {!tenants.length && <p style={{ color: "#b42318" }}>No tenants found.</p>}
       {selected && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
         <span style={{ padding: "5px 9px", borderRadius: 20, background: "#f1f3f9", fontSize: 12 }}>/{selected.slug}</span>
