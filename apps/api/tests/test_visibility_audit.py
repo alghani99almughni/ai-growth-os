@@ -1,4 +1,7 @@
 """Unit tests for the bounded website audit parser and URL guard."""
+# Import the application first because routes_visibility currently reuses dependencies from app.main.
+# This mirrors the production import order and avoids initializing the router before main.py.
+import app.main  # noqa: F401
 import pytest
 from fastapi import HTTPException
 from app.routes_visibility import _domain, _SEOParser
