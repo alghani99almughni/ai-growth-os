@@ -1372,6 +1372,32 @@ def create_role(tenant_id,payload:RoleDefinitionCreate,user=Depends(get_current_
     db.add(x); db.commit(); db.refresh(x)
     return {"id":x.id,"name":x.name,"permissions":payload.permissions,"is_system":False}
 
+@app.put("/api/v1/tenants/{tenant_id}/roles/{role_id}")
+def update_role(tenant_id, role_id, payload: RoleDefinitionCreate, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    row=db.scalar(select(RoleDefinition).where(RoleDefinition.id==role_id,RoleDefinition.tenant_id==tenant_id))
+    if not row: raise HTTPException(404,"Role not found")
+    if row.is_system and payload.name != row.name: raise HTTPException(400,"System role names cannot be changed")
+    duplicate=db.scalar(select(RoleDefinition).where(RoleDefinition.tenant_id==tenant_id,RoleDefinition.name==payload.name,RoleDefinition.id!=role_id))
+    if duplicate: raise HTTPException(409,"Role name already exists")
+    if payload.name != row.name and db.scalar(select(User).where(User.tenant_id==tenant_id,User.role==row.name)):
+        raise HTTPException(409,"A role assigned to members cannot be renamed; change permissions or reassign members first")
+    row.name=payload.name
+    row.permissions_json=json.dumps(list(dict.fromkeys(payload.permissions)))
+    db.commit()
+    return {"id":row.id,"name":row.name,"permissions":json.loads(row.permissions_json or "[]"),"is_system":row.is_system}
+
+@app.delete("/api/v1/tenants/{tenant_id}/roles/{role_id}")
+def delete_role(tenant_id, role_id, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    row=db.scalar(select(RoleDefinition).where(RoleDefinition.id==role_id,RoleDefinition.tenant_id==tenant_id))
+    if not row: raise HTTPException(404,"Role not found")
+    if row.is_system: raise HTTPException(400,"System roles cannot be deleted")
+    if db.scalar(select(User).where(User.tenant_id==tenant_id,User.role==row.name)):
+        raise HTTPException(409,"Reassign all members from this role before deleting it")
+    db.delete(row); db.commit()
+    return {"ok":True,"deleted_role_id":role_id}
+
 @app.get("/api/v1/tenants/{tenant_id}/staff")
 def list_staff(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
@@ -1397,6 +1423,8 @@ def create_staff(tenant_id,payload:StaffCreate,user=Depends(get_current_user),db
         if valid_ids != set(service_ids): raise HTTPException(400,"One or more selected services do not belong to this tenant")
     u=User(id=str(uuid.uuid4()),name=payload.name,email=payload.email.lower(),password_hash=hash_password(payload.password),tenant_id=tenant_id,role=payload.role)
     db.add(u); db.flush()
+    from .routes_team_comms import TeamCommsAccess
+    db.add(TeamCommsAccess(user_id=u.id,tenant_id=tenant_id,enabled=payload.chat_enabled))
     s=StaffMember(tenant_id=tenant_id,user_id=u.id,name=payload.name,department_id=payload.department_id,skills=payload.skills)
     db.add(s); db.flush()
     for service_id in service_ids:
