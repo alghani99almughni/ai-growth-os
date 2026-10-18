@@ -1334,7 +1334,7 @@ def _ensure_security_visitor_roles(db: Session, tenant_id: str) -> None:
         "security_guard": [
             "dashboard.view", "security.view", "visitors.view", "visitors.manage"
         ],
-        "visitor_desk": [
+        "security": [
             "dashboard.view", "customers.view", "security.view", "visitors.view",
             "visitors.manage"
         ],
