@@ -264,6 +264,7 @@ class StaffCreate(BaseModel):
     department_id: Optional[str] = None
     skills: str = ""
     service_ids: list[str] = []
+    chat_enabled: bool = True
 
 class StaffUpdate(BaseModel):
     role: Optional[str] = None
