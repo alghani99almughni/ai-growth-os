@@ -21,6 +21,8 @@ export default function NewTenantPage() {
   const [ownerName, setOwnerName] = useState("");
   const [ownerEmail, setOwnerEmail] = useState("");
   const [ownerPassword, setOwnerPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [duplicates, setDuplicates] = useState<Record<string, { message: string; matches?: string[] }>>({});
   const [contactNumber, setContactNumber] = useState("");
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [website, setWebsite] = useState("");
@@ -73,8 +75,12 @@ export default function NewTenantPage() {
     if (selected) setIndustry(inferTemplate(selected));
   }
 
+  const fieldStyle = (key: string) => ({ ...inp, borderColor: duplicates[key] ? "#dc2626" : undefined, boxShadow: duplicates[key] ? "0 0 0 1px #dc2626" : undefined });
+  const clearDuplicate = (key: string) => setDuplicates(prev => { const next = { ...prev }; delete next[key]; return next; });
+
   const submit = async () => {
     setErr("");
+    setDuplicates({});
     if (!businessName.trim()) return setErr("Business name is required.");
     if (!catalogEntryId) return setErr("Choose an active industry category and business type.");
     if (!ownerName.trim() || !ownerEmail.trim() || ownerPassword.length < 8) return setErr("Owner name, email, and password (8+ chars) are required.");
@@ -83,6 +89,18 @@ export default function NewTenantPage() {
     setBusy(true);
     try {
       const token = localStorage.getItem("ago_access_token") || "";
+      const duplicateCheck = await fetch(API + "/api/v1/platform/tenants/check-duplicates", {
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+        body: JSON.stringify({ business_name: businessName.trim(), owner_email: ownerEmail.trim(), phone: contactNumber.trim(), whatsapp_number: whatsappNumber.trim() }),
+      });
+      const duplicateData = await duplicateCheck.json().catch(() => ({}));
+      if (!duplicateCheck.ok) throw new Error(duplicateData.detail || "Could not validate duplicate details.");
+      if (Object.keys(duplicateData.duplicates || {}).length) {
+        setDuplicates(duplicateData.duplicates);
+        setErr("Duplicate details found. Please correct the highlighted fields before creating the tenant.");
+        setBusy(false);
+        return;
+      }
       const res = await fetch(API + "/api/v1/platform/tenants/provision", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
@@ -94,7 +112,12 @@ export default function NewTenantPage() {
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || "Unable to create tenant.");
+      if (!res.ok) {
+        const message = data.detail || "Unable to create tenant.";
+        if (/email already registered/i.test(message)) { setDuplicates({ owner_email: { message: "This email is already registered. Use a different email or open the existing tenant." } }); setErr("Owner email already exists. No new tenant was created."); setBusy(false); return; }
+        if (/slug already exists|business name already exists/i.test(message)) { setDuplicates({ business_name: { message: "A business with this name already exists." } }); setErr("A duplicate business was detected. Please review the highlighted field."); setBusy(false); return; }
+        throw new Error(message);
+      }
       const tenantId = data.tenant?.id || data.tenant_id;
       if (!tenantId) throw new Error("Tenant was created but the API did not return its ID.");
       const selection = await fetch(API + "/api/v1/tenants/" + encodeURIComponent(tenantId) + "/industry-selection", {
@@ -126,14 +149,14 @@ export default function NewTenantPage() {
       <Field label="AI starter template (auto-mapped from subcategory)">
         <select value={industry} onChange={e=>setIndustry(e.target.value)} style={inp}>{STARTER_TEMPLATES.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}</select>
       </Field>
-      <Field label="Business name"><input value={businessName} onChange={e=>setBusinessName(e.target.value)} placeholder="Business name" style={inp}/></Field>
+      <Field label="Business name"><input value={businessName} onChange={e=>{setBusinessName(e.target.value);clearDuplicate("business_name");}} placeholder="Business name" style={fieldStyle("business_name")}/>{duplicates.business_name && <small style={{color:"#dc2626"}}>{duplicates.business_name.message}</small>}</Field>
       <hr style={rule}/>
       <Field label="Owner name"><input value={ownerName} onChange={e=>setOwnerName(e.target.value)} placeholder="Owner name" style={inp}/></Field>
-      <Field label="Owner email (used to sign in)"><input type="email" value={ownerEmail} onChange={e=>setOwnerEmail(e.target.value)} placeholder="owner@example.com" style={inp}/></Field>
-      <Field label="Owner password (8+ characters)"><input type="password" value={ownerPassword} onChange={e=>setOwnerPassword(e.target.value)} style={inp}/></Field>
+      <Field label="Owner email (used to sign in)"><input type="email" value={ownerEmail} onChange={e=>{setOwnerEmail(e.target.value);clearDuplicate("owner_email");}} placeholder="owner@example.com" style={fieldStyle("owner_email")}/>{duplicates.owner_email && <small style={{color:"#dc2626"}}>{duplicates.owner_email.message}</small>}</Field>
+      <Field label="Owner password (8+ characters)"><div style={{display:"flex",gap:8}}><input type={showPassword ? "text" : "password"} value={ownerPassword} onChange={e=>setOwnerPassword(e.target.value)} style={{...inp,flex:1}}/><button type="button" onClick={()=>setShowPassword(v=>!v)} style={{padding:"0 14px",border:"1px solid #cbd5e1",borderRadius:8,background:"#fff",color:"#334155",fontWeight:600}}>{showPassword ? "Hide" : "Show"}</button></div></Field>
       <hr style={rule}/>
-      <Field label="Contact number"><input value={contactNumber} onChange={e=>setContactNumber(e.target.value)} placeholder="+91 98765 43210" style={inp}/></Field>
-      <Field label="WhatsApp number"><input value={whatsappNumber} onChange={e=>setWhatsappNumber(e.target.value)} placeholder="+91 98765 43210" style={inp}/></Field>
+      <Field label="Contact number"><input value={contactNumber} onChange={e=>{setContactNumber(e.target.value);clearDuplicate("phone");}} placeholder="+91 98765 43210" style={fieldStyle("phone")}/>{duplicates.phone && <small style={{color:"#dc2626"}}>{duplicates.phone.message}</small>}</Field>
+      <Field label="WhatsApp number"><input value={whatsappNumber} onChange={e=>{setWhatsappNumber(e.target.value);clearDuplicate("whatsapp_number");}} placeholder="+91 98765 43210" style={fieldStyle("whatsapp_number")}/>{duplicates.whatsapp_number && <small style={{color:"#dc2626"}}>{duplicates.whatsapp_number.message}</small>}</Field>
       <Field label="Existing website (optional)"><input value={website} onChange={e=>setWebsite(e.target.value)} placeholder="https://theirbusiness.com" style={inp}/></Field>
       <Field label="Address (optional)"><textarea value={address} onChange={e=>setAddress(e.target.value)} rows={2} style={{...inp,fontFamily:"inherit"}}/></Field>
     </section>
