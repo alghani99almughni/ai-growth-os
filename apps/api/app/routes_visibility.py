@@ -195,12 +195,12 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
     if 300 <= status_code < 400:
         findings = [{"category":"crawlability","severity":"warning","title":"Website redirects",
                      "recommendation":"Review the redirect destination and canonical domain. Redirect following is disabled for safety.",
-                     "evidence":str(response.status_code)}]
+                     "evidence":str(status_code)}]
         body = ""
     elif status_code >= 400:
         findings = [{"category":"availability","severity":"high","title":"Website returned an HTTP error",
                      "recommendation":"Check that the public website is available to visitors and crawlers.",
-                     "evidence":str(response.status_code)}]
+                     "evidence":str(status_code)}]
         body = ""
     elif "text/html" not in content_type.lower():
         findings = [{"category":"content","severity":"warning","title":"Homepage is not HTML",
