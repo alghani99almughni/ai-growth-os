@@ -17,7 +17,9 @@ TIMEOUT = httpx.Timeout(35.0, connect=8.0)
 
 def _citations(value: Any) -> list[dict[str, str]]:
     found: list[dict[str, str]] = []
-    if isinstance(value, dict):
+    if isinstance(value, str) and value.startswith(("https://", "http://")):
+        found.append({"url": value[:2048], "title": ""})
+    elif isinstance(value, dict):
         uri = value.get("uri") or value.get("url")
         title = value.get("title") or value.get("name") or ""
         if isinstance(uri, str) and uri.startswith(("https://", "http://")):
@@ -116,7 +118,7 @@ async def run_provider(provider: str, api_key: str, model: str, prompt: str) -> 
         if not answer.strip():
             raise RuntimeError(f"{provider} provider returned an empty answer")
         return {"provider": provider, "model": model, "answer": answer[:12000],
-                "citations": citations, "method": "search_grounded" if provider in ("gemini", "perplexity", "grok") else "model_sampled"}
+                "citations": citations, "method": "search_grounded" if provider in ("gemini", "perplexity") else "model_sampled"}
 
 
 def observation_match(answer: str, brand_name: str, domain: str, citations: list[dict[str, str]]) -> dict[str, Any]:
