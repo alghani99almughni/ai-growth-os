@@ -386,3 +386,68 @@ def list_visibility_checks(tenant_id: str, limit: int = 50,
                       "created_at": row.created_at.isoformat() if row.created_at else None,
                       "completed_at": row.completed_at.isoformat() if row.completed_at else None})
     return {"items": items}
+
+
+# ── Official Google Search Console performance data (separate from Gemini tests) ──
+from datetime import date, timedelta
+from urllib.parse import quote
+from .models_integrations import TenantIntegration
+from .integrations import decrypt_channel_config
+
+class SearchConsolePayload(BaseModel):
+    site_url: str = Field(min_length=4, max_length=2048)
+    start_date: date
+    end_date: date
+    row_limit: int = Field(default=100, ge=1, le=1000)
+
+@router.post("/google-search-console/performance")
+async def google_search_console_performance(tenant_id: str, payload: SearchConsolePayload,
+                                           user: User = Depends(get_current_user),
+                                           db: Session = Depends(get_db)):
+    """Fetch official Search Console query/page metrics from a tenant's connected OAuth integration."""
+    import httpx
+    _authorize(user, tenant_id)
+    if payload.start_date > payload.end_date:
+        raise HTTPException(422, "Start date must be on or before end date")
+    if (payload.end_date - payload.start_date).days > 500:
+        raise HTTPException(422, "Choose a date range of 500 days or less")
+    integration = db.scalar(select(TenantIntegration).where(
+        TenantIntegration.tenant_id == tenant_id,
+        TenantIntegration.integration_key == "google_search_console",
+        TenantIntegration.status == "connected"))
+    if not integration or not integration.config_encrypted:
+        raise HTTPException(400, "Connect Google Search Console OAuth in Integrations before requesting official data")
+    if not visibility_settings.google_client_id or not visibility_settings.google_client_secret:
+        raise HTTPException(503, "Google OAuth client configuration is missing on the server")
+    try:
+        cfg = decrypt_channel_config(
+            integration.config_encrypted,
+            visibility_settings.integration_credential_encryption_key or visibility_settings.whatsapp_credential_encryption_key)
+    except Exception:
+        raise HTTPException(503, "Google Search Console connection could not be read safely")
+    refresh_token = cfg.get("refresh_token")
+    if not refresh_token:
+        raise HTTPException(400, "The connected Google account has no refresh token; reconnect it with Search Console access")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(25.0, connect=8.0), follow_redirects=False) as client:
+        token_response = await client.post("https://oauth2.googleapis.com/token", data={
+            "client_id": visibility_settings.google_client_id,
+            "client_secret": visibility_settings.google_client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        })
+        if token_response.status_code >= 400:
+            raise HTTPException(502, "Google OAuth refresh failed; reconnect the Google account")
+        access_token = token_response.json().get("access_token")
+        if not access_token:
+            raise HTTPException(502, "Google OAuth did not return an access token")
+        endpoint = "https://searchconsole.googleapis.com/webmasters/v3/sites/" + quote(payload.site_url, safe="") + "/searchAnalytics/query"
+        response = await client.post(endpoint, headers={"Authorization": "Bearer " + access_token},
+            json={"startDate": payload.start_date.isoformat(), "endDate": payload.end_date.isoformat(),
+                  "dimensions": ["query", "page"], "rowLimit": payload.row_limit})
+    if response.status_code >= 400:
+        raise HTTPException(502, "Google Search Console query failed; verify the selected property and account permissions")
+    data = response.json()
+    return {"source": "google_search_console", "site_url": payload.site_url,
+            "start_date": payload.start_date.isoformat(), "end_date": payload.end_date.isoformat(),
+            "rows": data.get("rows", []), "row_count": len(data.get("rows", [])),
+            "note": "These are official Search Console query/page performance metrics. They are not a standalone Gemini visibility score and do not guarantee reporting of AI Overviews or AI Mode separately."}
