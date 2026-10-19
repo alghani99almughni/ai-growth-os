@@ -26,6 +26,7 @@ CATALOG = [
     {"key":"meta_ads","name":"Meta Ads","category":"Social & Marketing","mode":"oauth","providers":[{"id":"meta","name":"Connect Meta Ads","type":"oauth"}]},
     {"key":"youtube","name":"YouTube","category":"Social & Marketing","mode":"oauth","providers":[{"id":"google","name":"Connect YouTube","type":"oauth"}]},
     {"key":"google_business","name":"Google Business Profile","category":"Social & Marketing","mode":"oauth","providers":[{"id":"google","name":"Connect Google Business","type":"oauth"}]},
+    {"key":"google_search_console","name":"Google Search Console","category":"SEO & Search","mode":"oauth","providers":[{"id":"google","name":"Connect Google Search Console","type":"oauth"}]},
     {"key":"email","name":"Email / SMTP","category":"Communication","mode":"provider","providers":[{"id":"platform","name":"Platform Email","type":"platform"},{"id":"smtp","name":"My SMTP","type":"credentials"}]},
     {"key":"voice","name":"Voice & Calling","category":"Voice","mode":"provider","providers":[{"id":"platform","name":"Platform Voice","type":"platform"},{"id":"custom","name":"My Telephony Provider","type":"credentials"}]},
 ]
@@ -42,6 +43,7 @@ SECRET_FIELDS={
  "meta_ads":["access_token"],
  "youtube":["client_secret","refresh_token"],
  "google_business":["access_token"],
+ "google_search_console":["access_token","refresh_token"],
  "email":["password"],
  "voice":["api_key","auth_token","webhook_secret"],
 }
@@ -287,7 +289,7 @@ async def _http_json(method,url,**kwargs):
 @router.get("/oauth/{provider}/start")
 def oauth_start(provider: str, tenant_id: str, integration_key: str, credentials: HTTPAuthorizationCredentials=Depends(HTTPBearer(auto_error=False)), db: Session=Depends(get_db)):
     user=_user(credentials,db); _require(user,tenant_id)
-    if integration_key not in {"meta_business","facebook","instagram","meta_ads","youtube","google_business"}: raise HTTPException(400,"Unsupported OAuth integration")
+    if integration_key not in {"meta_business","facebook","instagram","meta_ads","youtube","google_business","google_search_console"}: raise HTTPException(400,"Unsupported OAuth integration")
     state=_oauth_state(tenant_id,integration_key)
     if provider=="meta":
         if not settings.meta_client_id or not settings.meta_redirect_uri: raise HTTPException(503,"Meta OAuth is not configured")
@@ -297,7 +299,8 @@ def oauth_start(provider: str, tenant_id: str, integration_key: str, credentials
         if not settings.google_client_id or not settings.google_redirect_uri: raise HTTPException(503,"Google OAuth is not configured")
         scopes={
           "youtube":"https://www.googleapis.com/auth/youtube https://www.googleapis.com/auth/youtube.readonly",
-          "google_business":"https://www.googleapis.com/auth/business.manage"
+          "google_business":"https://www.googleapis.com/auth/business.manage",
+          "google_search_console":"https://www.googleapis.com/auth/webmasters.readonly"
         }.get(integration_key)
         if not scopes: raise HTTPException(400,"Unsupported Google integration")
         url="https://accounts.google.com/o/oauth2/v2/auth?"+urlencode({"client_id":settings.google_client_id,"redirect_uri":settings.google_redirect_uri,"response_type":"code","access_type":"offline","prompt":"consent","include_granted_scopes":"true","scope":scopes,"state":state})
@@ -358,6 +361,11 @@ async def oauth_google_callback(code: str, state: str, db: Session=Depends(get_d
     elif key=="google_business":
         accounts=await _http_json("GET","https://mybusinessaccountmanagement.googleapis.com/v1/accounts",headers={"Authorization":"Bearer "+cfg["access_token"]})
         item=(accounts.get("accounts") or [{}])[0]; account_id=item.get("name"); account_name=item.get("accountName")
+    elif key=="google_search_console":
+        sites=await _http_json("GET","https://searchconsole.googleapis.com/webmasters/v3/sites",headers={"Authorization":"Bearer "+cfg["access_token"]})
+        entries=sites.get("siteEntry") or []
+        account_id=(entries[0].get("siteUrl") if entries else None)
+        account_name=(entries[0].get("siteUrl") if entries else "Google Search Console")
     row=_oauth_row(db,tenant_id,key)
     if not row: row=TenantIntegration(tenant_id=tenant_id,integration_key=key,provider="google",mode="oauth"); db.add(row)
     row.status="connected"; row.config_encrypted=encrypt_channel_config(cfg,(settings.integration_credential_encryption_key or settings.whatsapp_credential_encryption_key)); row.account_id=account_id; row.account_name=account_name; row.metadata_json=json.dumps({"oauth":"google","connected_at":datetime.utcnow().isoformat()}); db.commit()
