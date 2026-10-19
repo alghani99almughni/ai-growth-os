@@ -1,4 +1,6 @@
 """Unit tests for safe public-domain input validation."""
+# Import application first because visibility routes reuse dependencies from app.main.
+import app.main  # noqa: F401
 import pytest
 from fastapi import HTTPException
 from app.routes_visibility import _domain
