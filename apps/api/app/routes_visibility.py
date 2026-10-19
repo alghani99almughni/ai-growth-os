@@ -292,14 +292,29 @@ from pydantic import BaseModel, Field
 class VisibilityCheckPayload(BaseModel):
     providers: list[str] = Field(default_factory=lambda: list(PROVIDER_ORDER), min_length=1, max_length=4)
 
-def _provider_config(provider: str):
+def _provider_config(provider: str, tenant_id: str, db: Session):
     values = {
-        "gemini": (visibility_settings.gemini_api_key, visibility_settings.gemini_model),
-        "perplexity": (visibility_settings.perplexity_api_key, visibility_settings.perplexity_model),
-        "grok": (visibility_settings.grok_api_key, visibility_settings.grok_model),
-        "claude": (visibility_settings.anthropic_api_key, visibility_settings.anthropic_model),
+        "gemini": (visibility_settings.gemini_api_key, visibility_settings.gemini_model, "gemini"),
+        "perplexity": (visibility_settings.perplexity_api_key, visibility_settings.perplexity_model, "perplexity"),
+        "grok": (visibility_settings.grok_api_key, visibility_settings.grok_model, "grok"),
+        "claude": (visibility_settings.anthropic_api_key, visibility_settings.anthropic_model, "anthropic"),
     }
-    return values.get(provider, ("", ""))
+    env_key, env_model, integration_key = values.get(provider, ("", "", ""))
+    if integration_key:
+        row = db.scalar(select(TenantIntegration).where(
+            TenantIntegration.tenant_id == tenant_id,
+            TenantIntegration.integration_key == integration_key,
+            TenantIntegration.status == "connected"))
+        if row and row.config_encrypted:
+            try:
+                stored_config = decrypt_channel_config(row.config_encrypted, (
+                    visibility_settings.integration_credential_encryption_key
+                    or visibility_settings.whatsapp_credential_encryption_key))
+                if stored_config.get("api_key"):
+                    return stored_config.get("api_key"), stored_config.get("model") or env_model
+            except Exception:
+                pass
+    return env_key, env_model
 
 @router.post("/checks/{query_id}", status_code=201)
 async def run_visibility_checks(tenant_id: str, query_id: str, payload: VisibilityCheckPayload,
@@ -320,7 +335,7 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
         raise HTTPException(422, "Supported providers: gemini, perplexity, grok, claude")
     results = []
     for provider in providers:
-        api_key, model = _provider_config(provider)
+        api_key, model = _provider_config(provider, tenant_id, db)
         run = VisibilityCheckRun(tenant_id=tenant_id, query_id=query.id, provider=provider,
                                  measurement_method="search_grounded" if provider in ("gemini", "perplexity", "grok") else "model_sampled",
                                  status="running", started_at=datetime.utcnow())
