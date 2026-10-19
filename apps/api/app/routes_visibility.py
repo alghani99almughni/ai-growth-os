@@ -157,6 +157,18 @@ class _SEOParser(HTMLParser):
     def handle_data(self, data):
         if self.in_title: self.title_parts.append(data.strip())
 
+def _read_bounded_body(response, max_bytes: int = 500000) -> bytes:
+    """Read a response body only up to the configured limit; reject rather than audit a partial page."""
+    chunks = []
+    total = 0
+    for chunk in response.iter_bytes():
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(422, "Website homepage is larger than the 500 KB audit limit.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _validated_public_url(value: str) -> str:
     host = _domain(value)
     parts = urlsplit(value if "://" in value else "https://" + value)
@@ -190,14 +202,7 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
                 status_code = response.status_code
                 content_type = response.headers.get("content-type", "")
                 if status_code < 300 and "text/html" in content_type.lower():
-                    chunks = []
-                    total = 0
-                    for chunk in response.iter_bytes():
-                        total += len(chunk)
-                        if total > 500000:
-                            break
-                        chunks.append(chunk)
-                    body_bytes = b"".join(chunks)
+                    body_bytes = _read_bounded_body(response)
                     body = body_bytes.decode(response.encoding or "utf-8", errors="replace")
                 else:
                     body = ""
