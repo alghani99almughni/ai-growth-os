@@ -85,7 +85,7 @@ async def run_provider(provider: str, api_key: str, model: str, prompt: str) -> 
         if provider == "gemini":
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             response = await client.post(
-                url, params={"key": api_key},
+                url, headers={"x-goog-api-key": api_key},
                 json={"contents": [{"parts": [{"text": prompt}]}],
                       "tools": [{"google_search": {}}]},
             )
