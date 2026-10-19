@@ -13,6 +13,9 @@ export default function VisibilityWorkspace() {
   const [audits, setAudits] = useState<any[]>([]);
   const [visibilityRuns, setVisibilityRuns] = useState<any[]>([]);
   const [checkBusy, setCheckBusy] = useState<string | null>(null);
+  const [gscBusy, setGscBusy] = useState(false);
+  const [gscForm, setGscForm] = useState({ site_url: "", start_date: "", end_date: "" });
+  const [gscResult, setGscResult] = useState<any>(null);
   const [selectedAudit, setSelectedAudit] = useState<any>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [auditBusy, setAuditBusy] = useState(false);
@@ -76,6 +79,16 @@ export default function VisibilityWorkspace() {
       await load(tenant.id);
     } catch (e: any) { setStatus(e.message || "AI visibility check failed."); }
     finally { setCheckBusy(null); }
+  }
+
+  async function runSearchConsole(e: React.FormEvent) {
+    e.preventDefault(); if (!tenant) return; setGscBusy(true); setStatus(""); setGscResult(null);
+    try {
+      const r = await fetch(endpoint(tenant.id, "google-search-console/performance"), { method: "POST", headers: headers(), body: JSON.stringify({ ...gscForm, row_limit: 100 }) });
+      const d = await r.json(); if (!r.ok) throw new Error(d.detail || "Could not load Search Console data.");
+      setGscResult(d); setStatus("Official Google Search Console performance data loaded.");
+    } catch (e: any) { setStatus(e.message || "Search Console request failed."); }
+    finally { setGscBusy(false); }
   }
 
   async function runAudit() {
@@ -157,7 +170,16 @@ export default function VisibilityWorkspace() {
       <div style={{ display: "grid", gap: 8, marginTop: 16 }}>{queries.map(q => <article key={q.id} style={{ padding: 12, border: "1px solid #e8edf4", borderRadius: 10 }}><strong>{q.query_text}</strong><div style={{ color: "#69778a", fontSize: 13, marginTop: 5 }}>{q.intent} · {q.locale}{q.topic ? " · " + q.topic : ""}</div><button disabled={!!checkBusy || busy} onClick={() => runVisibilityCheck(q.id)} style={{ marginTop: 10, padding: "9px 13px", border: 0, borderRadius: 8, background: "#176b63", color: "white" }}>{checkBusy === q.id ? "Checking providers…" : "Check AI visibility"}</button></article>)}</div>
       {visibilityRuns.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>AI visibility history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Provider</th><th>Method</th><th>Status</th><th>Brand mention</th><th>Website citations</th></tr></thead><tbody>{visibilityRuns.map((r: any) => <tr key={r.run_id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td><td>{r.provider}</td><td>{r.measurement_method}</td><td>{r.status}</td><td>{r.brand_mentioned === null ? "—" : r.brand_mentioned ? "Yes" : "Not observed"}</td><td>{(r.cited_urls || []).length}</td></tr>)}</tbody></table>{visibilityRuns.filter((r: any) => r.answer_excerpt).slice(0, 6).map((r: any) => <article key={r.run_id} style={{ marginTop: 10, padding: 12, border: "1px solid #e8edf4", borderRadius: 9 }}><strong>{r.provider} · {r.brand_mentioned ? "Brand mentioned" : "Brand not observed"}</strong><p style={{ whiteSpace: "pre-wrap" }}>{r.answer_excerpt}</p>{(r.cited_urls || []).map((url: string) => <div key={url}><a href={url} target="_blank" rel="noreferrer">{url}</a></div>)}</article>)}</div>}
     </section>
-    <section style={panel}><h2>4. Website audit</h2><p>Run a bounded check of the saved public homepage for basic SEO and discoverability issues. This is a single-page audit, not a guarantee of search ranking.</p><button onClick={runAudit} disabled={auditBusy || busy || !brand.primary_domain} style={{ padding: "12px 18px", border: 0, borderRadius: 9, background: "#176b63", color: "white", cursor: "pointer" }}>{auditBusy ? "Checking website…" : "Run homepage audit"}</button>
+    <section style={panel}><h2>4. Google Search Console</h2><p>Load official query and page performance metrics from a connected Google Search Console property. This is separate from Gemini answer checks and does not claim a standalone AI Overview ranking.</p>
+      <form onSubmit={runSearchConsole} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 12, alignItems: "end" }}>
+        <label>Verified property URL<input required placeholder="https://example.com/" style={input} value={gscForm.site_url} onChange={e => setGscForm({ ...gscForm, site_url: e.target.value })}/></label>
+        <label>Start date<input required type="date" style={input} value={gscForm.start_date} onChange={e => setGscForm({ ...gscForm, start_date: e.target.value })}/></label>
+        <label>End date<input required type="date" style={input} value={gscForm.end_date} onChange={e => setGscForm({ ...gscForm, end_date: e.target.value })}/></label>
+        <button disabled={gscBusy || busy} style={{ padding: 12, border: 0, borderRadius: 9, background: "#176b63", color: "white" }}>{gscBusy ? "Loading Google data…" : "Load Search Console data"}</button>
+      </form>
+      {gscResult && <div style={{ marginTop: 16, overflowX: "auto" }}><p>{gscResult.start_date} to {gscResult.end_date} · {gscResult.row_count} row(s)</p><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Search query</th><th>Page</th><th>Clicks</th><th>Impressions</th><th>CTR</th><th>Position</th></tr></thead><tbody>{(gscResult.rows || []).map((row: any, i: number) => <tr key={i} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{row.keys?.[0] || "—"}</td><td style={{ maxWidth: 280, overflowWrap: "anywhere" }}>{row.keys?.[1] || "—"}</td><td>{row.clicks ?? 0}</td><td>{row.impressions ?? 0}</td><td>{typeof row.ctr === "number" ? (row.ctr * 100).toFixed(2) + "%" : "—"}</td><td>{typeof row.position === "number" ? row.position.toFixed(1) : "—"}</td></tr>)}</tbody></table><small>{gscResult.note}</small></div>}
+    </section>
+    <section style={panel}><h2>5. Website audit</h2><p>Run a bounded check of the saved public homepage for basic SEO and discoverability issues. This is a single-page audit, not a guarantee of search ranking.</p><button onClick={runAudit} disabled={auditBusy || busy || !brand.primary_domain} style={{ padding: "12px 18px", border: 0, borderRadius: 9, background: "#176b63", color: "white", cursor: "pointer" }}>{auditBusy ? "Checking website…" : "Run homepage audit"}</button>
       {audits.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>Audit history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Website</th><th>Status</th><th>HTTP</th><th>Findings</th></tr></thead><tbody>{audits.map(a => <tr key={a.id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{a.created_at ? new Date(a.created_at).toLocaleString() : "—"}</td><td>{a.target_url}</td><td>{a.status}</td><td>{a.http_status ?? "—"}</td><td>{a.summary?.finding_count ?? "—"} <button onClick={() => viewAudit(a.id)} style={{ marginLeft: 8 }}>View findings</button></td></tr>)}</tbody></table></div>}
       {detailBusy && <p>Loading audit findings…</p>}
       {selectedAudit && <div style={{ marginTop: 18, padding: 16, border: "1px solid #dbe4ee", borderRadius: 12 }}><h3>Findings for {selectedAudit.target_url}</h3><p>{selectedAudit.pages_checked} page checked · HTTP {selectedAudit.http_status ?? "unknown"} · {selectedAudit.status}</p><button onClick={() => setSelectedAudit(null)}>Close findings</button>{(selectedAudit.findings || []).map((finding: any, i: number) => <article key={i} style={{ marginTop: 10, padding: 12, border: "1px solid #e8edf4", borderRadius: 9 }}><strong>{finding.title}</strong><div style={{ fontSize: 12, color: "#69778a", margin: "4px 0" }}>{finding.category} · {finding.severity}</div><p>{finding.recommendation}</p>{finding.evidence && <small>Evidence: {finding.evidence}</small>}</article>)}</div>}
