@@ -53,4 +53,4 @@ def test_bounded_body_rejects_content_over_limit():
     with pytest.raises(HTTPException) as exc:
         _read_bounded_body(_FakeResponse([b"abc", b"def"]), max_bytes=5)
     assert exc.value.status_code == 422
-    assert "500 KB audit limit" in exc.value.detail
+    assert "5-byte audit limit" in exc.value.detail
