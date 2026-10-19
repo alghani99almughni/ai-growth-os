@@ -4,7 +4,7 @@
 import app.main  # noqa: F401
 import pytest
 from fastapi import HTTPException
-from app.routes_visibility import _domain, _SEOParser
+from app.routes_visibility import _domain, _SEOParser, _read_bounded_body
 
 @pytest.mark.parametrize("value,expected", [
     ("example.com", "example.com"),
@@ -36,3 +36,21 @@ def test_seo_parser_detects_noindex():
     parser = _SEOParser()
     parser.feed('<meta name="robots" content="noindex,follow">')
     assert "noindex" in parser.robots
+
+class _FakeResponse:
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def iter_bytes(self):
+        yield from self._chunks
+
+
+def test_bounded_body_accepts_content_at_limit():
+    assert _read_bounded_body(_FakeResponse([b"abc", b"def"]), max_bytes=6) == b"abcdef"
+
+
+def test_bounded_body_rejects_content_over_limit():
+    with pytest.raises(HTTPException) as exc:
+        _read_bounded_body(_FakeResponse([b"abc", b"def"]), max_bytes=5)
+    assert exc.value.status_code == 422
+    assert "500 KB audit limit" in exc.value.detail
