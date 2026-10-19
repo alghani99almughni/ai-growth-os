@@ -10,7 +10,9 @@ export default function VisibilityWorkspace() {
   const [brand, setBrand] = useState<any>({ name: "", primary_domain: "", description: "", locale: "en" });
   const [competitors, setCompetitors] = useState<any[]>([]);
   const [queries, setQueries] = useState<any[]>([]);
-  const [audits, setAudits] = useState<any[]>([]);\n  const [visibilityRuns, setVisibilityRuns] = useState<any[]>([]);\n  const [checkBusy, setCheckBusy] = useState<string | null>(null);
+  const [audits, setAudits] = useState<any[]>([]);
+  const [visibilityRuns, setVisibilityRuns] = useState<any[]>([]);
+  const [checkBusy, setCheckBusy] = useState<string | null>(null);
   const [selectedAudit, setSelectedAudit] = useState<any>(null);
   const [detailBusy, setDetailBusy] = useState(false);
   const [auditBusy, setAuditBusy] = useState(false);
@@ -61,7 +63,22 @@ export default function VisibilityWorkspace() {
     finally { setDetailBusy(false); }
   }
 
-  async function runVisibilityCheck(queryId: string) {\n    if (!tenant) return;\n    setCheckBusy(queryId); setStatus("");\n    try {\n      const r = await fetch(endpoint(tenant.id, "checks/" + encodeURIComponent(queryId)), { method: "POST", headers: headers(), body: JSON.stringify({ providers: ["gemini", "perplexity", "grok", "claude"] }) });\n      const d = await r.json();\n      if (!r.ok) throw new Error(d.detail || "AI visibility check failed.");\n      const successes = (d.results || []).filter((x: any) => x.status === "completed").length;\n      const failures = (d.results || []).length - successes;\n      setStatus("AI visibility check finished: " + successes + " provider(s) completed, " + failures + " provider(s) need configuration or review.");\n      await load(tenant.id);\n    } catch (e: any) { setStatus(e.message || "AI visibility check failed."); }\n    finally { setCheckBusy(null); }\n  }\n\n  async function runAudit() {
+  async function runVisibilityCheck(queryId: string) {
+    if (!tenant) return;
+    setCheckBusy(queryId); setStatus("");
+    try {
+      const r = await fetch(endpoint(tenant.id, "checks/" + encodeURIComponent(queryId)), { method: "POST", headers: headers(), body: JSON.stringify({ providers: ["gemini", "perplexity", "grok", "claude"] }) });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "AI visibility check failed.");
+      const successes = (d.results || []).filter((x: any) => x.status === "completed").length;
+      const failures = (d.results || []).length - successes;
+      setStatus("AI visibility check finished: " + successes + " provider(s) completed, " + failures + " provider(s) need configuration or review.");
+      await load(tenant.id);
+    } catch (e: any) { setStatus(e.message || "AI visibility check failed."); }
+    finally { setCheckBusy(null); }
+  }
+
+  async function runAudit() {
     if (!tenant) return;
     setAuditBusy(true); setStatus("");
     try {
@@ -137,7 +154,8 @@ export default function VisibilityWorkspace() {
         <label>Topic<input style={input} value={query.topic} onChange={e => setQuery({ ...query, topic: e.target.value })}/></label>
         <button disabled={busy} style={{ padding: 12, border: 0, borderRadius: 9, background: "#176b63", color: "white" }}>Add question</button>
       </form>
-      <div style={{ display: "grid", gap: 8, marginTop: 16 }}>{queries.map(q => <article key={q.id} style={{ padding: 12, border: "1px solid #e8edf4", borderRadius: 10 }}><strong>{q.query_text}</strong><div style={{ color: "#69778a", fontSize: 13, marginTop: 5 }}>{q.intent} · {q.locale}{q.topic ? " · " + q.topic : ""}</div><button disabled={!!checkBusy || busy} onClick={() => runVisibilityCheck(q.id)} style={{ marginTop: 10, padding: "9px 13px", border: 0, borderRadius: 8, background: "#176b63", color: "white" }}>{checkBusy === q.id ? "Checking providers…" : "Check AI visibility"}</button></article>)}</div>\n      {visibilityRuns.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>AI visibility history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Provider</th><th>Method</th><th>Status</th><th>Brand mention</th><th>Website citations</th></tr></thead><tbody>{visibilityRuns.map((r: any) => <tr key={r.run_id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td><td>{r.provider}</td><td>{r.measurement_method}</td><td>{r.status}</td><td>{r.brand_mentioned === null ? "—" : r.brand_mentioned ? "Yes" : "Not observed"}</td><td>{(r.cited_urls || []).length}</td></tr>)}</tbody></table>{visibilityRuns.filter((r: any) => r.answer_excerpt).slice(0, 6).map((r: any) => <article key={r.run_id} style={{ marginTop: 10, padding: 12, border: "1px solid #e8edf4", borderRadius: 9 }}><strong>{r.provider} · {r.brand_mentioned ? "Brand mentioned" : "Brand not observed"}</strong><p style={{ whiteSpace: "pre-wrap" }}>{r.answer_excerpt}</p>{(r.cited_urls || []).map((url: string) => <div key={url}><a href={url} target="_blank" rel="noreferrer">{url}</a></div>)}</article>)}</div>}
+      <div style={{ display: "grid", gap: 8, marginTop: 16 }}>{queries.map(q => <article key={q.id} style={{ padding: 12, border: "1px solid #e8edf4", borderRadius: 10 }}><strong>{q.query_text}</strong><div style={{ color: "#69778a", fontSize: 13, marginTop: 5 }}>{q.intent} · {q.locale}{q.topic ? " · " + q.topic : ""}</div><button disabled={!!checkBusy || busy} onClick={() => runVisibilityCheck(q.id)} style={{ marginTop: 10, padding: "9px 13px", border: 0, borderRadius: 8, background: "#176b63", color: "white" }}>{checkBusy === q.id ? "Checking providers…" : "Check AI visibility"}</button></article>)}</div>
+      {visibilityRuns.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>AI visibility history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Provider</th><th>Method</th><th>Status</th><th>Brand mention</th><th>Website citations</th></tr></thead><tbody>{visibilityRuns.map((r: any) => <tr key={r.run_id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td><td>{r.provider}</td><td>{r.measurement_method}</td><td>{r.status}</td><td>{r.brand_mentioned === null ? "—" : r.brand_mentioned ? "Yes" : "Not observed"}</td><td>{(r.cited_urls || []).length}</td></tr>)}</tbody></table>{visibilityRuns.filter((r: any) => r.answer_excerpt).slice(0, 6).map((r: any) => <article key={r.run_id} style={{ marginTop: 10, padding: 12, border: "1px solid #e8edf4", borderRadius: 9 }}><strong>{r.provider} · {r.brand_mentioned ? "Brand mentioned" : "Brand not observed"}</strong><p style={{ whiteSpace: "pre-wrap" }}>{r.answer_excerpt}</p>{(r.cited_urls || []).map((url: string) => <div key={url}><a href={url} target="_blank" rel="noreferrer">{url}</a></div>)}</article>)}</div>}
     </section>
     <section style={panel}><h2>4. Website audit</h2><p>Run a bounded check of the saved public homepage for basic SEO and discoverability issues. This is a single-page audit, not a guarantee of search ranking.</p><button onClick={runAudit} disabled={auditBusy || busy || !brand.primary_domain} style={{ padding: "12px 18px", border: 0, borderRadius: 9, background: "#176b63", color: "white", cursor: "pointer" }}>{auditBusy ? "Checking website…" : "Run homepage audit"}</button>
       {audits.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>Audit history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Website</th><th>Status</th><th>HTTP</th><th>Findings</th></tr></thead><tbody>{audits.map(a => <tr key={a.id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{a.created_at ? new Date(a.created_at).toLocaleString() : "—"}</td><td>{a.target_url}</td><td>{a.status}</td><td>{a.http_status ?? "—"}</td><td>{a.summary?.finding_count ?? "—"} <button onClick={() => viewAudit(a.id)} style={{ marginLeft: 8 }}>View findings</button></td></tr>)}</tbody></table></div>}
