@@ -351,11 +351,16 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
             )
             observed = await run_provider(provider, api_key, model, prompt)
             match = observation_match(observed["answer"], brand.name, brand.primary_domain, observed["citations"])
+            answer_lower = observed["answer"].casefold()
+            competitors = db.scalars(select(VisibilityCompetitor).where(
+                VisibilityCompetitor.tenant_id == tenant_id)).all()
+            competitor_mentions = [item.name for item in competitors if item.name and item.name.casefold() in answer_lower]
+            mentioned_names = ([brand.name] if match["brand_mentioned"] else []) + competitor_mentions
             cited_urls = [item["url"] for item in observed["citations"]]
             db.add(VisibilityObservation(
                 tenant_id=tenant_id, run_id=run.id,
                 brand_mentioned=match["brand_mentioned"],
-                mentioned_names_json=json.dumps([brand.name] if match["brand_mentioned"] else []),
+                mentioned_names_json=json.dumps(mentioned_names),
                 cited_urls_json=json.dumps(cited_urls),
                 answer_excerpt=observed["answer"][:4000],
                 evidence_quality=match["evidence_quality"],
@@ -365,6 +370,7 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
             results.append({"run_id": run.id, "provider": provider, "model": observed["model"],
                             "status": "completed", "measurement_method": observed["method"],
                             "brand_mentioned": match["brand_mentioned"], "website_cited": match["website_cited"],
+                            "competitor_mentions": competitor_mentions,
                             "citations": observed["citations"], "answer_excerpt": observed["answer"][:4000],
                             "evidence_quality": match["evidence_quality"]})
         except Exception as exc:
@@ -395,6 +401,7 @@ def list_visibility_checks(tenant_id: str, limit: int = 50,
                       "measurement_method": row.measurement_method, "status": row.status,
                       "error_code": row.error_code,
                       "brand_mentioned": observation.brand_mentioned if observation else None,
+                      "mentioned_names": json.loads(observation.mentioned_names_json or "[]") if observation else [],
                       "cited_urls": json.loads(observation.cited_urls_json or "[]") if observation else [],
                       "answer_excerpt": observation.answer_excerpt if observation else "",
                       "evidence_quality": observation.evidence_quality if observation else None,
