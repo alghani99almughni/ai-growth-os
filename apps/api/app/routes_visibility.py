@@ -281,3 +281,108 @@ def get_website_audit(tenant_id: str, audit_id: str, user: User = Depends(get_cu
             "pages_checked":record.pages_checked,"summary":json.loads(record.summary_json or "{}"),
             "findings":[{"category":r.category,"severity":r.severity,"title":r.title,"recommendation":r.recommendation,"evidence":r.evidence}
                         for r in rows],"created_at":record.created_at.isoformat() if record.created_at else None}
+
+
+# ── AI-answer visibility checks (separate from the deterministic website audit) ──
+from .models_visibility import VisibilityCheckRun, VisibilityObservation
+from .visibility_providers import PROVIDER_ORDER, run_provider, observation_match
+from .config import settings as visibility_settings
+from pydantic import BaseModel, Field
+
+class VisibilityCheckPayload(BaseModel):
+    providers: list[str] = Field(default_factory=lambda: list(PROVIDER_ORDER), min_length=1, max_length=4)
+
+def _provider_config(provider: str):
+    values = {
+        "gemini": (visibility_settings.gemini_api_key, visibility_settings.gemini_model),
+        "perplexity": (visibility_settings.perplexity_api_key, visibility_settings.perplexity_model),
+        "grok": (visibility_settings.grok_api_key, visibility_settings.grok_model),
+        "claude": (visibility_settings.anthropic_api_key, visibility_settings.anthropic_model),
+    }
+    return values.get(provider, ("", ""))
+
+@router.post("/checks/{query_id}", status_code=201)
+async def run_visibility_checks(tenant_id: str, query_id: str, payload: VisibilityCheckPayload,
+                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Run a saved query against configured providers and persist evidence per provider."""
+    _authorize(user, tenant_id)
+    query = db.scalar(select(VisibilityQuery).where(
+        VisibilityQuery.id == query_id, VisibilityQuery.tenant_id == tenant_id,
+        VisibilityQuery.is_active.is_(True)))
+    if not query:
+        raise HTTPException(404, "Active visibility query not found")
+    brand = db.scalar(select(VisibilityBrand).where(
+        VisibilityBrand.tenant_id == tenant_id).order_by(VisibilityBrand.created_at.asc()))
+    if not brand:
+        raise HTTPException(400, "Save your brand profile before running visibility checks")
+    providers = list(dict.fromkeys(p.lower() for p in payload.providers))
+    if any(p not in PROVIDER_ORDER for p in providers):
+        raise HTTPException(422, "Supported providers: gemini, perplexity, grok, claude")
+    results = []
+    for provider in providers:
+        api_key, model = _provider_config(provider)
+        run = VisibilityCheckRun(tenant_id=tenant_id, query_id=query.id, provider=provider,
+                                 measurement_method="search_grounded" if provider in ("gemini", "perplexity", "grok") else "model_sampled",
+                                 status="running", started_at=datetime.utcnow())
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        try:
+            prompt = (
+                f"Answer this customer question for locale {query.locale}: {query.query_text}\n"
+                f"Evaluate businesses fairly and use web search where the provider supports it. "
+                f"Do not assume facts not supported by sources. Business being tracked: {brand.name} "
+                f"(website: {brand.primary_domain}). Return a concise answer with citations when available."
+            )
+            observed = await run_provider(provider, api_key, model, prompt)
+            match = observation_match(observed["answer"], brand.name, brand.primary_domain, observed["citations"])
+            cited_urls = [item["url"] for item in observed["citations"]]
+            db.add(VisibilityObservation(
+                tenant_id=tenant_id, run_id=run.id,
+                brand_mentioned=match["brand_mentioned"],
+                mentioned_names_json=json.dumps([brand.name] if match["brand_mentioned"] else []),
+                cited_urls_json=json.dumps(cited_urls),
+                answer_excerpt=observed["answer"][:4000],
+                evidence_quality=match["evidence_quality"],
+                observed_at=datetime.utcnow()))
+            run.status = "completed"
+            run.error_code = None
+            results.append({"run_id": run.id, "provider": provider, "model": observed["model"],
+                            "status": "completed", "measurement_method": observed["method"],
+                            "brand_mentioned": match["brand_mentioned"], "website_cited": match["website_cited"],
+                            "citations": observed["citations"], "answer_excerpt": observed["answer"][:4000],
+                            "evidence_quality": match["evidence_quality"]})
+        except Exception as exc:
+            run.status = "failed"
+            run.error_code = "provider_not_configured" if "not configured" in str(exc).lower() else "provider_request_failed"
+            results.append({"run_id": run.id, "provider": provider, "status": "failed",
+                            "error_code": run.error_code,
+                            "message": "Provider API key/model is not configured." if run.error_code == "provider_not_configured" else "Provider request failed; verify API access, quota and model configuration."})
+        run.completed_at = datetime.utcnow()
+        db.commit()
+    return {"query_id": query.id, "query_text": query.query_text, "brand": brand.name,
+            "results": results,
+            "note": "Results are observations for these exact provider queries, not universal rankings or a guarantee of what every consumer sees."}
+
+@router.get("/checks")
+def list_visibility_checks(tenant_id: str, limit: int = 50,
+                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    _authorize(user, tenant_id)
+    rows = db.scalars(select(VisibilityCheckRun).where(
+        VisibilityCheckRun.tenant_id == tenant_id
+    ).order_by(VisibilityCheckRun.created_at.desc()).limit(min(max(limit, 1), 100))).all()
+    items = []
+    for row in rows:
+        observation = db.scalar(select(VisibilityObservation).where(
+            VisibilityObservation.run_id == row.id,
+            VisibilityObservation.tenant_id == tenant_id))
+        items.append({"run_id": row.id, "query_id": row.query_id, "provider": row.provider,
+                      "measurement_method": row.measurement_method, "status": row.status,
+                      "error_code": row.error_code,
+                      "brand_mentioned": observation.brand_mentioned if observation else None,
+                      "cited_urls": json.loads(observation.cited_urls_json or "[]") if observation else [],
+                      "answer_excerpt": observation.answer_excerpt if observation else "",
+                      "evidence_quality": observation.evidence_quality if observation else None,
+                      "created_at": row.created_at.isoformat() if row.created_at else None,
+                      "completed_at": row.completed_at.isoformat() if row.completed_at else None})
+    return {"items": items}
