@@ -37,8 +37,6 @@ def _domain(value: str) -> str:
     host = parts.hostname.lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost") or "." not in host:
         raise HTTPException(422, "Enter a public internet domain")
-    # Reject IP literals at profile-entry time. The audit accepts hostnames only,
-    # then independently checks every DNS answer is globally routable.
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -164,7 +162,7 @@ def _read_bounded_body(response, max_bytes: int = 500000) -> bytes:
     for chunk in response.iter_bytes():
         total += len(chunk)
         if total > max_bytes:
-            raise HTTPException(422, "Website homepage is larger than the 500 KB audit limit.")
+            raise HTTPException(422, f"Website homepage exceeds the {max_bytes}-byte audit limit.")
         chunks.append(chunk)
     return b"".join(chunks)
 
