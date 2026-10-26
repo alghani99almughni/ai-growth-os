@@ -89,14 +89,21 @@ def fetch_public_homepage(url: str, *, max_bytes: int = MAX_RESPONSE_BYTES) -> B
     """Fetch one public HTTP(S) homepage without redirects or unbounded reads."""
     if max_bytes < 1 or max_bytes > MAX_RESPONSE_BYTES:
         raise ValueError("max_bytes must be between 1 and the audit hard limit")
-    parts = urlsplit(url)
+    try:
+        parts = urlsplit(url)
+        # Accessing .port can raise ValueError for malformed/non-numeric ports.
+        supplied_port = parts.port
+    except (TypeError, ValueError) as exc:
+        raise UnsafeWebsiteTarget("Malformed website URL") from exc
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise UnsafeWebsiteTarget("Only absolute HTTP(S) website URLs are supported")
     if parts.username or parts.password or parts.fragment:
         raise UnsafeWebsiteTarget("URL credentials and fragments are not supported")
-    if parts.port not in (None, 80, 443):
+    if supplied_port not in (None, 80, 443):
         raise UnsafeWebsiteTarget("Custom ports are not supported")
     host = parts.hostname.rstrip(".").lower()
+    if not host or any(character.isspace() or ord(character) < 33 for character in host):
+        raise UnsafeWebsiteTarget("Malformed website hostname")
     try:
         ipaddress.ip_address(host)
     except ValueError:
