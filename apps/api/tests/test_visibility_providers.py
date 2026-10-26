@@ -68,3 +68,33 @@ def test_citation_parser_deduplicates_and_ignores_non_urls():
         ]
     })
     assert citations == [{"url": "https://example.com", "title": "One"}]
+
+
+def test_grok_citations_are_not_mislabeled_as_search_grounded(monkeypatch):
+    """Grok's ordinary chat-completions response is sampled model output, not verified search grounding."""
+    import asyncio
+    import app.visibility_providers as providers
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "choices": [{"message": {"content": "Example Gym is nearby."}}],
+                "citations": ["https://example.com"],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+    result = asyncio.run(providers.run_provider("grok", "test-key", "grok-test-model", "test prompt"))
+    assert result["answer"] == "Example Gym is nearby."
+    assert result["citations"] == [{"url": "https://example.com", "title": ""}]
+    assert result["method"] == "model_sampled"
