@@ -31,4 +31,4 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Run voice regression and visibility tests
-        run: pytest -q tests/test_voice_agent_regression.py tests/test_visibility_audit.py tests/test_visibility_domain.py
+        run: pytest -q tests/test_voice_agent_regression.py tests/test_visibility_audit.py tests/test_visibility_domain.py tests/test_visibility_providers.py
