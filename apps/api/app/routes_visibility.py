@@ -189,6 +189,9 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
     """Run a small, bounded first-page audit. No redirects, scripts, or arbitrary page crawling."""
     import httpx
     _authorize(user, tenant_id)
+    # Defense in depth: the frontend button is also disabled, but direct API calls
+    # must not trigger outbound requests until connection-time SSRF protection is verified.
+    raise HTTPException(503, "Website audit is temporarily disabled pending security hardening.")
     brand = db.scalar(select(VisibilityBrand).where(VisibilityBrand.tenant_id == tenant_id).order_by(VisibilityBrand.created_at.asc()))
     if not brand:
         raise HTTPException(400, "Save your brand profile before starting a website audit")
