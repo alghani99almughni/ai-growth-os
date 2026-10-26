@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -15,14 +16,32 @@ PROVIDER_ORDER = ("gemini", "perplexity", "grok", "claude")
 TIMEOUT = httpx.Timeout(35.0, connect=8.0)
 
 
+def _safe_citation_url(value: Any) -> bool:
+    """Accept only well-formed HTTP(S) links without embedded credentials."""
+    if not isinstance(value, str) or len(value) > 2048 or any(ch.isspace() for ch in value):
+        return False
+    try:
+        parts = urlsplit(value)
+        # Accessing .port validates malformed/out-of-range port values.
+        _ = parts.port
+        return (
+            parts.scheme.lower() in ("http", "https")
+            and bool(parts.hostname)
+            and parts.username is None
+            and parts.password is None
+        )
+    except ValueError:
+        return False
+
+
 def _citations(value: Any) -> list[dict[str, str]]:
     found: list[dict[str, str]] = []
-    if isinstance(value, str) and value.startswith(("https://", "http://")):
+    if isinstance(value, str) and _safe_citation_url(value):
         found.append({"url": value[:2048], "title": ""})
     elif isinstance(value, dict):
         uri = value.get("uri") or value.get("url")
         title = value.get("title") or value.get("name") or ""
-        if isinstance(uri, str) and uri.startswith(("https://", "http://")):
+        if _safe_citation_url(uri):
             found.append({"url": uri[:2048], "title": str(title)[:300]})
         for child in value.values():
             found.extend(_citations(child))
