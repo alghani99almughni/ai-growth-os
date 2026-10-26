@@ -59,6 +59,32 @@ def test_competitor_citation_does_not_count_as_brand_website_citation():
     assert result["brand_mentioned"] is True
     assert result["website_cited"] is False
 
+def test_brand_mention_uses_phrase_boundaries_not_substrings():
+    result = observation_match(
+        "ABC Fitness is mentioned, but ABCDEF is a different name.",
+        "ABC", "example.com", [],
+    )
+    assert result["brand_mentioned"] is True
+    assert observation_match("ABCDEF is here.", "ABC", "example.com", [])["brand_mentioned"] is False
+
+
+def test_website_citation_normalizes_ports_and_subdomains():
+    result = observation_match(
+        "Example Gym is mentioned.",
+        "Example Gym", "https://www.example.com/",
+        [{"url": "https://booking.example.com:8443/path", "title": "Booking"}],
+    )
+    assert result["website_cited"] is True
+
+
+def test_lookalike_domain_does_not_count_as_website_citation():
+    result = observation_match(
+        "Example Gym is mentioned.",
+        "Example Gym", "example.com",
+        [{"url": "https://example.com.attacker.test/path", "title": "Lookalike"}],
+    )
+    assert result["website_cited"] is False
+
 
 def test_citation_parser_deduplicates_and_ignores_non_urls():
     citations = _citations({
