@@ -27,6 +27,9 @@ class FakeDB:
         if not getattr(row, "id", None):
             row.id = "ticket-1"
 
+    def rollback(self):
+        pass
+
 
 def test_create_ticket_normalizes_category_priority_and_starts_sla(monkeypatch):
     monkeypatch.setattr(tickets, "_model", lambda: FakeTicket)
