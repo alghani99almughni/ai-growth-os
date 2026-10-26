@@ -337,7 +337,7 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
     for provider in providers:
         api_key, model = _provider_config(provider, tenant_id, db)
         run = VisibilityCheckRun(tenant_id=tenant_id, query_id=query.id, provider=provider,
-                                 measurement_method="search_grounded" if provider in ("gemini", "perplexity", "grok") else "model_sampled",
+                                 measurement_method="search_grounded" if provider in ("gemini", "perplexity") else "model_sampled",
                                  status="running", started_at=datetime.utcnow())
         db.add(run)
         db.commit()
