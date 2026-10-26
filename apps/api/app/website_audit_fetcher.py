@@ -109,7 +109,12 @@ def fetch_public_homepage(url: str, *, max_bytes: int = MAX_RESPONSE_BYTES) -> B
     for address in addresses:
         base = HTTPSConnection if parts.scheme == "https" else HTTPConnection
         pinned_class = _pinned_connection_class(base, address)
-        pool_class = HTTPSConnectionPool if parts.scheme == "https" else HTTPConnectionPool
+        base_pool_class = HTTPSConnectionPool if parts.scheme == "https" else HTTPConnectionPool
+        pool_class = type(
+            "PinnedWebsiteConnectionPool",
+            (base_pool_class,),
+            {"ConnectionCls": pinned_class, "_connection_cls": pinned_class, "__module__": __name__},
+        )
         pool_kwargs = {
             "host": host,
             "port": port,
@@ -118,7 +123,6 @@ def fetch_public_homepage(url: str, *, max_bytes: int = MAX_RESPONSE_BYTES) -> B
             "block": True,
             "retries": False,
             "headers": {"User-Agent": USER_AGENT, "Accept": "text/html"},
-            "_connection_cls": pinned_class,
         }
         if parts.scheme == "https":
             # Keep hostname-based TLS SNI and certificate validation while the
