@@ -146,7 +146,7 @@ def _contains_brand_name(answer: str, brand_name: str) -> bool:
     name = (brand_name or "").strip().casefold()
     if not name:
         return False
-    return re.search(r"(?<!\\w)" + re.escape(name) + r"(?!\\w)", text) is not None
+    return re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text) is not None
 
 
 def _normalized_host(value: str) -> str:
