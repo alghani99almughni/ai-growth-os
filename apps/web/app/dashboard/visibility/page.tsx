@@ -28,17 +28,22 @@ export default function VisibilityWorkspace() {
   const endpoint = (id: string, suffix: string) => api() + "/api/v1/tenants/" + encodeURIComponent(id) + "/visibility/" + suffix;
 
   async function load(id: string) {
-    const [b, c, q] = await Promise.all([
+    const [b, c, q, history] = await Promise.all([
       fetch(endpoint(id, "brand"), { headers: headers(), cache: "no-store" }),
       fetch(endpoint(id, "competitors"), { headers: headers(), cache: "no-store" }),
       fetch(endpoint(id, "queries"), { headers: headers(), cache: "no-store" }),
+      fetch(endpoint(id, "checks?limit=50"), { headers: headers(), cache: "no-store" }),
     ]);
-    if ([b, c, q].some(r => r.status === 401 || r.status === 403)) throw new Error("Your session does not have access to this business. Please sign in again.");
+    if ([b, c, q, history].some(r => r.status === 401 || r.status === 403)) throw new Error("Your session does not have access to this business. Please sign in again.");
     if (![b, c, q].every(r => r.ok)) throw new Error("Visibility API is not available yet. Please check the backend deployment.");
     const [bd, cd, qd] = await Promise.all([b.json(), c.json(), q.json()]);
-    const ar = await fetch(endpoint(id, "audits"), { headers: headers(), cache: "no-store" });
+    const [ar, hd] = await Promise.all([
+      fetch(endpoint(id, "audits"), { headers: headers(), cache: "no-store" }),
+      history.ok ? history.json() : Promise.resolve({ items: [] }),
+    ]);
     const ad = ar.ok ? await ar.json() : { items: [] };
     setAudits(ad.items || []);
+    setVisibilityRuns(hd.items || []);
     if (bd.brand) setBrand(bd.brand);
     setCompetitors(cd.items || []);
     setQueries(qd.items || []);
