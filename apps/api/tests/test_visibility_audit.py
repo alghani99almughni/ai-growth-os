@@ -4,7 +4,8 @@
 import app.main  # noqa: F401
 import pytest
 from fastapi import HTTPException
-from app.routes_visibility import _domain, _SEOParser, _read_bounded_body
+import app.routes_visibility as visibility_routes
+from app.routes_visibility import _domain, _SEOParser, _read_bounded_body, run_website_audit
 
 @pytest.mark.parametrize("value,expected", [
     ("example.com", "example.com"),
@@ -54,3 +55,14 @@ def test_bounded_body_rejects_content_over_limit():
         _read_bounded_body(_FakeResponse([b"abc", b"def"]), max_bytes=5)
     assert exc.value.status_code == 422
     assert "5-byte audit limit" in exc.value.detail
+
+
+def test_website_audit_api_is_blocked_before_outbound_fetch(monkeypatch):
+    # Even direct backend invocation must fail closed while SSRF-safe fetching
+    # is unfinished. If the route proceeds, it would try to query the database
+    # for a brand; the test intentionally supplies no usable database.
+    monkeypatch.setattr(visibility_routes, "_authorize", lambda user, tenant_id: None)
+    with pytest.raises(HTTPException) as exc:
+        run_website_audit("tenant-test", user=object(), db=None)
+    assert exc.value.status_code == 503
+    assert "disabled pending security hardening" in exc.value.detail
