@@ -90,6 +90,7 @@ def test_open_ticket_past_due_is_sla_breached():
 
 def test_ticket_reply_reopens_resolved_ticket_for_tenant_followup(monkeypatch):
     monkeypatch.setattr(operational_alerts, "create_operational_alerts", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(security, "audit", lambda *args, **kwargs: None)
     row = FakeTicket(
         id="ticket-1",
         tenant_id="tenant-a",
