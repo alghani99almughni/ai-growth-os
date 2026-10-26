@@ -1,5 +1,5 @@
 "use client";
-import {useEffect,useMemo,useState} from "react";
+import {FormEvent,useEffect,useMemo,useState} from "react";
 import VoiceCallModal from "../../components/VoiceCallModal";
 
 const api=()=>process.env.NEXT_PUBLIC_API_URL||"http://localhost:8000";
@@ -113,7 +113,7 @@ export default function Customer(){
 
  async function placeOrder(){if(!business||!cartItems.length)return;setStatus("Placing order…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:cartItems.map(x=>({menu_item_id:x.id,quantity:x.quantity})),context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(!r.ok){setStatus(d.detail||"Unable to place order");return}setOrder(d);setCart({});setActive("home");setStatus("Order placed successfully");}
 
- async function submitSupportTicket(e:React.FormEvent){e.preventDefault();if(!business)return;setTicketResult(null);setStatus("Submitting support request…");try{const r=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(business.slug)+"/tickets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:ticketSubject,message:ticketMessage,customer_name:ticketName,customer_phone:ticketPhone,category:"support"})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Unable to submit support request");setTicketResult(d);setTicketSubject("");setTicketMessage("");setStatus("Support request received")}catch(e){setStatus(e instanceof Error?e.message:"Unable to submit support request")}}
+ async function submitSupportTicket(e:FormEvent){e.preventDefault();if(!business)return;setTicketResult(null);setStatus("Submitting support request…");try{const r=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(business.slug)+"/tickets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:ticketSubject,message:ticketMessage,customer_name:ticketName,customer_phone:ticketPhone,category:"support"})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Unable to submit support request");setTicketResult(d);setTicketSubject("");setTicketMessage("");setStatus("Support request received")}catch(e){setStatus(e instanceof Error?e.message:"Unable to submit support request")}}
 
  async function startTeamCall(){
   if(!business)return;
