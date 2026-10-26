@@ -9,7 +9,7 @@ import json
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import String, Text, DateTime, Boolean, select, or_
+from sqlalchemy import String, Text, DateTime, Boolean, select, func
 from sqlalchemy.orm import Session, Mapped, mapped_column
 from .db import Base, SessionLocal
 from .config import settings
@@ -43,7 +43,7 @@ class OperationalAlert(Base):
     read_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
-def _alert_recipients(db: Session, tenant_id: str, staff_id: str | None = None, department_id: str | None = None):
+def _alert_recipients(db: Session, tenant_id: str, event_type: str, staff_id: str | None = None, department_id: str | None = None):
     recipients = set()
     admins = db.scalars(select(User).where(User.tenant_id == tenant_id, User.is_active == True,
         User.role.in_(("owner", "tenant_admin", "admin")))).all()
@@ -52,9 +52,22 @@ def _alert_recipients(db: Session, tenant_id: str, staff_id: str | None = None, 
         staff = db.scalar(select(StaffMember).where(StaffMember.id == staff_id, StaffMember.tenant_id == tenant_id, StaffMember.is_active == True))
         if staff and staff.user_id:
             recipients.add(staff.user_id)
-    if department_id:
+    target_department_ids = {department_id} if department_id else set()
+    if not department_id:
+        # Route unassigned booking/order alerts to operational departments as well as tenant admins.
+        if event_type.startswith("appointment."):
+            patterns = ("%booking%", "%reception%", "%front desk%", "%appointment%")
+        elif event_type.startswith("order."):
+            patterns = ("%order%", "%kitchen%", "%operations%", "%reception%")
+        else:
+            patterns = ()
+        for pattern in patterns:
+            rows = db.scalars(select(Department).where(Department.tenant_id == tenant_id,
+                Department.is_active == True, Department.name.ilike(pattern))).all()
+            target_department_ids.update(d.id for d in rows)
+    if target_department_ids:
         staff_rows = db.scalars(select(StaffMember).where(StaffMember.tenant_id == tenant_id,
-            StaffMember.department_id == department_id, StaffMember.is_active == True)).all()
+            StaffMember.department_id.in_(target_department_ids), StaffMember.is_active == True)).all()
         recipients.update(s.user_id for s in staff_rows if s.user_id)
     if not recipients:
         # Safe fallback: tenant's active users only; never fan out across tenants.
@@ -72,7 +85,7 @@ def create_operational_alerts(db: Session, tenant_id: str, event_type: str, titl
     encoded = json.dumps(payload or {}, default=str, separators=(",", ":"))
     rows = [OperationalAlert(tenant_id=tenant_id, recipient_user_id=user_id, event_type=event_type,
              title=title[:200], message=message[:4000], payload_json=encoded, created_at=now)
-            for user_id in _alert_recipients(db, tenant_id, staff_id, department_id)]
+            for user_id in _alert_recipients(db, tenant_id, event_type, staff_id, department_id)]
     if rows:
         db.add_all(rows)
         db.flush()
@@ -120,7 +133,7 @@ def list_operational_alerts(unread_only: bool = False, limit: int = Query(defaul
         q = q.where(OperationalAlert.read_at.is_(None))
     rows = db.scalars(q.order_by(OperationalAlert.created_at.desc()).limit(limit)).all()
     return {"items": [_out(row) for row in rows], "unread_count": db.scalar(
-        select(__import__("sqlalchemy").func.count(OperationalAlert.id)).where(
+        select(func.count(OperationalAlert.id)).where(
             OperationalAlert.tenant_id == user.tenant_id,
             OperationalAlert.recipient_user_id == user.id,
             OperationalAlert.read_at.is_(None))) or 0}
