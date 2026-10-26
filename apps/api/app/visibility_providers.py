@@ -140,16 +140,36 @@ async def run_provider(provider: str, api_key: str, model: str, prompt: str) -> 
                 "citations": citations, "method": "search_grounded" if provider in ("gemini", "perplexity") else "model_sampled"}
 
 
-def observation_match(answer: str, brand_name: str, domain: str, citations: list[dict[str, str]]) -> dict[str, Any]:
-    """A transparent lexical observation, not a semantic ranking or guaranteed score."""
+def _contains_brand_name(answer: str, brand_name: str) -> bool:
+    """Match a brand as a phrase, avoiding accidental substring matches."""
     text = (answer or "").casefold()
     name = (brand_name or "").strip().casefold()
-    host = re.sub(r"^https?://", "", (domain or "").strip().casefold()).split("/")[0].removeprefix("www.")
-    mentioned = bool(name and name in text)
+    if not name:
+        return False
+    return re.search(r"(?<!\\w)" + re.escape(name) + r"(?!\\w)", text) is not None
+
+
+def _normalized_host(value: str) -> str:
+    """Extract a normalized hostname from a domain or HTTP(S) URL."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    candidate = raw if "://" in raw else "//" + raw
+    try:
+        host = (urlsplit(candidate).hostname or "").casefold().rstrip(".")
+    except ValueError:
+        return ""
+    return host.removeprefix("www.")
+
+
+def observation_match(answer: str, brand_name: str, domain: str, citations: list[dict[str, str]]) -> dict[str, Any]:
+    """A transparent lexical observation, not a semantic ranking or guaranteed score."""
+    mentioned = _contains_brand_name(answer, brand_name)
+    host = _normalized_host(domain)
     cited = False
     for item in citations or []:
-        url_host = re.sub(r"^https?://", "", (item.get("url") or "").casefold()).split("/")[0].removeprefix("www.")
-        if host and (url_host == host or url_host.endswith("." + host)):
+        url_host = _normalized_host(item.get("url") or "")
+        if host and url_host and (url_host == host or url_host.endswith("." + host)):
             cited = True
             break
     return {"brand_mentioned": mentioned, "website_cited": cited,
