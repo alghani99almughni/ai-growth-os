@@ -52,7 +52,7 @@ Important gaps before re-enabling:
 
 ## Implementation plan (not yet executed)
 
-1. Keep Website Audit disabled until the server-side gate and connection-pinning fetcher are tested.
+1. **Completed on this branch:** direct audit API calls now return HTTP 503 after tenant authorization, before any outbound request. CI was triggered; verify its result before treating this change as validated. Keep the feature disabled until the connection-pinning fetcher is tested.
 2. Implement a dedicated safe-fetch boundary, separate from SEO parsing and report scoring.
 3. Expand checks in small groups: security headers/TLS; technical SEO/discovery; content/AEO readiness; performance/accessibility.
 4. Add deterministic tests per finding and for hostile DNS/redirect cases before enabling any live fetch.
@@ -67,4 +67,4 @@ Important gaps before re-enabling:
 - [recon-web](https://github.com/BrunoAFK/recon-web): broad category reference for SEO, DNS, TLS and performance, with documented DNS-pinning SSRF defenses. Its implementation and licence should be reviewed separately before reuse.
 - [good-website-checklist](https://github.com/sderosiaux/good-website-checklist): checklist reference for security, SEO, AI assistants, accessibility, privacy and performance.
 
-**Status:** Reference triage and current-code gap identification completed. No third-party code copied, no audit endpoint re-enabled, no merge, and no deployment performed.
+**Status:** Reference triage and current-code gap identification completed. A backend HTTP 503 guard was added so the disabled audit cannot be triggered through direct API calls. CI was queued at the time of this update. No third-party code copied, no audit endpoint re-enabled, no merge, and no deployment performed.
