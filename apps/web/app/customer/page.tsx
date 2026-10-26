@@ -12,6 +12,11 @@ const gameLabels:Record<string,string>={dino:"🦖 Dino Run",snake:"🐍 Snake",
 export default function Customer(){
  const [slug,setSlug]=useState(""),[business,setBusiness]=useState<any>(null),[context,setContext]=useState(""),[customerId,setCustomerId]=useState(""),[cart,setCart]=useState<Cart>({}),[order,setOrder]=useState<any>(null),[menuOpen,setMenuOpen]=useState(false),[game,setGame]=useState<string|null>(null),[gameScore,setGameScore]=useState(0),[waiter,setWaiter]=useState<any>(null),[feedback,setFeedback]=useState(0),[comment,setComment]=useState(""),[feedbackSent,setFeedbackSent]=useState(false),[status,setStatus]=useState(""),[active,setActive]=useState("home"),[gamePoints,setGamePoints]=useState(0),[gameData,setGameData]=useState<any>({bricks:Array(12).fill(true),target:0,moves:0});
  const [customerName,setCustomerName]=useState("");
+ const [ticketSubject,setTicketSubject]=useState("");
+ const [ticketMessage,setTicketMessage]=useState("");
+ const [ticketName,setTicketName]=useState("");
+ const [ticketPhone,setTicketPhone]=useState("");
+ const [ticketResult,setTicketResult]=useState<any>(null);
  const [callOpen,setCallOpen]=useState(false);
  const [storedCustomerId,setStoredCustomerId]=useState<string>("");
  const [callInstance,setCallInstance]=useState(0);
@@ -108,6 +113,8 @@ export default function Customer(){
 
  async function placeOrder(){if(!business||!cartItems.length)return;setStatus("Placing order…");const r=await fetch(api()+"/api/v1/public/business/"+business.slug+"/orders",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:cartItems.map(x=>({menu_item_id:x.id,quantity:x.quantity})),context_token:context||undefined,customer_id:customerId||undefined})});const d=await r.json();if(!r.ok){setStatus(d.detail||"Unable to place order");return}setOrder(d);setCart({});setActive("home");setStatus("Order placed successfully");}
 
+ async function submitSupportTicket(e:React.FormEvent){e.preventDefault();if(!business)return;setTicketResult(null);setStatus("Submitting support request…");try{const r=await fetch(api()+"/api/v1/public/business/"+encodeURIComponent(business.slug)+"/tickets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:ticketSubject,message:ticketMessage,customer_name:ticketName,customer_phone:ticketPhone,category:"support"})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||"Unable to submit support request");setTicketResult(d);setTicketSubject("");setTicketMessage("");setStatus("Support request received")}catch(e){setStatus(e instanceof Error?e.message:"Unable to submit support request")}}
+
  async function startTeamCall(){
   if(!business)return;
   setCallInstance(x=>x+1);
@@ -139,7 +146,7 @@ export default function Customer(){
  return <main className="shell" style={{maxWidth:1240,padding:"clamp(14px,3vw,34px)",background:"linear-gradient(180deg,#f1f5ff 0%,#fafbff 360px,#f7f9fc 100%)",minHeight:"100vh"}}>
   <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:14,marginBottom:18,flexWrap:"wrap"}}>
    <div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:42,height:42,borderRadius:14,display:"grid",placeItems:"center",color:"#fff",fontSize:20,fontWeight:800,background:"linear-gradient(135deg,#6366f1,#0d9488)",boxShadow:"0 8px 24px #6366f133"}}>{String(business.name||"B").trim().charAt(0).toUpperCase()}</div><div><div style={{fontWeight:800,fontSize:15,color:"#18213b"}}>{business.name}</div><div style={{fontSize:11,color:"#74809b"}}>{categoryLabel}{businessTypeLabel?" · "+businessTypeLabel:""}</div></div></div>
-   <div style={{display:"flex",gap:7,flexWrap:"wrap"}}><button className="btn-ghost" onClick={()=>setActive("home")}>Home</button>{services.length>0&&<button className="btn-ghost" onClick={()=>setActive("services")}>Services</button>}{showMenu&&<button className="btn-ghost" onClick={()=>setActive("menu")}>Menu</button>}{feature.feedback&&<button className="btn-ghost" onClick={()=>setActive("feedback")}>Reviews</button>}</div>
+   <div style={{display:"flex",gap:7,flexWrap:"wrap"}}><button className="btn-ghost" onClick={()=>setActive("home")}>Home</button>{services.length>0&&<button className="btn-ghost" onClick={()=>setActive("services")}>Services</button>}{showMenu&&<button className="btn-ghost" onClick={()=>setActive("menu")}>Menu</button>}{feature.feedback&&<button className="btn-ghost" onClick={()=>setActive("feedback")}>Reviews</button>}{feature.support_tickets!==false&&<button className="btn-ghost" onClick={()=>setActive("support")}>Support</button>}</div>
   </header>
   <section className="hero" style={{background:"radial-gradient(circle at 84% 18%,rgba(255,255,255,.22),transparent 26%),linear-gradient(115deg,#172554 0%,#4338ca 50%,#0f766e 100%)",padding:"clamp(28px,5vw,58px)",minHeight:300,display:"flex",flexDirection:"column",justifyContent:"center"}}>
    <div style={{fontSize:11,fontWeight:800,letterSpacing:".16em",textTransform:"uppercase",opacity:.85}}>{categoryLabel}{businessTypeLabel?" / "+businessTypeLabel:""} · CUSTOMER EXPERIENCE</div>
@@ -171,6 +178,8 @@ export default function Customer(){
    {showTableTools&&<button className="card" onClick={()=>callWaiter("waiter")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>🔔 Call Waiter</button>}
    {order&&<button className="card" onClick={()=>setActive("bill")} style={{color:"#27314d",background:"#fff",border:"1px solid #e2e8f0"}}>▣ Bill</button>}
   </nav>
+
+  {active==="support"&&<section className="card" style={{maxWidth:760,margin:"20px auto",padding:24}}><h2>🛟 Contact support</h2><p>Send a request to {business.name}. The support team will track it with an SLA.</p>{ticketResult?<div role="status" style={{padding:14,borderRadius:12,background:"#ecfdf3",color:"#067647"}}><strong>Request received · #{String(ticketResult.id).slice(0,8)}</strong><p>{ticketResult.message}</p><p>Status: {ticketResult.status} · Response target: {ticketResult.sla_hours} hours</p><button onClick={()=>setTicketResult(null)}>Submit another request</button></div>:<form onSubmit={submitSupportTicket} style={{display:"grid",gap:12}}><label>Your name<input required minLength={1} maxLength={160} value={ticketName} onChange={e=>setTicketName(e.target.value)} /></label><label>Mobile number<input required minLength={5} maxLength={32} value={ticketPhone} onChange={e=>setTicketPhone(e.target.value)} inputMode="tel" /></label><label>Subject<input required minLength={3} maxLength={300} value={ticketSubject} onChange={e=>setTicketSubject(e.target.value)} /></label><label>How can we help?<textarea required minLength={3} maxLength={6000} rows={5} value={ticketMessage} onChange={e=>setTicketMessage(e.target.value)} /></label><div style={{display:"flex",gap:8}}><button type="submit">Send support request</button><button type="button" onClick={()=>setActive("home")}>Cancel</button></div></form>}</section>}
 
   {active==="home"&&<section className="grid">
    {showTableTools&&<article className="card"><h2>🍽️ Your table</h2><p>{context?context:"Scan your table QR to attach this request to your table."}</p>{waiter&&<p>🔔 {waiter.status||"requested"}{waiter.assigned_staff_name?" · "+waiter.assigned_staff_name:""}</p>}<div style={{display:"flex",gap:8,flexWrap:"wrap"}}><button onClick={()=>callWaiter("waiter")}>Call waiter</button><button onClick={()=>callWaiter("water")}>💧 Water</button><button onClick={()=>callWaiter("cutlery")}>🍴 Cutlery</button><button onClick={()=>callWaiter("clear_table")}>🧹 Clear table</button></div></article>}
