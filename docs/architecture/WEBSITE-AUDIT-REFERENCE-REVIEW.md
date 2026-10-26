@@ -50,15 +50,16 @@ Important gaps before re-enabling:
 9. **Persistence and reports:** keep audit records tenant-scoped; store timestamped run history and compare changes over time; redact secrets and personal data from evidence.
 10. **Verification:** unit tests for every check, adversarial URL/DNS/redirect tests, tenant-isolation tests, mocked network tests, deterministic browser QA, performance/load budgets, dependency/security CI, and a controlled live test against a domain the operator is authorized to assess.
 
-## Implementation plan (not yet executed)
+## Implementation plan and current progress
 
 1. **Completed on this branch:** direct audit API calls now return HTTP 503 after tenant authorization, before any outbound request. CI was triggered; verify its result before treating this change as validated. Keep the feature disabled until the connection-pinning fetcher is tested.
-2. Implement a dedicated safe-fetch boundary, separate from SEO parsing and report scoring.
-3. Expand checks in small groups: security headers/TLS; technical SEO/discovery; content/AEO readiness; performance/accessibility.
-4. Add deterministic tests per finding and for hostile DNS/redirect cases before enabling any live fetch.
-5. Add scan quotas, audit history and evidence-based reports.
-6. Run regression, security, integration, performance, tenant-isolation and frontend QA; inspect CI on the exact commit.
-7. Ask for explicit approval before merge or deployment.
+2. **In progress:** a pure, network-free security-header analyzer was added at `apps/api/app/website_audit_checks.py`. It detects missing CSP, HSTS (HTTPS only), `X-Content-Type-Options`, `Referrer-Policy`, and `Permissions-Policy`. It is deliberately not connected to the live audit endpoint yet.
+3. Added unit tests in `apps/api/tests/test_website_audit_checks.py` for case-insensitive headers, missing/present headers, HTTPS-only HSTS handling, blank values, and the important distinction between header presence and policy correctness.
+4. **Still blocked:** implement a dedicated safe-fetch boundary, separate from SEO parsing and report scoring. Do not enable outbound fetching based on DNS pre-validation alone; the actual connection must be pinned to a validated public address while preserving hostname, TLS SNI and certificate validation.
+5. Expand checks in small groups: security headers/TLS; technical SEO/discovery; content/AEO readiness; performance/accessibility.
+6. Add deterministic tests per finding and for hostile DNS/redirect cases before enabling any live fetch. Add scan quotas, audit history and evidence-based reports.
+7. Run regression, security, integration, performance, tenant-isolation and frontend QA; inspect CI on the exact commit.
+8. Ask for explicit approval before merge or deployment.
 
 ## Additional source used for security criteria
 
@@ -67,4 +68,4 @@ Important gaps before re-enabling:
 - [recon-web](https://github.com/BrunoAFK/recon-web): broad category reference for SEO, DNS, TLS and performance, with documented DNS-pinning SSRF defenses. Its implementation and licence should be reviewed separately before reuse.
 - [good-website-checklist](https://github.com/sderosiaux/good-website-checklist): checklist reference for security, SEO, AI assistants, accessibility, privacy and performance.
 
-**Status:** Reference triage and current-code gap identification completed. A backend HTTP 503 guard was added so the disabled audit cannot be triggered through direct API calls. CI was queued at the time of this update. No third-party code copied, no audit endpoint re-enabled, no merge, and no deployment performed.
+**Status as of 2026-10-26:** Reference triage completed. The backend HTTP 503 guard and its regression test are committed. GitHub Actions reported all four workflows successful for commit `9a2a1558eb7c1d5b6fa9575ef4e08f5de0c2e292` (API, API Regression and Visibility, CI, Web Build Verification). The later commits adding the pure header analyzer and its tests (`96979a37d6a35abd65cf401b64d587281081185f`, `0704a89a059c6c17aac9143dcb7d6117c77a3291`) did not return associated workflow runs in the connector check, so their CI status is **not verified**. The new analyzer is not yet integrated into the audit endpoint. No third-party code copied, no audit endpoint re-enabled, no merge, and no deployment performed.
