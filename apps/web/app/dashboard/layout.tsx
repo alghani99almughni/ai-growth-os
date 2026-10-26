@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import Sidebar from "../../components/Sidebar";
 import Topbar from "../../components/Topbar";
+import OperationalAlertsBell from "../../components/OperationalAlertsBell";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [tenant, setTenant] = useState<any>(null);
@@ -99,6 +100,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onLogout={logout}
       />
       <div style={{ marginLeft: 248 }} className="ago-content">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 12, padding: "12px 30px 0" }}>
+          <OperationalAlertsBell />
+        </div>
         <Topbar
           userName={user.name}
           role={user.role}

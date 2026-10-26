@@ -29,6 +29,24 @@ class TeamMessage(Base):
     attachment_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
+class TeamRoom(Base):
+    __tablename__ = "team_comms_rooms"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    room_key: Mapped[str] = mapped_column(String(160), index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    created_by: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class TeamRoomMember(Base):
+    __tablename__ = "team_comms_room_members"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    room_key: Mapped[str] = mapped_column(String(160), index=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    added_by: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
 class TeamAttachment(Base):
     __tablename__ = "team_comms_attachments"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -61,6 +79,10 @@ class MessageIn(BaseModel):
     room: str = Field(default="team", min_length=1, max_length=160)
     formatting: str = Field(default="plain", pattern="^(plain|bold|underline|red|bold_red|underline_red)$")
     attachment_id: str | None = None
+
+class RoomCreateIn(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    member_ids: list[str] = Field(default_factory=list, max_length=100)
 
 class AttachmentIn(BaseModel):
     filename: str = Field(min_length=1, max_length=255)
@@ -152,9 +174,49 @@ def save_preferences(payload: PreferenceIn, authorization: str | None = Header(d
     db.commit()
     return {"ok":True,"notifications_enabled":row.notifications_enabled,"ringtone":row.ringtone,"accent_color":row.accent_color,"chat_background":row.chat_background}
 
+@router.get("/rooms")
+def list_rooms(authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+    user = actor(authorization, db); require_permission(user, db, "communications.view")
+    memberships = db.scalars(select(TeamRoomMember).where(TeamRoomMember.tenant_id == user.tenant_id,
+        TeamRoomMember.user_id == user.id)).all()
+    keys = {m.room_key for m in memberships}
+    rooms = db.scalars(select(TeamRoom).where(TeamRoom.tenant_id == user.tenant_id).order_by(TeamRoom.name)).all()
+    return {"items":[{"room":r.room_key,"name":r.name,"created_by":r.created_by,"member_count":
+        len(db.scalars(select(TeamRoomMember).where(TeamRoomMember.tenant_id==user.tenant_id,
+        TeamRoomMember.room_key==r.room_key)).all())} for r in rooms if r.room_key in keys]}
+
+@router.post("/rooms", status_code=201)
+def create_room(payload: RoomCreateIn, authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
+    user = actor(authorization, db); require_permission(user, db, "communications.reply")
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(422, "Room name is required")
+    # Stable URL-safe-ish room key; room names cannot collide within a tenant.
+    key = "grp-" + str(uuid4())
+    ids = set(payload.member_ids); ids.add(user.id)
+    users = db.scalars(select(User).where(User.tenant_id==user.tenant_id, User.is_active==True,
+        User.id.in_(ids))).all() if ids else []
+    if {u.id for u in users} != ids:
+        raise HTTPException(400, "All room members must be active users in this workspace")
+    disabled = db.scalars(select(TeamCommsAccess).where(TeamCommsAccess.tenant_id==user.tenant_id,
+        TeamCommsAccess.user_id.in_(ids), TeamCommsAccess.enabled==False)).all()
+    if disabled:
+        raise HTTPException(400, "A selected member has team communications disabled")
+    room = TeamRoom(tenant_id=user.tenant_id, room_key=key, name=name, created_by=user.id)
+    db.add(room)
+    for uid in ids:
+        db.add(TeamRoomMember(tenant_id=user.tenant_id, room_key=key, user_id=uid, added_by=user.id))
+    db.commit()
+    return {"room":key,"name":name,"member_ids":sorted(ids),"created_by":user.id}
+
 @router.get("/messages")
 def list_messages(room: str = "team", limit: int = Query(default=100, ge=1, le=500), authorization: str | None = Header(default=None), db: Session = Depends(get_db)):
     user = actor(authorization, db); require_permission(user, db, "communications.view")
+    if room != "team":
+        membership = db.scalar(select(TeamRoomMember).where(TeamRoomMember.tenant_id==user.tenant_id, TeamRoomMember.room_key==room, TeamRoomMember.user_id==user.id))
+        exists = db.scalar(select(TeamRoom.id).where(TeamRoom.tenant_id==user.tenant_id, TeamRoom.room_key==room))
+        if not membership or not exists:
+            raise HTTPException(404, "Room not found")
     rows = db.scalars(select(TeamMessage).where(TeamMessage.tenant_id == user.tenant_id, TeamMessage.room == room, ((TeamMessage.recipient_id == None) | (TeamMessage.recipient_id == user.id) | (TeamMessage.sender_id == user.id))).order_by(TeamMessage.created_at.desc()).limit(limit)).all()
     return [message_json(m) for m in reversed(rows)]
 
@@ -186,6 +248,12 @@ def send_message(payload: MessageIn, authorization: str | None = Header(default=
     user = actor(authorization, db); require_permission(user, db, "communications.reply")
     if not payload.message.strip() and not payload.attachment_id:
         raise HTTPException(422,"Add a message or attachment")
+    room_key = payload.room.strip()
+    if room_key != "team":
+        membership = db.scalar(select(TeamRoomMember).where(TeamRoomMember.tenant_id==user.tenant_id, TeamRoomMember.room_key==room_key, TeamRoomMember.user_id==user.id))
+        exists = db.scalar(select(TeamRoom.id).where(TeamRoom.tenant_id==user.tenant_id, TeamRoom.room_key==room_key))
+        if not membership or not exists:
+            raise HTTPException(404, "Room not found")
     if payload.recipient_id:
         target = db.get(User, payload.recipient_id)
         if not target or target.tenant_id != user.tenant_id or not target.is_active:
@@ -198,7 +266,7 @@ def send_message(payload: MessageIn, authorization: str | None = Header(default=
         if not attachment or attachment.tenant_id!=user.tenant_id or attachment.uploaded_by!=user.id:
             raise HTTPException(404,"Attachment not found")
         attachment_id=attachment.id
-    row = TeamMessage(tenant_id=user.tenant_id, sender_id=user.id, sender_name=user.name, recipient_id=payload.recipient_id, room=payload.room.strip(), message=payload.message.strip(), formatting=payload.formatting, attachment_id=attachment_id)
+    row = TeamMessage(tenant_id=user.tenant_id, sender_id=user.id, sender_name=user.name, recipient_id=payload.recipient_id, room=room_key, message=payload.message.strip(), formatting=payload.formatting, attachment_id=attachment_id)
     db.add(row); db.commit(); db.refresh(row)
     return message_json(row)
 

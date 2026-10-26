@@ -38,7 +38,8 @@ from .website_templates import merge_with_tenant as _merge_site_content
 from .routes_offline import router as offline_router
 from .routes_calls import router as calls_router
 from .routes_security import router as security_router
-from .routes_team_comms import router as team_comms_router
+from .routes_team_comms import router as team_comms_router, TeamMessage, TeamRoom, TeamRoomMember
+from .operational_alerts import router as operational_alerts_router, create_operational_alerts
 from .routes_smartcheck_public import router as smartcheck_public_router
 from .config_validator import validate_environment
 from .logging_config import configure_logging
@@ -107,6 +108,7 @@ app.include_router(offline_router)
 app.include_router(calls_router)
 app.include_router(security_router)
 app.include_router(team_comms_router)
+app.include_router(operational_alerts_router)
 app.include_router(smartcheck_public_router)
 app.include_router(integration_router)
 app.include_router(social_router)
@@ -1691,6 +1693,7 @@ def appointments(tenant_id,date_value:str|None=Query(default=None,alias="date"),
 def update_appointment_status(tenant_id,appointment_id,payload:AppointmentStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); a=db.scalar(select(Appointment).where(Appointment.id==appointment_id,Appointment.tenant_id==tenant_id))
     if not a: raise HTTPException(404,"Appointment not found")
+    previous_status = a.status
     a.status=payload.status
     q=db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==a.id))
     if q:
@@ -1699,6 +1702,15 @@ def update_appointment_status(tenant_id,appointment_id,payload:AppointmentStatus
         elif payload.status in ("completed","cancelled","no_show"): q.status=payload.status; q.completed_at=datetime.utcnow(); a.queue_status=payload.status
     db.commit()
     if q: queue_snapshot(db,db.get(Tenant,tenant_id),q.queue_date)
+    if previous_status != a.status and a.status != "cancelled":
+        try:
+            create_operational_alerts(db, tenant_id, "appointment.status_changed", "Booking status updated",
+                f"Booking {a.id[:8]}: {previous_status} → {a.status}",
+                {"appointment_id":a.id,"from_status":previous_status,"status":a.status,"staff_id":a.staff_id},
+                staff_id=a.staff_id)
+            db.commit()
+        except Exception:
+            db.rollback()
     return _appointment_out(a,db.get(Tenant,tenant_id),db,q)
 
 @app.post("/api/v1/tenants/{tenant_id}/appointments/{appointment_id}/queue")
@@ -2197,6 +2209,10 @@ def create_public_order(slug,payload:PublicOrderCreate,db:Session=Depends(get_db
         subtotal += item.price*req.quantity
         db.add(OrderItem(order_id=o.id,menu_item_id=item.id,name=item.name,price=item.price,quantity=req.quantity,notes=req.notes))
     o.subtotal=subtotal; o.total=subtotal; o.updated_at=datetime.utcnow()
+    order_items = db.scalars(select(OrderItem).where(OrderItem.order_id==o.id)).all()
+    create_operational_alerts(db, t.id, "order.created", "New order received", f"Order {o.id[:8]} received · total {o.total}",
+        {"order_id":o.id,"status":o.status,"total":o.total,"customer_id":o.customer_id,
+         "items":[{"name":x.name,"price":x.price,"quantity":x.quantity} for x in order_items]})
     db.commit(); db.refresh(o)
     publish_event_sync(t.id,"order.created",{
         "order_id":o.id,"status":o.status,"total":o.total,
@@ -2247,6 +2263,14 @@ def update_order(tenant_id,order_id,payload:OrderStatusUpdate,user=Depends(get_c
     else:
         db.commit()
     db.refresh(o)
+    if prev != o.status and o.status != "cancelled":
+        try:
+            create_operational_alerts(db, tenant_id, "order.status_changed", "Order status updated",
+                f"Order {o.id[:8]}: {prev} → {o.status}",
+                {"order_id":o.id,"from_status":prev,"status":o.status,"total":o.total})
+            db.commit()
+        except Exception:
+            db.rollback()
     bill=db.scalar(select(Bill).where(Bill.order_id==o.id))
     publish_event_sync(tenant_id,"order.updated",{
         "order_id":o.id,"status":o.status,"total":o.total,
@@ -4076,6 +4100,108 @@ def tenant_ticket_reply(tenant_id, ticket_id, payload: TicketReplyRequest,
         return reply(db, ticket_id, payload.message, from_tenant=True, actor_id=user.id)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+
+
+class TicketEscalationRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=2000)
+    department_id: str | None = None
+    staff_id: str | None = None
+    room_key: str | None = None
+
+
+@app.post("/api/v1/tenants/{tenant_id}/tickets/{ticket_id}/escalate", status_code=201)
+def tenant_ticket_escalate(tenant_id: str, ticket_id: str, payload: TicketEscalationRequest,
+                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .models_growth import SupportTicket
+    from .operational_alerts import TicketEscalation, create_operational_alerts
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id, SupportTicket.tenant_id == tenant_id))
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    department = None
+    if payload.department_id:
+        department = db.scalar(select(Department).where(Department.id == payload.department_id,
+            Department.tenant_id == tenant_id, Department.is_active == True))
+        if not department:
+            raise HTTPException(400, "Department must belong to this tenant and be active")
+    staff = None
+    if payload.staff_id:
+        staff = db.scalar(select(StaffMember).where(StaffMember.id == payload.staff_id,
+            StaffMember.tenant_id == tenant_id, StaffMember.is_active == True))
+        if not staff:
+            raise HTTPException(400, "Staff member must belong to this tenant and be active")
+        if department and staff.department_id != department.id:
+            raise HTTPException(400, "Assigned staff member is not in the selected department")
+        if not department and staff.department_id:
+            department = db.scalar(select(Department).where(Department.id == staff.department_id,
+                Department.tenant_id == tenant_id))
+    room = None
+    if payload.room_key:
+        room = db.scalar(select(TeamRoom).where(TeamRoom.tenant_id == tenant_id, TeamRoom.room_key == payload.room_key))
+        membership = db.scalar(select(TeamRoomMember.id).where(TeamRoomMember.tenant_id == tenant_id,
+            TeamRoomMember.room_key == payload.room_key, TeamRoomMember.user_id == user.id))
+        if not room or not membership:
+            raise HTTPException(404, "Escalation room not found or you are not a member")
+        if staff and staff.user_id and not db.scalar(select(TeamRoomMember.id).where(
+            TeamRoomMember.tenant_id == tenant_id, TeamRoomMember.room_key == payload.room_key,
+            TeamRoomMember.user_id == staff.user_id)):
+            raise HTTPException(400, "Assigned staff member must be a member of the escalation room")
+    previous = ticket.status
+    ticket.status = "in_progress" if previous in ("new", "acknowledged", "waiting_on_tenant", "resolved", "closed") else previous
+    if previous in ("resolved", "closed"):
+        ticket.resolved_at = None
+        ticket.resolved_by = None
+    ticket.assigned_to = staff.user_id if staff and staff.user_id else (staff.id if staff else ticket.assigned_to)
+    ticket.updated_at = datetime.utcnow()
+    row = TicketEscalation(tenant_id=tenant_id, ticket_id=ticket.id, from_status=previous,
+        to_status=ticket.status, department_id=department.id if department else None,
+        assigned_staff_id=staff.id if staff else None, room_key=room.room_key if room else None,
+        reason=payload.reason.strip(), escalated_by=user.id)
+    db.add(row)
+    if room:
+        db.add(TeamMessage(tenant_id=tenant_id, sender_id=user.id, sender_name=user.name,
+            recipient_id=None, room=room.room_key,
+            message=f"[Ticket escalation #{ticket.id}] {ticket.subject}\nReason: {payload.reason.strip()}",
+            formatting="bold", attachment_id=None))
+    create_operational_alerts(db, tenant_id, "ticket.escalated", "Support ticket escalated",
+        f"{ticket.subject}: {payload.reason.strip()}", {"ticket_id":ticket.id,"category":ticket.category,
+        "priority":ticket.priority,"department_id":department.id if department else None,
+        "staff_id":staff.id if staff else None,"room_key":room.room_key if room else None},
+        staff_id=staff.id if staff else None, department_id=department.id if department else None)
+    db.commit()
+    db.refresh(row)
+    return {"id":row.id,"ticket_id":row.ticket_id,"from_status":row.from_status,"to_status":row.to_status,
+        "department_id":row.department_id,"assigned_staff_id":row.assigned_staff_id,"room_key":row.room_key,"reason":row.reason,
+        "escalated_by":row.escalated_by,"created_at":row.created_at.isoformat()+"Z",
+        "ticket_status":ticket.status,"assigned_to":ticket.assigned_to}
+
+
+class PublicTicketCreateRequest(BaseModel):
+    subject: str = Field(min_length=3, max_length=300)
+    message: str = Field(min_length=3, max_length=6000)
+    customer_name: str = Field(min_length=1, max_length=160)
+    customer_phone: str = Field(min_length=5, max_length=32)
+    category: str = Field(default="support", pattern="^(support|billing|contact|critical)$")
+
+
+@app.post("/api/v1/public/business/{slug}/tickets", status_code=201)
+def public_ticket_create(slug: str, payload: PublicTicketCreateRequest, db: Session = Depends(get_db)):
+    tenant = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
+    if not tenant:
+        raise HTTPException(404, "Business not found")
+    if not _feature_config(db, tenant.id).get("support_tickets", True):
+        raise HTTPException(403, "Support tickets are disabled for this business")
+    from .tickets import create_ticket
+    contact = f"Customer: {payload.customer_name.strip()}\\nPhone: {payload.customer_phone.strip()}\\n\\n"
+    try:
+        ticket = create_ticket(db, tenant_id=tenant.id, subject=payload.subject,
+            body=contact + payload.message.strip(), category=payload.category,
+            priority="normal", created_by=None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"id":ticket["id"],"subject":ticket["subject"],"status":ticket["status"],
+        "sla_due_at":ticket["sla_due_at"],"sla_hours":ticket["sla_hours"],
+        "message":"Your support request was received."}
 
 # ============ END SESSION17B_TENANT_TICKETS ============
 
