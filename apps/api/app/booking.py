@@ -213,7 +213,7 @@ def create_appointment(db: Session, tenant: Tenant, customer: Customer, service:
     # Booking and alert are committed atomically; failed booking writes cannot leave a false alert.
     from .operational_alerts import create_operational_alerts
     create_operational_alerts(db, tenant.id, "appointment.created", "New booking received",
-        f"Booking for {service.name} · {starts_at_local.isoformat(timespec=\"minutes\")}",
+        f"Booking for {service.name} · {starts_at_local.strftime('%Y-%m-%d %H:%M')}",
         {"appointment_id": appointment.id, "customer_id": customer.id, "service_id": service.id,
          "staff_id": staff_id, "starts_at": starts_utc.isoformat(), "source": source}, staff_id=staff_id)
     queue = None
