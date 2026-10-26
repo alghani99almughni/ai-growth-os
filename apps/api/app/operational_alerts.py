@@ -27,6 +27,7 @@ class TicketEscalation(Base):
     to_status: Mapped[str] = mapped_column(String(40), default="in_progress")
     department_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     assigned_staff_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    room_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     reason: Mapped[str] = mapped_column(Text, default="")
     escalated_by: Mapped[str] = mapped_column(String(36))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
@@ -148,7 +149,7 @@ def list_ticket_escalations(ticket_id: str, authorization: str | None = Header(d
     rows = db.scalars(select(TicketEscalation).where(TicketEscalation.tenant_id == user.tenant_id,
         TicketEscalation.ticket_id == ticket_id).order_by(TicketEscalation.created_at.asc())).all()
     return {"items": [{"id":r.id,"ticket_id":r.ticket_id,"from_status":r.from_status,"to_status":r.to_status,
-        "department_id":r.department_id,"assigned_staff_id":r.assigned_staff_id,"reason":r.reason,
+        "department_id":r.department_id,"assigned_staff_id":r.assigned_staff_id,"room_key":r.room_key,"reason":r.reason,
         "escalated_by":r.escalated_by,"created_at":r.created_at.isoformat()+"Z"} for r in rows]}
 
 @router.patch("/{alert_id}/read")
