@@ -4083,6 +4083,59 @@ def tenant_ticket_reply(tenant_id, ticket_id, payload: TicketReplyRequest,
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
+
+class TicketEscalationRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=2000)
+    department_id: str | None = None
+    staff_id: str | None = None
+
+
+@app.post("/api/v1/tenants/{tenant_id}/tickets/{ticket_id}/escalate", status_code=201)
+def tenant_ticket_escalate(tenant_id: str, ticket_id: str, payload: TicketEscalationRequest,
+                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_tenant(user, tenant_id)
+    from .models_growth import SupportTicket
+    from .operational_alerts import TicketEscalation, create_operational_alerts
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id, SupportTicket.tenant_id == tenant_id))
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    department = None
+    if payload.department_id:
+        department = db.scalar(select(Department).where(Department.id == payload.department_id,
+            Department.tenant_id == tenant_id, Department.is_active == True))
+        if not department:
+            raise HTTPException(400, "Department must belong to this tenant and be active")
+    staff = None
+    if payload.staff_id:
+        staff = db.scalar(select(StaffMember).where(StaffMember.id == payload.staff_id,
+            StaffMember.tenant_id == tenant_id, StaffMember.is_active == True))
+        if not staff:
+            raise HTTPException(400, "Staff member must belong to this tenant and be active")
+        if department and staff.department_id != department.id:
+            raise HTTPException(400, "Assigned staff member is not in the selected department")
+        if not department and staff.department_id:
+            department = db.scalar(select(Department).where(Department.id == staff.department_id,
+                Department.tenant_id == tenant_id))
+    previous = ticket.status
+    ticket.status = "in_progress" if previous in ("new", "acknowledged", "waiting_on_tenant") else previous
+    ticket.assigned_to = staff.user_id if staff and staff.user_id else (staff.id if staff else ticket.assigned_to)
+    ticket.updated_at = datetime.utcnow()
+    row = TicketEscalation(tenant_id=tenant_id, ticket_id=ticket.id, from_status=previous,
+        to_status=ticket.status, department_id=department.id if department else None,
+        assigned_staff_id=staff.id if staff else None, reason=payload.reason.strip(), escalated_by=user.id)
+    db.add(row)
+    create_operational_alerts(db, tenant_id, "ticket.escalated", "Support ticket escalated",
+        f"{ticket.subject}: {payload.reason.strip()}", {"ticket_id":ticket.id,"category":ticket.category,
+        "priority":ticket.priority,"department_id":department.id if department else None,
+        "staff_id":staff.id if staff else None}, staff_id=staff.id if staff else None,
+        department_id=department.id if department else None)
+    db.commit()
+    db.refresh(row)
+    return {"id":row.id,"ticket_id":row.ticket_id,"from_status":row.from_status,"to_status":row.to_status,
+        "department_id":row.department_id,"assigned_staff_id":row.assigned_staff_id,"reason":row.reason,
+        "escalated_by":row.escalated_by,"created_at":row.created_at.isoformat()+"Z",
+        "ticket_status":ticket.status,"assigned_to":ticket.assigned_to}
+
 # ============ END SESSION17B_TENANT_TICKETS ============
 
 # ============ SESSION18_EMAIL ============
