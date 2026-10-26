@@ -4154,6 +4154,34 @@ def tenant_ticket_escalate(tenant_id: str, ticket_id: str, payload: TicketEscala
         "escalated_by":row.escalated_by,"created_at":row.created_at.isoformat()+"Z",
         "ticket_status":ticket.status,"assigned_to":ticket.assigned_to}
 
+
+class PublicTicketCreateRequest(BaseModel):
+    subject: str = Field(min_length=3, max_length=300)
+    message: str = Field(min_length=3, max_length=6000)
+    customer_name: str = Field(min_length=1, max_length=160)
+    customer_phone: str = Field(min_length=5, max_length=32)
+    category: str = Field(default="support", pattern="^(support|billing|contact|critical)$")
+
+
+@app.post("/api/v1/public/business/{slug}/tickets", status_code=201)
+def public_ticket_create(slug: str, payload: PublicTicketCreateRequest, db: Session = Depends(get_db)):
+    tenant = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
+    if not tenant:
+        raise HTTPException(404, "Business not found")
+    if not _feature_config(db, tenant.id).get("support_tickets", True):
+        raise HTTPException(403, "Support tickets are disabled for this business")
+    from .tickets import create_ticket
+    contact = f"Customer: {payload.customer_name.strip()}\\nPhone: {payload.customer_phone.strip()}\\n\\n"
+    try:
+        ticket = create_ticket(db, tenant_id=tenant.id, subject=payload.subject,
+            body=contact + payload.message.strip(), category=payload.category,
+            priority="normal", created_by=None)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return {"id":ticket["id"],"subject":ticket["subject"],"status":ticket["status"],
+        "sla_due_at":ticket["sla_due_at"],"sla_hours":ticket["sla_hours"],
+        "message":"Your support request was received."}
+
 # ============ END SESSION17B_TENANT_TICKETS ============
 
 # ============ SESSION18_EMAIL ============
