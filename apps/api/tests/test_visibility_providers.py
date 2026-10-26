@@ -1,5 +1,6 @@
 """Regression tests for provider evidence parsing and conservative mention matching."""
 import app.main  # noqa: F401
+import pytest
 from app.visibility_providers import _extract, _citations, observation_match
 
 
@@ -68,6 +69,21 @@ def test_citation_parser_deduplicates_and_ignores_non_urls():
         ]
     })
     assert citations == [{"url": "https://example.com", "title": "One"}]
+
+
+@pytest.mark.parametrize("url", [
+    "javascript:alert(1)",
+    "https://user:password@example.com/private",
+    "https:///missing-host",
+    "https://example.com:99999/path",
+    "https://example.com/path with spaces",
+])
+def test_citation_parser_rejects_malformed_or_credentialed_urls(url):
+    assert _citations({"url": url}) == []
+
+
+def test_citation_parser_rejects_oversized_url():
+    assert _citations({"url": "https://example.com/" + ("a" * 2100)}) == []
 
 
 def test_grok_citations_are_not_mislabeled_as_search_grounded(monkeypatch):
