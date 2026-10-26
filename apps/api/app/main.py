@@ -4147,7 +4147,10 @@ def tenant_ticket_escalate(tenant_id: str, ticket_id: str, payload: TicketEscala
             TeamRoomMember.user_id == staff.user_id)):
             raise HTTPException(400, "Assigned staff member must be a member of the escalation room")
     previous = ticket.status
-    ticket.status = "in_progress" if previous in ("new", "acknowledged", "waiting_on_tenant") else previous
+    ticket.status = "in_progress" if previous in ("new", "acknowledged", "waiting_on_tenant", "resolved", "closed") else previous
+    if previous in ("resolved", "closed"):
+        ticket.resolved_at = None
+        ticket.resolved_by = None
     ticket.assigned_to = staff.user_id if staff and staff.user_id else (staff.id if staff else ticket.assigned_to)
     ticket.updated_at = datetime.utcnow()
     row = TicketEscalation(tenant_id=tenant_id, ticket_id=ticket.id, from_status=previous,
