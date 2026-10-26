@@ -71,8 +71,9 @@ def _pinned_connection_class(base_class: type, address: str) -> type:
                 (address, self.port),
                 self.timeout,
                 source_address=self.source_address,
-                socket_options=self.socket_options,
             )
+            for option in self.socket_options or ():
+                sock.setsockopt(*option)
         except OSError as exc:
             raise urllib3.exceptions.NewConnectionError(self, "Pinned website connection failed") from exc
         return sock
