@@ -44,6 +44,9 @@ def test_dns_resolution_deduplicates_public_addresses(monkeypatch):
     "file:///etc/passwd",
     "https://user:password@example.com/",
     "https://example.com:8443/",
+    "https://example.com:not-a-port/",
+    "https://example.com:99999/",
+    "https://[not-an-ipv6-address]/",
     "https://127.0.0.1/",
 ])
 def test_fetch_rejects_unsafe_url_before_network(monkeypatch, url):
@@ -83,3 +86,18 @@ def test_response_limit_cannot_be_increased_above_hard_limit(monkeypatch):
     )
     with pytest.raises(ValueError):
         fetcher.fetch_public_homepage("https://example.com/", max_bytes=fetcher.MAX_RESPONSE_BYTES + 1)
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com:abc/",
+    "https://example.com:99999/",
+    "https://[invalid-ipv6]/",
+])
+def test_malformed_url_is_rejected_before_dns(monkeypatch, url):
+    monkeypatch.setattr(
+        fetcher.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: pytest.fail("malformed URL must be rejected before DNS"),
+    )
+    with pytest.raises(fetcher.UnsafeWebsiteTarget):
+        fetcher.fetch_public_homepage(url)
