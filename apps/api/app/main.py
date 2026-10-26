@@ -39,6 +39,7 @@ from .routes_offline import router as offline_router
 from .routes_calls import router as calls_router
 from .routes_security import router as security_router
 from .routes_team_comms import router as team_comms_router
+from .operational_alerts import router as operational_alerts_router, create_operational_alerts
 from .routes_smartcheck_public import router as smartcheck_public_router
 from .config_validator import validate_environment
 from .logging_config import configure_logging
@@ -107,6 +108,7 @@ app.include_router(offline_router)
 app.include_router(calls_router)
 app.include_router(security_router)
 app.include_router(team_comms_router)
+app.include_router(operational_alerts_router)
 app.include_router(smartcheck_public_router)
 app.include_router(integration_router)
 app.include_router(social_router)
@@ -2197,6 +2199,10 @@ def create_public_order(slug,payload:PublicOrderCreate,db:Session=Depends(get_db
         subtotal += item.price*req.quantity
         db.add(OrderItem(order_id=o.id,menu_item_id=item.id,name=item.name,price=item.price,quantity=req.quantity,notes=req.notes))
     o.subtotal=subtotal; o.total=subtotal; o.updated_at=datetime.utcnow()
+    order_items = db.scalars(select(OrderItem).where(OrderItem.order_id==o.id)).all()
+    create_operational_alerts(db, t.id, "order.created", "New order received", f"Order {o.id[:8]} received · total {o.total}",
+        {"order_id":o.id,"status":o.status,"total":o.total,"customer_id":o.customer_id,
+         "items":[{"name":x.name,"price":x.price,"quantity":x.quantity} for x in order_items]})
     db.commit(); db.refresh(o)
     publish_event_sync(t.id,"order.created",{
         "order_id":o.id,"status":o.status,"total":o.total,
