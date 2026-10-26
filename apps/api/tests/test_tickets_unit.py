@@ -4,11 +4,15 @@ from types import SimpleNamespace
 import pytest
 
 import app.tickets as tickets
+import app.operational_alerts as operational_alerts
 
 
 class FakeTicket:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
+        self.__dict__.setdefault("assigned_to", None)
+        self.__dict__.setdefault("resolved_at", None)
+        self.__dict__.setdefault("resolved_by", None)
 
 
 class FakeDB:
@@ -32,6 +36,7 @@ class FakeDB:
 
 
 def test_create_ticket_normalizes_category_priority_and_starts_sla(monkeypatch):
+    monkeypatch.setattr(operational_alerts, "create_operational_alerts", lambda *args, **kwargs: 0)
     monkeypatch.setattr(tickets, "_model", lambda: FakeTicket)
     monkeypatch.setattr(tickets, "_compute_sla_hours", lambda db, category: 4)
     db = FakeDB()
@@ -82,6 +87,7 @@ def test_open_ticket_past_due_is_sla_breached():
 
 
 def test_ticket_reply_reopens_resolved_ticket_for_tenant_followup(monkeypatch):
+    monkeypatch.setattr(operational_alerts, "create_operational_alerts", lambda *args, **kwargs: 0)
     row = FakeTicket(
         id="ticket-1",
         tenant_id="tenant-a",
