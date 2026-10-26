@@ -38,7 +38,7 @@ from .website_templates import merge_with_tenant as _merge_site_content
 from .routes_offline import router as offline_router
 from .routes_calls import router as calls_router
 from .routes_security import router as security_router
-from .routes_team_comms import router as team_comms_router
+from .routes_team_comms import router as team_comms_router, TeamMessage, TeamRoom, TeamRoomMember
 from .operational_alerts import router as operational_alerts_router, create_operational_alerts
 from .routes_smartcheck_public import router as smartcheck_public_router
 from .config_validator import validate_environment
@@ -4088,6 +4088,7 @@ class TicketEscalationRequest(BaseModel):
     reason: str = Field(min_length=3, max_length=2000)
     department_id: str | None = None
     staff_id: str | None = None
+    room_key: str | None = None
 
 
 @app.post("/api/v1/tenants/{tenant_id}/tickets/{ticket_id}/escalate", status_code=201)
@@ -4116,23 +4117,40 @@ def tenant_ticket_escalate(tenant_id: str, ticket_id: str, payload: TicketEscala
         if not department and staff.department_id:
             department = db.scalar(select(Department).where(Department.id == staff.department_id,
                 Department.tenant_id == tenant_id))
+    room = None
+    if payload.room_key:
+        room = db.scalar(select(TeamRoom).where(TeamRoom.tenant_id == tenant_id, TeamRoom.room_key == payload.room_key))
+        membership = db.scalar(select(TeamRoomMember.id).where(TeamRoomMember.tenant_id == tenant_id,
+            TeamRoomMember.room_key == payload.room_key, TeamRoomMember.user_id == user.id))
+        if not room or not membership:
+            raise HTTPException(404, "Escalation room not found or you are not a member")
+        if staff and staff.user_id and not db.scalar(select(TeamRoomMember.id).where(
+            TeamRoomMember.tenant_id == tenant_id, TeamRoomMember.room_key == payload.room_key,
+            TeamRoomMember.user_id == staff.user_id)):
+            raise HTTPException(400, "Assigned staff member must be a member of the escalation room")
     previous = ticket.status
     ticket.status = "in_progress" if previous in ("new", "acknowledged", "waiting_on_tenant") else previous
     ticket.assigned_to = staff.user_id if staff and staff.user_id else (staff.id if staff else ticket.assigned_to)
     ticket.updated_at = datetime.utcnow()
     row = TicketEscalation(tenant_id=tenant_id, ticket_id=ticket.id, from_status=previous,
         to_status=ticket.status, department_id=department.id if department else None,
-        assigned_staff_id=staff.id if staff else None, reason=payload.reason.strip(), escalated_by=user.id)
+        assigned_staff_id=staff.id if staff else None, room_key=room.room_key if room else None,
+        reason=payload.reason.strip(), escalated_by=user.id)
     db.add(row)
+    if room:
+        db.add(TeamMessage(tenant_id=tenant_id, sender_id=user.id, sender_name=user.name,
+            recipient_id=None, room=room.room_key,
+            message=f"[Ticket escalation #{ticket.id}] {ticket.subject}\nReason: {payload.reason.strip()}",
+            formatting="bold", attachment_id=None))
     create_operational_alerts(db, tenant_id, "ticket.escalated", "Support ticket escalated",
         f"{ticket.subject}: {payload.reason.strip()}", {"ticket_id":ticket.id,"category":ticket.category,
         "priority":ticket.priority,"department_id":department.id if department else None,
-        "staff_id":staff.id if staff else None}, staff_id=staff.id if staff else None,
-        department_id=department.id if department else None)
+        "staff_id":staff.id if staff else None,"room_key":room.room_key if room else None},
+        staff_id=staff.id if staff else None, department_id=department.id if department else None)
     db.commit()
     db.refresh(row)
     return {"id":row.id,"ticket_id":row.ticket_id,"from_status":row.from_status,"to_status":row.to_status,
-        "department_id":row.department_id,"assigned_staff_id":row.assigned_staff_id,"reason":row.reason,
+        "department_id":row.department_id,"assigned_staff_id":row.assigned_staff_id,"room_key":row.room_key,"reason":row.reason,
         "escalated_by":row.escalated_by,"created_at":row.created_at.isoformat()+"Z",
         "ticket_status":ticket.status,"assigned_to":ticket.assigned_to}
 
