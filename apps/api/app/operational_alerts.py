@@ -18,6 +18,19 @@ from .models_ai import StaffMember, Department
 
 router = APIRouter(prefix="/api/v1/operational-alerts", tags=["operational-alerts"])
 
+class TicketEscalation(Base):
+    __tablename__ = "ticket_escalations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    tenant_id: Mapped[str] = mapped_column(String(36), index=True)
+    ticket_id: Mapped[str] = mapped_column(String(36), index=True)
+    from_status: Mapped[str] = mapped_column(String(40), default="new")
+    to_status: Mapped[str] = mapped_column(String(40), default="in_progress")
+    department_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    assigned_staff_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    escalated_by: Mapped[str] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
 class OperationalAlert(Base):
     __tablename__ = "operational_alerts"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
@@ -111,6 +124,19 @@ def list_operational_alerts(unread_only: bool = False, limit: int = Query(defaul
             OperationalAlert.tenant_id == user.tenant_id,
             OperationalAlert.recipient_user_id == user.id,
             OperationalAlert.read_at.is_(None))) or 0}
+
+@router.get("/tickets/{ticket_id}/escalations")
+def list_ticket_escalations(ticket_id: str, authorization: str | None = Header(default=None), db: Session = Depends(_db)):
+    user = _actor(authorization, db)
+    from .models_growth import SupportTicket
+    ticket = db.scalar(select(SupportTicket).where(SupportTicket.id == ticket_id, SupportTicket.tenant_id == user.tenant_id))
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+    rows = db.scalars(select(TicketEscalation).where(TicketEscalation.tenant_id == user.tenant_id,
+        TicketEscalation.ticket_id == ticket_id).order_by(TicketEscalation.created_at.asc())).all()
+    return {"items": [{"id":r.id,"ticket_id":r.ticket_id,"from_status":r.from_status,"to_status":r.to_status,
+        "department_id":r.department_id,"assigned_staff_id":r.assigned_staff_id,"reason":r.reason,
+        "escalated_by":r.escalated_by,"created_at":r.created_at.isoformat()+"Z"} for r in rows]}
 
 @router.patch("/{alert_id}/read")
 def mark_operational_alert_read(alert_id: str, payload: ReadInput,
