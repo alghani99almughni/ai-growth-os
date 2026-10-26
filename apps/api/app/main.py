@@ -1693,6 +1693,7 @@ def appointments(tenant_id,date_value:str|None=Query(default=None,alias="date"),
 def update_appointment_status(tenant_id,appointment_id,payload:AppointmentStatusUpdate,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); a=db.scalar(select(Appointment).where(Appointment.id==appointment_id,Appointment.tenant_id==tenant_id))
     if not a: raise HTTPException(404,"Appointment not found")
+    previous_status = a.status
     a.status=payload.status
     q=db.scalar(select(QueueEntry).where(QueueEntry.appointment_id==a.id))
     if q:
@@ -1701,6 +1702,15 @@ def update_appointment_status(tenant_id,appointment_id,payload:AppointmentStatus
         elif payload.status in ("completed","cancelled","no_show"): q.status=payload.status; q.completed_at=datetime.utcnow(); a.queue_status=payload.status
     db.commit()
     if q: queue_snapshot(db,db.get(Tenant,tenant_id),q.queue_date)
+    if previous_status != a.status and a.status != "cancelled":
+        try:
+            create_operational_alerts(db, tenant_id, "appointment.status_changed", "Booking status updated",
+                f"Booking {a.id[:8]}: {previous_status} → {a.status}",
+                {"appointment_id":a.id,"from_status":previous_status,"status":a.status,"staff_id":a.staff_id},
+                staff_id=a.staff_id)
+            db.commit()
+        except Exception:
+            db.rollback()
     return _appointment_out(a,db.get(Tenant,tenant_id),db,q)
 
 @app.post("/api/v1/tenants/{tenant_id}/appointments/{appointment_id}/queue")
@@ -2253,6 +2263,14 @@ def update_order(tenant_id,order_id,payload:OrderStatusUpdate,user=Depends(get_c
     else:
         db.commit()
     db.refresh(o)
+    if prev != o.status and o.status != "cancelled":
+        try:
+            create_operational_alerts(db, tenant_id, "order.status_changed", "Order status updated",
+                f"Order {o.id[:8]}: {prev} → {o.status}",
+                {"order_id":o.id,"from_status":prev,"status":o.status,"total":o.total})
+            db.commit()
+        except Exception:
+            db.rollback()
     bill=db.scalar(select(Bill).where(Bill.order_id==o.id))
     publish_event_sync(tenant_id,"order.updated",{
         "order_id":o.id,"status":o.status,"total":o.total,
