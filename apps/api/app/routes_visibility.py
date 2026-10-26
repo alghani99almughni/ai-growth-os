@@ -1,8 +1,7 @@
-"""Tenant-scoped AEO/GEO profile and query APIs.
+"""Tenant-scoped AEO/GEO profile, provider visibility, and audit APIs.
 
-This first slice intentionally stores configuration and questions only. It does not
-pretend to run live AI search checks; provider adapters and SSRF-safe auditing are
-separate follow-up work.
+AI provider results are recorded as bounded observations, not universal rankings.
+Website fetching remains disabled until its connection-time SSRF controls are verified.
 """
 import re, json, socket, ipaddress
 from datetime import datetime
@@ -288,7 +287,7 @@ def get_website_audit(tenant_id: str, audit_id: str, user: User = Depends(get_cu
 
 # ── AI-answer visibility checks (separate from the deterministic website audit) ──
 from .models_visibility import VisibilityCheckRun, VisibilityObservation
-from .visibility_providers import PROVIDER_ORDER, run_provider, observation_match
+from .visibility_providers import PROVIDER_ORDER, run_provider, observation_match, _contains_brand_name
 from .config import settings as visibility_settings
 from pydantic import BaseModel, Field
 
@@ -357,7 +356,7 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
             answer_lower = observed["answer"].casefold()
             competitors = db.scalars(select(VisibilityCompetitor).where(
                 VisibilityCompetitor.tenant_id == tenant_id)).all()
-            competitor_mentions = [item.name for item in competitors if item.name and item.name.casefold() in answer_lower]
+            competitor_mentions = [item.name for item in competitors if _contains_brand_name(observed["answer"], item.name)]
             mentioned_names = ([brand.name] if match["brand_mentioned"] else []) + competitor_mentions
             cited_urls = [item["url"] for item in observed["citations"]]
             db.add(VisibilityObservation(
