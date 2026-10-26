@@ -210,6 +210,12 @@ def create_appointment(db: Session, tenant: Tenant, customer: Customer, service:
     )
     db.add(appointment)
     db.flush()
+    # Booking and alert are committed atomically; failed booking writes cannot leave a false alert.
+    from .operational_alerts import create_operational_alerts
+    create_operational_alerts(db, tenant.id, "appointment.created", "New booking received",
+        f"Booking for {service.name} · {starts_at_local.isoformat(timespec=\"minutes\")}",
+        {"appointment_id": appointment.id, "customer_id": customer.id, "service_id": service.id,
+         "staff_id": staff_id, "starts_at": starts_utc.isoformat(), "source": source}, staff_id=staff_id)
     queue = None
     waiting_count = db.scalar(select(func.count(QueueEntry.id)).where(QueueEntry.tenant_id == tenant.id, QueueEntry.queue_date == starts_at_local.date(), QueueEntry.status.in_(["waiting", "serving"]))) or 0
     huge_queue = bool(tenant.queue_enabled and waiting_count >= (tenant.queue_threshold or 5))
