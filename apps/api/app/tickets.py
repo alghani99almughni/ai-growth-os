@@ -118,9 +118,10 @@ def create_ticket(
 
     try:
         from .operational_alerts import create_operational_alerts
-        create_operational_alerts(db, tenant_id, "ticket.created", "New support ticket",
+        alert_count = create_operational_alerts(db, tenant_id, "ticket.created", "New support ticket",
             f"{priority.upper()} · {subject}", {"ticket_id":ticket.id,"category":category,"priority":priority})
-        db.commit()
+        if alert_count:
+            db.commit()
     except Exception:
         db.rollback()
         logger.exception("Could not persist ticket-created operational alert")
@@ -219,9 +220,10 @@ def set_status(db: Session, ticket_id: str, status: str, actor_id: str | None = 
 
     try:
         from .operational_alerts import create_operational_alerts
-        create_operational_alerts(db, t.tenant_id, "ticket.status_changed", "Support ticket status updated",
+        alert_count = create_operational_alerts(db, t.tenant_id, "ticket.status_changed", "Support ticket status updated",
             f"{t.subject}: {prev} → {status}", {"ticket_id":t.id,"from_status":prev,"status":status})
-        db.commit()
+        if alert_count:
+            db.commit()
     except Exception:
         db.rollback()
         logger.exception("Could not persist ticket status alert")
@@ -290,9 +292,10 @@ def reply(
 
     try:
         from .operational_alerts import create_operational_alerts
-        create_operational_alerts(db, t.tenant_id, "ticket.replied", "Support ticket reply received",
+        alert_count = create_operational_alerts(db, t.tenant_id, "ticket.replied", "Support ticket reply received",
             f"{t.subject}: {role} replied", {"ticket_id":t.id,"from_tenant":from_tenant,"status":t.status})
-        db.commit()
+        if alert_count:
+            db.commit()
     except Exception:
         db.rollback()
         logger.exception("Could not persist ticket reply alert")
