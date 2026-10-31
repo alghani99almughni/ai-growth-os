@@ -99,8 +99,9 @@ def fetch_public_homepage(url: str, *, max_bytes: int = MAX_RESPONSE_BYTES) -> B
         raise UnsafeWebsiteTarget("Only absolute HTTP(S) website URLs are supported")
     if parts.username or parts.password or parts.fragment:
         raise UnsafeWebsiteTarget("URL credentials and fragments are not supported")
-    if supplied_port not in (None, 80, 443):
-        raise UnsafeWebsiteTarget("Custom ports are not supported")
+    expected_port = 443 if parts.scheme == "https" else 80
+    if supplied_port not in (None, expected_port):
+        raise UnsafeWebsiteTarget("Only the standard port for the selected URL scheme is supported")
     host = parts.hostname.rstrip(".").lower()
     if not host or any(character.isspace() or ord(character) < 33 for character in host):
         raise UnsafeWebsiteTarget("Malformed website hostname")
