@@ -44,6 +44,8 @@ def test_dns_resolution_deduplicates_public_addresses(monkeypatch):
     "file:///etc/passwd",
     "https://user:password@example.com/",
     "https://example.com:8443/",
+    "https://example.com:80/",
+    "http://example.com:443/",
     "https://example.com:not-a-port/",
     "https://example.com:99999/",
     "https://[not-an-ipv6-address]/",
