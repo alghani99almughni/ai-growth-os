@@ -4454,3 +4454,7 @@ async def run_campaign_batch(tenant_id: str, campaign_id: str):
     finally:
         db.close()
 # ============ END WHATSAPP BULK CAMPAIGNS ============
+
+# AEO/GEO visibility module (feature branch)
+from .routes_visibility import router as visibility_router
+app.include_router(visibility_router)
