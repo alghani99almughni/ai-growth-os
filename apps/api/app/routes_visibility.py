@@ -28,11 +28,16 @@ def _authorize(user: User, tenant_id: str):
 def _domain(value: str) -> str:
     value = value.strip()
     candidate = value if "://" in value else "https://" + value
-    parts = urlsplit(candidate)
+    try:
+        parts = urlsplit(candidate)
+        explicit_port = parts.port  # Raises ValueError for malformed or out-of-range ports.
+    except ValueError:
+        raise HTTPException(422, "Enter a valid website URL with a supported port")
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise HTTPException(422, "Enter a valid website domain, for example https://example.com")
-    if parts.username or parts.password or parts.port not in (None, 80, 443):
-        raise HTTPException(422, "Website URL credentials and custom ports are not supported")
+    expected_port = 443 if parts.scheme == "https" else 80
+    if parts.username or parts.password or (explicit_port is not None and explicit_port != expected_port):
+        raise HTTPException(422, "Website URL credentials and non-standard ports are not supported")
     host = parts.hostname.lower().rstrip(".")
     if host == "localhost" or host.endswith(".localhost") or "." not in host:
         raise HTTPException(422, "Enter a public internet domain")
