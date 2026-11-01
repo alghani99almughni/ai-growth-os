@@ -51,11 +51,20 @@ export default function VisibilityWorkspace() {
 
   useEffect(() => {
     try {
+      const accessToken = localStorage.getItem("ago_access_token") || "";
       const raw = localStorage.getItem("ago_tenant");
-      const t = raw ? JSON.parse(raw) : null;
-      if (!localStorage.getItem("ago_access_token") || !t?.id) { window.location.href = "/login"; return; }
-      setTenant(t);
-      load(t.id).catch(e => setStatus(e.message));
+      const storedTenant = raw ? JSON.parse(raw) : null;
+      // Platform admins can open a tenant workspace from the platform console.
+      // Honour the same ?tenant= context used by the shared dashboard layout.
+      const tenantOverride = new URLSearchParams(window.location.search).get("tenant") || "";
+      const tenantId = tenantOverride || storedTenant?.id || "";
+      if (!accessToken) { window.location.href = "/login"; return; }
+      if (!tenantId) { window.location.href = "/onboarding"; return; }
+      const activeTenant = tenantOverride
+        ? { ...(storedTenant || {}), id: tenantId }
+        : storedTenant;
+      setTenant(activeTenant);
+      load(tenantId).catch(e => setStatus(e.message || "Could not load your business workspace."));
     } catch { setStatus("Could not load your business workspace."); }
   }, []);
 
