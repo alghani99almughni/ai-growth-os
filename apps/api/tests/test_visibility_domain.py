@@ -17,7 +17,9 @@ def test_domain_normalizes_public_domains(value, expected):
 
 @pytest.mark.parametrize("value", [
     "", "localhost", "localhost:8000", "127.0.0.1", "http://user:pass@example.com",
-    "ftp://example.com", "https://example.com:8443", "https://example..com",
+    "ftp://example.com", "https://example.com:8443", "https://example.com:80",
+    "http://example.com:443", "https://example.com:not-a-port", "https://example.com:99999",
+    "https://example..com",
 ])
 def test_domain_rejects_unsafe_or_invalid_inputs(value):
     with pytest.raises(HTTPException):
