@@ -313,6 +313,11 @@ async def startup():
     except Exception:
         import logging; logging.getLogger("api.monitoring").exception("monitoring failed to start")
     try:
+        from .ticket_escalation_automation import start_ticket_escalation_worker
+        start_ticket_escalation_worker(interval_seconds=60)
+    except Exception:
+        import logging; logging.getLogger("api.ticket_escalation").exception("ticket escalation worker failed to start")
+    try:
         from .email_poller import start_email_poller
         start_email_poller()
     except Exception:

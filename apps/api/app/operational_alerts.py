@@ -152,6 +152,48 @@ def list_ticket_escalations(ticket_id: str, authorization: str | None = Header(d
         "department_id":r.department_id,"assigned_staff_id":r.assigned_staff_id,"room_key":r.room_key,"reason":r.reason,
         "escalated_by":r.escalated_by,"created_at":r.created_at.isoformat()+"Z"} for r in rows]}
 
+@router.get("/tickets/queue-summary")
+def ticket_queue_summary(authorization: str | None = Header(default=None), db: Session = Depends(_db)):
+    """Tenant-only pending ticket counts and waiting/department-response clocks."""
+    user = _actor(authorization, db)
+    from .models_growth import SupportTicket
+    from .ticket_escalation_automation import TicketAutoEscalationClaim
+    from .models_ai import Department
+
+    now = datetime.utcnow()
+    tickets = db.scalars(select(SupportTicket).where(
+        SupportTicket.tenant_id == user.tenant_id,
+        SupportTicket.status.notin_(("resolved", "closed"))
+    ).order_by(SupportTicket.created_at.asc())).all()
+    claims = db.scalars(select(TicketAutoEscalationClaim).where(
+        TicketAutoEscalationClaim.tenant_id == user.tenant_id
+    )).all()
+    claim_by_ticket = {row.ticket_id: row for row in claims}
+    departments = {row.id: row.name for row in db.scalars(select(Department).where(
+        Department.tenant_id == user.tenant_id
+    )).all()}
+    counts = {}
+    items = []
+    for ticket in tickets:
+        claim = claim_by_ticket.get(ticket.id)
+        department_id = claim.department_id if claim else None
+        key = department_id or "escalation"
+        label = departments.get(department_id, "Escalation") if department_id else "Escalation"
+        counts[key] = counts.get(key, {"department_id": department_id, "department_name": label, "pending_count": 0})
+        counts[key]["pending_count"] += 1
+        items.append({
+            "ticket_id": ticket.id, "subject": ticket.subject, "category": ticket.category,
+            "priority": ticket.priority, "status": ticket.status,
+            "created_at": ticket.created_at.isoformat() + "Z",
+            "waiting_seconds": max(0, int((now - ticket.created_at).total_seconds())),
+            "sla_due_at": ticket.sla_due_at.isoformat() + "Z" if ticket.sla_due_at else None,
+            "sla_breached": bool(ticket.sla_breached or (ticket.sla_due_at and ticket.sla_due_at <= now)),
+            "department_id": department_id, "department_name": label,
+            "department_response_due_at": claim.department_response_due_at.isoformat() + "Z" if claim else None,
+        })
+    return {"pending_by_department": list(counts.values()), "pending_count": len(items), "items": items}
+
+
 @router.patch("/{alert_id}/read")
 def mark_operational_alert_read(alert_id: str, payload: ReadInput,
                                 authorization: str | None = Header(default=None), db: Session = Depends(_db)):
