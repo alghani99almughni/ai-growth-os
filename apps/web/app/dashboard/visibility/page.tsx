@@ -23,6 +23,7 @@ export default function VisibilityWorkspace() {
   const [query, setQuery] = useState({ query_text: "", intent: "local", locale: "en", topic: "" });
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const token = () => typeof window === "undefined" ? "" : localStorage.getItem("ago_access_token") || "";
   const headers = () => ({ Authorization: "Bearer " + token(), "Content-Type": "application/json" });
   const endpoint = (id: string, suffix: string) => api() + "/api/v1/tenants/" + encodeURIComponent(id) + "/visibility/" + suffix;
@@ -64,7 +65,9 @@ export default function VisibilityWorkspace() {
         ? { ...(storedTenant || {}), id: tenantId }
         : storedTenant;
       setTenant(activeTenant);
-      load(tenantId).catch(e => setStatus(e.message || "Could not load your business workspace."));
+      load(tenantId)
+        .catch(e => setStatus(e.message || "Could not load your business workspace."))
+        .finally(() => setWorkspaceLoading(false));
     } catch { setStatus("Could not load your business workspace."); }
   }, []);
 
@@ -96,7 +99,12 @@ export default function VisibilityWorkspace() {
   }
 
   async function runSearchConsole(e: React.FormEvent) {
-    e.preventDefault(); if (!tenant) return; setGscBusy(true); setStatus(""); setGscResult(null);
+    e.preventDefault(); if (!tenant) return;
+    if (!gscForm.start_date || !gscForm.end_date || gscForm.start_date > gscForm.end_date) {
+      setStatus("Choose a valid date range. The start date must be on or before the end date.");
+      return;
+    }
+    setGscBusy(true); setStatus(""); setGscResult(null);
     try {
       const r = await fetch(endpoint(tenant.id, "google-search-console/performance"), { method: "POST", headers: headers(), body: JSON.stringify({ ...gscForm, row_limit: 100 }) });
       const d = await r.json(); if (!r.ok) throw new Error(d.detail || "Could not load Search Console data.");
@@ -155,7 +163,20 @@ export default function VisibilityWorkspace() {
       <p style={{ maxWidth: 760, lineHeight: 1.6, opacity: .9 }}>Prepare your business to be discovered in search results and AI-generated answers. Configure your brand, competitors and the questions customers ask.</p>
       <span style={{ display: "inline-block", padding: "6px 10px", borderRadius: 20, background: "#ffffff20", fontSize: 12 }}>AI visibility checks · Provider credentials required</span>
     </header>
-    {status && <div role="status" style={{ ...panel, borderColor: "#d4b46a", background: "#fffaf0" }}>{status}</div>}
+    {status && <div role="status" aria-live="polite" style={{ ...panel, borderColor: "#d4b46a", background: "#fffaf0" }}>{status}</div>}
+    {workspaceLoading && <div role="status" style={panel}>Loading your secure business workspace…</div>}
+    {!workspaceLoading && <section aria-label="Visibility overview" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 18 }}>
+      {[
+        { label: "Brand profile", value: brand?.name ? "Configured" : "Not set up", note: brand?.primary_domain || "Add your website" },
+        { label: "Competitors", value: competitors.length, note: "Tracked businesses" },
+        { label: "Tracked questions", value: queries.length, note: "Customer search questions" },
+        { label: "AI observations", value: visibilityRuns.length, note: "Recorded provider results" },
+      ].map(card => <div key={card.label} style={{ ...panel, marginBottom: 0, padding: 18 }}>
+        <div style={{ color: "#69778a", fontSize: 13 }}>{card.label}</div>
+        <div style={{ fontSize: 25, fontWeight: 700, margin: "7px 0" }}>{card.value}</div>
+        <div style={{ color: "#69778a", fontSize: 12, overflowWrap: "anywhere" }}>{card.note}</div>
+      </div>)}
+    </section>}
     <section style={panel}><h2>1. Your brand</h2><p>Set the public website and basic business context used by future audits and visibility checks.</p>
       <form onSubmit={saveBrand} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(230px,1fr))", gap: 14 }}>
         <label>Business / brand name<input required maxLength={180} style={input} value={brand.name || ""} onChange={e => setBrand({ ...brand, name: e.target.value })}/></label>
@@ -178,6 +199,7 @@ export default function VisibilityWorkspace() {
       <form onSubmit={addQuery} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, alignItems: "end" }}>
         <label style={{ gridColumn: "span 2" }}>Customer question<input required minLength={3} maxLength={500} placeholder="Who is the best [service] near [location]?" style={input} value={query.query_text} onChange={e => setQuery({ ...query, query_text: e.target.value })}/></label>
         <label>Intent<select style={input} value={query.intent} onChange={e => setQuery({ ...query, intent: e.target.value })}><option value="local">Local</option><option value="informational">Informational</option><option value="comparison">Comparison</option><option value="transactional">Transactional</option><option value="navigational">Navigational</option></select></label>
+        <label>Language<input maxLength={20} style={input} value={query.locale} onChange={e => setQuery({ ...query, locale: e.target.value })}/></label>
         <label>Topic<input style={input} value={query.topic} onChange={e => setQuery({ ...query, topic: e.target.value })}/></label>
         <button disabled={busy} style={{ padding: 12, border: 0, borderRadius: 9, background: "#176b63", color: "white" }}>Add question</button>
       </form>
