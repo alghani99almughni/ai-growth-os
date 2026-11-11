@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .db import SessionLocal
 from .models import User
 from .models_visibility import VisibilityBrand, VisibilityCompetitor, VisibilityQuery, VisibilityAudit, VisibilityAuditFinding
+from .website_audit_fetcher import fetch_public_homepage, UnsafeWebsiteTarget, WebsiteFetchError
 
 # Imported by main.py at the end of module initialization to avoid an import cycle.
 from .main import get_current_user, get_db, require_tenant
@@ -190,31 +191,31 @@ def _validated_public_url(value: str) -> str:
 
 @router.post("/audits", status_code=201)
 def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Run a small, bounded first-page audit. No redirects, scripts, or arbitrary page crawling."""
-    import httpx
+    """Run a single-page audit through the connection-pinned public-website fetch boundary."""
     _authorize(user, tenant_id)
-    # Defense in depth: the frontend button is also disabled, but direct API calls
-    # must not trigger outbound requests until connection-time SSRF protection is verified.
-    raise HTTPException(503, "Website audit is temporarily disabled pending security hardening.")
-    brand = db.scalar(select(VisibilityBrand).where(VisibilityBrand.tenant_id == tenant_id).order_by(VisibilityBrand.created_at.asc()))
+    brand = db.scalar(select(VisibilityBrand).where(
+        VisibilityBrand.tenant_id == tenant_id
+    ).order_by(VisibilityBrand.created_at.asc()))
     if not brand:
         raise HTTPException(400, "Save your brand profile before starting a website audit")
-    url = _validated_public_url("https://" + brand.primary_domain)
+
+    # Brand domains are normalized at write time. Fetcher independently validates
+    # the URL, resolves all DNS answers, rejects non-global addresses, and pins
+    # the TCP connection to a previously validated numeric address.
+    url = "https://" + brand.primary_domain.rstrip("/") + "/"
     try:
-        with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
-                          headers={"User-Agent": "AIGrowthOS-VisibilityAudit/1.0"}) as client:
-            with client.stream("GET", url) as response:
-                status_code = response.status_code
-                content_type = response.headers.get("content-type", "")
-                if status_code < 300 and "text/html" in content_type.lower():
-                    body_bytes = _read_bounded_body(response)
-                    body = body_bytes.decode(response.encoding or "utf-8", errors="replace")
-                else:
-                    body = ""
-    except httpx.TimeoutException:
-        raise HTTPException(422, "Website request timed out. Try again later.")
-    except httpx.HTTPError:
-        raise HTTPException(422, "Website could not be reached safely.")
+        response = fetch_public_homepage(url)
+    except UnsafeWebsiteTarget as exc:
+        raise HTTPException(422, "Website URL was rejected by security checks.") from exc
+    except WebsiteFetchError as exc:
+        raise HTTPException(422, "Website could not be reached safely.") from exc
+
+    status_code = response.status
+    content_type = response.headers.get("Content-Type", "")
+    body = response.body.decode("utf-8", errors="replace") if (
+        status_code < 300 and "text/html" in content_type.lower()
+    ) else ""
+
     if 300 <= status_code < 400:
         findings = [{"category":"crawlability","severity":"warning","title":"Website redirects",
                      "recommendation":"Review the redirect destination and canonical domain. Redirect following is disabled for safety.",
@@ -254,19 +255,35 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
             findings.append({"category":"indexing","severity":"high","title":"Robots meta tag includes noindex","recommendation":"Confirm whether search engines should be allowed to index this public page.","evidence":parser.robots[:200]})
         if not findings:
             findings.append({"category":"metadata","severity":"info","title":"No basic homepage metadata issues detected","recommendation":"Continue with deeper content, sitemap, internal-link and structured-data validation.","evidence":"First-page checks only"})
-    record = VisibilityAudit(tenant_id=tenant_id, target_url=url, status="completed" if status_code < 400 else "partial",
-                             http_status=status_code, pages_checked=1,
-                             summary_json=json.dumps({"finding_count":len(findings),"content_type":content_type[:120],
-                                                      "title_detected": bool(body and "<title" in body.lower()),
-                                                      "scope":"single public homepage; basic HTML checks only"}))
-    db.add(record); db.flush()
+
+    record = VisibilityAudit(
+        tenant_id=tenant_id, target_url=url,
+        status="completed" if status_code < 400 else "partial",
+        http_status=status_code, pages_checked=1,
+        summary_json=json.dumps({
+            "finding_count": len(findings),
+            "content_type": content_type[:120],
+            "title_detected": bool(body and "<title" in body.lower()),
+            "scope": "single public homepage; basic HTML checks only",
+        }),
+    )
+    db.add(record)
+    db.flush()
     for item in findings:
-        db.add(VisibilityAuditFinding(tenant_id=tenant_id,audit_id=record.id,category=item["category"],severity=item["severity"],
-                                      title=item["title"],recommendation=item["recommendation"],evidence=item["evidence"][:500]))
-    db.commit(); db.refresh(record)
-    return {"id":record.id,"status":record.status,"target_url":record.target_url,"http_status":record.http_status,
-            "pages_checked":1,"findings":findings,"scope":"Single homepage only. No AI visibility score or live AI answer check is included.",
-            "created_at":record.created_at.isoformat() if record.created_at else None}
+        db.add(VisibilityAuditFinding(
+            tenant_id=tenant_id, audit_id=record.id,
+            category=item["category"], severity=item["severity"],
+            title=item["title"], recommendation=item["recommendation"],
+            evidence=item["evidence"][:500],
+        ))
+    db.commit()
+    db.refresh(record)
+    return {
+        "id": record.id, "status": record.status, "target_url": record.target_url,
+        "http_status": record.http_status, "pages_checked": 1, "findings": findings,
+        "scope": "Single homepage only. No AI visibility score or live AI answer check is included.",
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+    }
 
 @router.get("/audits")
 def list_website_audits(tenant_id: str, limit: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
