@@ -57,12 +57,71 @@ def test_bounded_body_rejects_content_over_limit():
     assert "5-byte audit limit" in exc.value.detail
 
 
-def test_website_audit_api_is_blocked_before_outbound_fetch(monkeypatch):
-    # Even direct backend invocation must fail closed while SSRF-safe fetching
-    # is unfinished. If the route proceeds, it would try to query the database
-    # for a brand; the test intentionally supplies no usable database.
+def test_website_audit_uses_connection_pinned_fetcher_and_persists_findings(monkeypatch):
+    from types import SimpleNamespace
+    from app.models_visibility import VisibilityAudit, VisibilityAuditFinding
+
     monkeypatch.setattr(visibility_routes, "_authorize", lambda user, tenant_id: None)
+    captured = {}
+    html = (
+        '<html><head><title>Example Company</title>'
+        '<meta name="description" content="Local service">'
+        '<link rel="canonical" href="https://example.com/">'
+        '<script type="application/ld+json">{}</script></head>'
+        '<body><h1>Welcome</h1></body></html>'
+    ).encode()
+
+    class FakeDB:
+        def __init__(self):
+            self.rows = []
+        def scalar(self, statement):
+            return SimpleNamespace(primary_domain="example.com")
+        def add(self, row):
+            self.rows.append(row)
+        def flush(self):
+            for row in self.rows:
+                if isinstance(row, VisibilityAudit) and not row.id:
+                    row.id = "audit-test"
+        def commit(self):
+            pass
+        def refresh(self, row):
+            pass
+
+    fake_response = SimpleNamespace(
+        status=200,
+        headers={"Content-Type": "text/html; charset=utf-8"},
+        body=html,
+    )
+    def fake_fetch(url):
+        captured["url"] = url
+        return fake_response
+
+    monkeypatch.setattr(visibility_routes, "fetch_public_homepage", fake_fetch)
+    db = FakeDB()
+    result = run_website_audit("tenant-test", user=object(), db=db)
+
+    assert captured["url"] == "https://example.com/"
+    assert result["status"] == "completed"
+    assert result["pages_checked"] == 1
+    assert result["http_status"] == 200
+    assert result["scope"].startswith("Single homepage only")
+    assert any(isinstance(row, VisibilityAudit) for row in db.rows)
+    assert any(isinstance(row, VisibilityAuditFinding) for row in db.rows)
+
+
+def test_website_audit_rejects_fetcher_security_failure(monkeypatch):
+    from app.website_audit_fetcher import UnsafeWebsiteTarget
+
+    monkeypatch.setattr(visibility_routes, "_authorize", lambda user, tenant_id: None)
+    class FakeDB:
+        def scalar(self, statement):
+            return type("Brand", (), {"primary_domain": "example.com"})()
+
+    def unsafe_fetch(url):
+        raise UnsafeWebsiteTarget("private target")
+
+    monkeypatch.setattr(visibility_routes, "fetch_public_homepage", unsafe_fetch)
     with pytest.raises(HTTPException) as exc:
-        run_website_audit("tenant-test", user=object(), db=None)
-    assert exc.value.status_code == 503
-    assert "disabled pending security hardening" in exc.value.detail
+        run_website_audit("tenant-test", user=object(), db=FakeDB())
+    assert exc.value.status_code == 422
+    assert "security checks" in exc.value.detail
