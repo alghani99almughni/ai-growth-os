@@ -11,13 +11,17 @@ User-supplied URLs are untrusted. Before every outbound request:
 1. Accept only HTTP/HTTPS.
 2. Reject credentials in URLs and unsupported ports.
 3. Resolve hostnames and reject loopback, private, link-local, multicast, reserved, and metadata-service IP ranges for IPv4 and IPv6.
-4. Validate every resolved address and every redirect target; limit redirects.
-5. Protect against DNS rebinding by connecting only to a validated destination where the HTTP client permits it.
+4. Do not follow redirects in the MVP; return a redirect finding to the user. If redirect support is introduced later, validate every hop independently before connecting.
+5. Protect against DNS rebinding by resolving once, rejecting the request if any DNS answer is non-global, and pinning the TCP connection to one of the exact validated numeric IP addresses. Preserve the original hostname for HTTPS SNI and certificate validation.
 6. Set strict connection/read timeouts, response-size caps, page-count caps, and content-type allowlists.
 7. Do not execute downloaded scripts or render arbitrary HTML in a privileged browser.
 8. Avoid fetching internal network destinations, cloud metadata endpoints, local files, or non-HTTP schemes.
 9. Apply per-tenant and global rate limits.
 10. Log safe error codes without credentials or sensitive response bodies.
+
+## Implemented website-audit boundary (MVP)
+
+The current `website_audit_fetcher` uses direct connection-pinned HTTP(S) pools, does not follow redirects, applies 3-second connect and 5-second read timeouts, and limits response bodies to 500 KB. The audit route is tenant-authorized and persists only a single homepage's deterministic findings. This is a safer MVP boundary, not approval to remove the remaining release gates: staging/runtime SSRF review, rate limiting, complete tenant-isolation testing, and production monitoring remain required.
 
 ## Provider secrets
 - Reuse the existing encrypted integration credential model and provider abstractions.
