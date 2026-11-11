@@ -19,6 +19,10 @@ services:
         fromDatabase:
           name: ai-growth-os-db
           property: connectionString
+      - key: VISIBILITY_DATABASE_URL
+        fromDatabase:
+          name: ai-growth-os-visibility-db
+          property: connectionString
       - key: REDIS_URL
         fromService:
           name: ai-growth-os-redis
@@ -88,6 +92,10 @@ services:
 
 databases:
   - name: ai-growth-os-db
+    plan: starter
+    region: singapore
+    postgresMajorVersion: "18"
+  - name: ai-growth-os-visibility-db
     plan: starter
     region: singapore
     postgresMajorVersion: "18"
