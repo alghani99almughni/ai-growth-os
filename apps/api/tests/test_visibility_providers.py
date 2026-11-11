@@ -140,3 +140,84 @@ def test_grok_citations_are_not_mislabeled_as_search_grounded(monkeypatch):
     assert result["answer"] == "Example Gym is nearby."
     assert result["citations"] == [{"url": "https://example.com", "title": ""}]
     assert result["method"] == "model_sampled"
+
+
+def test_provider_requests_use_expected_official_endpoints_and_auth(monkeypatch):
+    import asyncio
+    import app.visibility_providers as providers
+
+    cases = [
+        ("gemini", "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent", "x-goog-api-key"),
+        ("perplexity", "https://api.perplexity.ai/chat/completions", "Authorization"),
+        ("grok", "https://api.x.ai/v1/chat/completions", "Authorization"),
+        ("claude", "https://api.anthropic.com/v1/messages", "x-api-key"),
+    ]
+
+    for provider, expected_url, auth_header in cases:
+        captured = {}
+
+        class FakeResponse:
+            status_code = 200
+            def json(self):
+                if provider == "gemini":
+                    return {"candidates": [{"content": {"parts": [{"text": "A grounded answer."}]}}]}
+                if provider == "claude":
+                    return {"content": [{"type": "text", "text": "A model answer."}]}
+                return {"choices": [{"message": {"content": "A provider answer."}}]}
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                assert kwargs.get("follow_redirects") is False
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *args):
+                return False
+            async def post(self, url, **kwargs):
+                captured["url"] = url
+                captured["kwargs"] = kwargs
+                return FakeResponse()
+
+        monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+        result = asyncio.run(providers.run_provider(provider, "secret-test-key", "gemini-test" if provider == "gemini" else provider + "-test-model", "test prompt"))
+        assert captured["url"] == expected_url
+        assert auth_header in captured["kwargs"]["headers"]
+        assert "secret-test-key" in captured["kwargs"]["headers"][auth_header]
+        assert result["answer"]
+        assert result["method"] == ("search_grounded" if provider in ("gemini", "perplexity") else "model_sampled")
+
+
+def test_provider_http_error_does_not_expose_response_body(monkeypatch):
+    import asyncio
+    import app.visibility_providers as providers
+
+    class FakeResponse:
+        status_code = 401
+        text = "sensitive provider diagnostic"
+        def json(self):
+            return {"error": "sensitive provider diagnostic"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+    with pytest.raises(RuntimeError) as error:
+        asyncio.run(providers.run_provider("perplexity", "secret-test-key", "test-model", "test prompt"))
+    assert "HTTP 401" in str(error.value)
+    assert "sensitive provider diagnostic" not in str(error.value)
+
+
+@pytest.mark.parametrize("provider", ["gemini", "perplexity", "grok", "claude"])
+def test_provider_requires_both_key_and_model(provider):
+    import asyncio
+    import app.visibility_providers as providers
+    with pytest.raises(ValueError, match="not configured"):
+        asyncio.run(providers.run_provider(provider, "", "test-model", "test prompt"))
+    with pytest.raises(ValueError, match="not configured"):
+        asyncio.run(providers.run_provider(provider, "test-key", "", "test prompt"))
