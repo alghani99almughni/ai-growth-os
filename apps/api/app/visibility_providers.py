@@ -136,8 +136,12 @@ async def run_provider(provider: str, api_key: str, model: str, prompt: str) -> 
         answer, citations = _extract(provider, data)
         if not answer.strip():
             raise RuntimeError(f"{provider} provider returned an empty answer")
+        # A provider's ability to search is not proof that this individual response
+        # was grounded. Only label the observation search-grounded when the response
+        # actually includes provider-supplied source evidence.
+        method = "search_grounded" if provider in ("gemini", "perplexity") and citations else "model_sampled"
         return {"provider": provider, "model": model, "answer": answer[:12000],
-                "citations": citations, "method": "search_grounded" if provider in ("gemini", "perplexity") else "model_sampled"}
+                "citations": citations, "method": method}
 
 
 def _contains_brand_name(answer: str, brand_name: str) -> bool:
