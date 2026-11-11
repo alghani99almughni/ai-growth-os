@@ -103,3 +103,83 @@ def test_malformed_url_is_rejected_before_dns(monkeypatch, url):
     )
     with pytest.raises(fetcher.UnsafeWebsiteTarget):
         fetcher.fetch_public_homepage(url)
+
+
+class _FakeHTTPResponse:
+    def __init__(self, body=b"<html></html>", status=200, content_type="text/html"):
+        self.status = status
+        self.headers = {"Content-Type": content_type}
+        self.body = body
+        self.read_called = False
+        self.closed = False
+
+    def read(self, amount, decode_content=False):
+        if self.read_called:
+            return b""
+        self.read_called = True
+        return self.body
+
+    def close(self):
+        self.closed = True
+
+
+def test_fetcher_uses_no_redirects_and_returns_bounded_html(monkeypatch):
+    calls = {}
+    response = _FakeHTTPResponse(b"<html><title>Safe</title></html>")
+    monkeypatch.setattr(
+        fetcher.socket, "getaddrinfo",
+        lambda *args, **kwargs: [_answer("93.184.216.34")],
+    )
+
+    def fake_urlopen(pool, method, path, **kwargs):
+        calls.update({"method": method, "path": path, **kwargs})
+        return response
+
+    monkeypatch.setattr(fetcher.HTTPConnectionPool, "urlopen", fake_urlopen)
+    result = fetcher.fetch_public_homepage("http://example.com/", max_bytes=100)
+
+    assert result.status == 200
+    assert result.body == b"<html><title>Safe</title></html>"
+    assert calls["method"] == "GET"
+    assert calls["redirect"] is False
+    assert calls["retries"] is False
+    assert calls["preload_content"] is False
+    assert calls["headers"]["Host"] == "example.com"
+    assert response.closed is True
+
+
+def test_fetcher_rejects_response_over_byte_limit_and_closes_response(monkeypatch):
+    response = _FakeHTTPResponse(b"123456")
+    monkeypatch.setattr(
+        fetcher.socket, "getaddrinfo",
+        lambda *args, **kwargs: [_answer("93.184.216.34")],
+    )
+    monkeypatch.setattr(fetcher.HTTPConnectionPool, "urlopen", lambda *args, **kwargs: response)
+
+    with pytest.raises(fetcher.WebsiteFetchError, match="byte limit"):
+        fetcher.fetch_public_homepage("http://example.com/", max_bytes=5)
+    assert response.closed is True
+
+
+def test_fetcher_does_not_read_redirect_body(monkeypatch):
+    response = _FakeHTTPResponse(b"redirect body", status=302)
+    monkeypatch.setattr(
+        fetcher.socket, "getaddrinfo",
+        lambda *args, **kwargs: [_answer("93.184.216.34")],
+    )
+    monkeypatch.setattr(fetcher.HTTPConnectionPool, "urlopen", lambda *args, **kwargs: response)
+
+    result = fetcher.fetch_public_homepage("http://example.com/")
+    assert result.status == 302
+    assert result.body == b""
+    assert response.read_called is False
+    assert response.closed is True
+
+
+def test_fetcher_maps_dns_failure_to_safe_error(monkeypatch):
+    monkeypatch.setattr(
+        fetcher.socket, "getaddrinfo",
+        lambda *args, **kwargs: (_ for _ in ()).throw(socket.gaierror("private diagnostic")),
+    )
+    with pytest.raises(fetcher.WebsiteFetchError, match="could not be resolved"):
+        fetcher.fetch_public_homepage("https://example.com/")
