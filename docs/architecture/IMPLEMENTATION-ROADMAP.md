@@ -20,18 +20,20 @@
 - [ ] Add tenant-scoped service and API tests.
 
 ## Phase 2 — Website audit MVP
-- [ ] SSRF-safe URL validation and guarded fetcher.
-- [ ] Audit job and findings model.
-- [ ] Initial deterministic checks: title, meta description, heading structure, canonical, robots/sitemap signals, structured-data presence, broken/internal links within a strict page budget.
-- [ ] Tenant dashboard for starting an audit and viewing findings.
-- [ ] Rate limits, caps, timeout handling, and audit history.
+- [x] Public HTTP/HTTPS URL validation and connection-pinned fetcher; all DNS answers must be globally routable.
+- [x] Synchronous single-homepage audit endpoint and tenant-scoped audit/finding persistence (not yet a background job).
+- [x] Initial deterministic checks: title, meta description, H1 structure, canonical, robots noindex, and JSON-LD presence.
+- [x] Tenant dashboard action for starting an audit and viewing findings.
+- [ ] Per-tenant/global rate limits, asynchronous job states, sitemap/internal-link crawl, and deeper page-budget controls.
+- [x] Fetch timeouts, no redirect following, and a 500 KB response cap.
 
 ## Phase 3 — AI visibility MVP
-- [ ] Tenant brand profile, competitor profiles, and query library.
-- [ ] Provider adapter selected from the existing integrations/provider pool after capability verification.
-- [ ] Store exact method/provider/time and citation evidence.
-- [ ] Historical observations and transparent coverage metrics.
-- [ ] Clearly label model-only samples versus search-grounded observations.
+- [x] Tenant brand profile, competitor profiles, and customer-question library.
+- [x] Official provider API adapters for Gemini, Perplexity, Grok, and Claude.
+- [x] Store provider/model, measurement method, timestamps, answer excerpt, and citation evidence.
+- [x] Historical observations and tenant-scoped visibility history.
+- [x] Clearly label model-only samples versus search-grounded observations based on returned evidence.
+- [ ] Transparent coverage metrics, scheduled checks, usage metering, and evidence-backed reporting.
 
 ## Phase 4 — Reporting and usage controls
 - [ ] Tenant report with evidence-backed recommendations.
