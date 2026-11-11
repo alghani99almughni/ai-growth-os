@@ -221,3 +221,62 @@ def test_provider_requires_both_key_and_model(provider):
         asyncio.run(providers.run_provider(provider, "", "test-model", "test prompt"))
     with pytest.raises(ValueError, match="not configured"):
         asyncio.run(providers.run_provider(provider, "test-key", "", "test prompt"))
+
+
+@pytest.mark.parametrize("provider,payload", [
+    ("gemini", {"candidates": [{"content": {"parts": [{"text": "An answer without grounding metadata."}]}}]}),
+    ("perplexity", {"choices": [{"message": {"content": "An answer without citations."}}]}),
+])
+def test_search_capable_provider_without_returned_sources_is_model_sampled(monkeypatch, provider, payload):
+    """Do not claim grounding merely because a provider supports a search feature."""
+    import asyncio
+    import app.visibility_providers as providers
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return payload
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+    model = "gemini-test" if provider == "gemini" else "sonar-test"
+    result = asyncio.run(providers.run_provider(provider, "test-key", model, "test prompt"))
+    assert result["method"] == "model_sampled"
+    assert result["citations"] == []
+
+
+def test_search_capable_provider_with_sources_is_search_grounded(monkeypatch):
+    import asyncio
+    import app.visibility_providers as providers
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "choices": [{"message": {"content": "A sourced answer."}}],
+                "citations": ["https://example.com/source"],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+    result = asyncio.run(providers.run_provider("perplexity", "test-key", "sonar-test", "test prompt"))
+    assert result["method"] == "search_grounded"
+    assert result["citations"] == [{"url": "https://example.com/source", "title": ""}]
