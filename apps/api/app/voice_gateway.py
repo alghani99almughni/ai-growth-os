@@ -134,6 +134,9 @@ class GeminiLiveAdapter:
             pass
         if (msg.get("serverContent") or {}).get("interrupted"):
             return {"_gateway":{"event":"interruption"}}
+        server_content = msg.get("serverContent") or {}
+        if server_content.get("generationComplete") or server_content.get("turnComplete"):
+            return {"_gateway":{"event":"response_done"}}
         parts=((msg.get("serverContent") or {}).get("modelTurn") or {}).get("parts") or []
         function_calls=[]
         for part in parts:
