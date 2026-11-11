@@ -3,7 +3,7 @@ from datetime import datetime
 import uuid
 from sqlalchemy import String, DateTime, ForeignKey, Text, Boolean, Integer, Index
 from sqlalchemy.orm import Mapped, mapped_column
-from .db import Base
+from .visibility_db import VisibilityBase as Base
 
 def _uid():
     return str(uuid.uuid4())
@@ -11,7 +11,7 @@ def _uid():
 class VisibilityBrand(Base):
     __tablename__ = "visibility_brands"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     primary_domain: Mapped[str] = mapped_column(String(253), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -22,7 +22,7 @@ class VisibilityBrand(Base):
 class VisibilityCompetitor(Base):
     __tablename__ = "visibility_competitors"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(180), nullable=False)
     domain: Mapped[str] = mapped_column(String(253), nullable=False)
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
@@ -31,7 +31,7 @@ class VisibilityCompetitor(Base):
 class VisibilityQuery(Base):
     __tablename__ = "visibility_queries"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     query_text: Mapped[str] = mapped_column(String(500), nullable=False)
     intent: Mapped[str] = mapped_column(String(30), default="informational", nullable=False)
     locale: Mapped[str] = mapped_column(String(20), default="en", nullable=False)
@@ -42,7 +42,7 @@ class VisibilityQuery(Base):
 class VisibilityCheckRun(Base):
     __tablename__ = "visibility_check_runs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     query_id: Mapped[str | None] = mapped_column(ForeignKey("visibility_queries.id"), nullable=True, index=True)
     provider: Mapped[str] = mapped_column(String(80), nullable=False)
     measurement_method: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -55,7 +55,7 @@ class VisibilityCheckRun(Base):
 class VisibilityObservation(Base):
     __tablename__ = "visibility_observations"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("visibility_check_runs.id"), nullable=False, index=True)
     brand_mentioned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     mentioned_names_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
@@ -70,7 +70,7 @@ Index("ix_visibility_runs_tenant_created", VisibilityCheckRun.tenant_id, Visibil
 class VisibilityAudit(Base):
     __tablename__ = "visibility_audits"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     target_url: Mapped[str] = mapped_column(String(2048), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="completed", nullable=False)
     http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -81,7 +81,7 @@ class VisibilityAudit(Base):
 class VisibilityAuditFinding(Base):
     __tablename__ = "visibility_audit_findings"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uid)
-    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     audit_id: Mapped[str] = mapped_column(ForeignKey("visibility_audits.id"), nullable=False, index=True)
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
