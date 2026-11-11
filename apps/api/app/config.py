@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name:str="AI Growth OS API"; environment:str="development"
-    database_url:str="postgresql+psycopg://growth:growth@localhost:5432/growth_os"; redis_url:str="redis://localhost:6379/0"
+    database_url:str="postgresql+psycopg://growth:growth@localhost:5432/growth_os"; visibility_database_url:str="sqlite:///./visibility.db"; redis_url:str="redis://localhost:6379/0"
     jwt_secret:str="change-me-in-production"; jwt_algorithm:str="HS256"; access_token_minutes:int=1440
     gemini_api_key:str=""; gemini_model:str="gemini-2.5-flash"; openai_api_key:str=""; openai_model:str="gpt-5.6-luna"; openai_realtime_model:str="gpt-realtime-2.1"; openrouter_api_key:str=""; openrouter_model:str="qwen/qwen3-coder"; anthropic_api_key:str=""; anthropic_model:str="claude-3-5-haiku-latest"; perplexity_api_key:str=""; grok_api_key:str=""; perplexity_model:str="sonar"; grok_model:str="grok-3-mini"; gemini_live_model:str="gemini-3.8-live"; public_app_url:str="http://localhost:3000"; api_public_url:str="https://ai-growth-os-api.onrender.com"
     allowed_origins:str="http://localhost:3000"; rate_limit_requests:int=300; rate_limit_window_seconds:int=60
