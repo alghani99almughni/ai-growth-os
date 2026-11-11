@@ -96,6 +96,6 @@ databases:
     region: singapore
     postgresMajorVersion: "18"
   - name: ai-growth-os-visibility-db
-    plan: starter
+    plan: basic-256mb
     region: singapore
     postgresMajorVersion: "18"
