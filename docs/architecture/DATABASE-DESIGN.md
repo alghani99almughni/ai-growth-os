@@ -1,11 +1,21 @@
 # AEO/GEO Visibility Module — Data Design
 
 ## Design rules
-- Reuse the existing SQLAlchemy/database migration approach after inspecting it; do not introduce a second ORM or parallel database.
+- Use a dedicated PostgreSQL database and isolated SQLAlchemy metadata/session for visibility data; do not add visibility tables to the existing AI Growth OS operational database.
 - Use existing tenant/user/plan models where suitable.
 - All tenant-owned tables carry `tenant_id`, timestamps, and appropriate indexes.
 - IDs should follow repository conventions (UUID/string IDs if that is the established pattern).
 - Store normalized evidence separately from optional bounded raw provider payloads. Never store credentials in result records.
+
+## Database isolation boundary
+
+- The platform database remains authoritative for authentication, users, tenants, subscriptions, and integration credentials.
+- A separate `VISIBILITY_DATABASE_URL` points to the dedicated `ai-growth-os-visibility-db` Postgres resource.
+- Visibility tables are registered only on `VisibilityBase.metadata` and are initialized independently.
+- Visibility records store the platform's `tenant_id` as an opaque string. They must not declare cross-database foreign keys to `tenants.id`.
+- Relationships among visibility-owned records (for example, check run to query, observation to run, and finding to audit) remain local foreign keys inside the visibility database.
+- API authentication and tenant authorization continue to use the existing platform database. Visibility CRUD uses the isolated visibility session. Google OAuth credentials are read from the platform integration store and are never copied into visibility records.
+- This separation keeps the current operational schema unchanged and leaves a controlled future data-consolidation path.
 
 ## Proposed entities
 
