@@ -357,6 +357,9 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
                 f"(website: {brand.primary_domain}). Return a concise answer with citations when available."
             )
             observed = await run_provider(provider, api_key, model, prompt)
+            # Persist the evidence method actually returned for this observation;
+            # a search-capable provider can still return an ungrounded answer.
+            run.measurement_method = observed["method"]
             match = observation_match(observed["answer"], brand.name, brand.primary_domain, observed["citations"])
             answer_lower = observed["answer"].casefold()
             competitors = db.scalars(select(VisibilityCompetitor).where(
