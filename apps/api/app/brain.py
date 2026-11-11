@@ -15,7 +15,11 @@ from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .voice_language_patterns import language_request, relative_day_from_text, needs_voice_clarification, SPOKEN_CLARIFICATION, LANGUAGE_SWITCH_CONFIRMATIONS, BUSINESS_HOURS_SIMPLE, AVAILABILITY_PROMPTS, DOCTOR_DETAILS_MISSING, is_explicit_confirmation, language_switch_confirmation, voice_feedback_reply
 from .booking import available_slots
 from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
-from .voice_followups import spoken_time, bare_time_answer, asks_for_time, describe_day_hours, is_day_followup, HOURS_CUES
+from .voice_followups import (
+    spoken_time, bare_time_answer, asks_for_time, describe_day_hours, is_day_followup, HOURS_CUES,
+    decline_kind, decline_reply, expects_time, has_change_cue, is_booking_affirmation, is_hold_on, is_start_over,
+    booking_phrase, resume_prompt, parse_date_phrase, format_slot_list,
+)
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -266,12 +270,16 @@ def extract_booking_entities(text: str, expecting_time: bool = False) -> dict:
                 break
 
     relative_day = relative_day_from_text(value)
-    now_requested = bool(re.search(r"\b(?:now|right now|immediately|abhi|abhi ke abhi|अभी|अभी के अभी)\b", value))
+    now_requested = bool(re.search(r"\b(?:now|right now|immediately|asap|as soon as possible|soonest|earliest(?: available)?|first available|next available|right away|jaldi se jaldi|abhi|abhi ke abhi|अभी|अभी के अभी)\b", value))
     if now_requested and relative_day is None:
         relative_day = "today"
+    any_time = bool(re.search(
+        r"\b(?:any ?time|whenever|any slot|whatever time|anything is fine|any time is fine|you (?:decide|choose|pick)|your choice|whatever is free|no preference)\b", value))
 
     time_value = None
-    if re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani|am|pm|a\.m\.|p\.m\.)\b", value):
+    if re.search(r"\bmidnight\b", value):
+        time_value = "12 AM"
+    elif re.search(r"\bnoon\b|\b12\s*(noon|baje|vajje|vagye|mani|am|pm|a\.m\.|p\.m\.)\b", value):
         time_value = "12 PM"
     else:
         tm = re.search(r"\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?|o['’]?clock|oclock)\b", value)
@@ -321,12 +329,9 @@ def extract_booking_entities(text: str, expecting_time: bool = False) -> dict:
         time_value = bare_time_answer(value)   # "10 10", "1010", "930", "11" -- only right after "What time ...?"
 
     time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
-    date_hint = None
-    dm=re.search(r"\b(?:date|day|on)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
-    if dm:
-        date_hint=int(dm.group(1))
+    date_hint = parse_date_phrase(value)   # "the 20th", "October 22", "22 Oct", "20/10"
 
-    return {"day":day,"relative_day":relative_day,"time":time_value,"time_hint":time_hint,"date_hint":date_hint,"now_requested":now_requested}
+    return {"day":day,"relative_day":relative_day,"time":time_value,"time_hint":time_hint,"date_hint":date_hint,"now_requested":now_requested,"any_time":any_time}
 
 
 def previous_booking_context(db: Session, conversation_id: str, current_message: str) -> dict:
@@ -354,7 +359,7 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
             last_assistant_text = row.content
             continue
         # a bare "10 10" only counts as a time when the question before it asked for one
-        extracted = extract_booking_entities(row.content, expecting_time=asks_for_time(last_assistant_text))
+        extracted = extract_booking_entities(row.content, expecting_time=asks_for_time(last_assistant_text) or has_change_cue(row.content))
         # "tomorrow" ... later "Monday": day / relative day / date are ONE slot, so the most recent
         # mention replaces the older ones. Without this the stale "tomorrow" kept winning and a
         # perfectly good Monday booking was reported as "tomorrow is closed".
@@ -423,6 +428,15 @@ def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, 
         if delta==0:
             delta=7
         return now_local + _timedelta(days=delta)
+    if date_hint and isinstance(date_hint, (tuple, list)) and len(date_hint) == 2:
+        for year in (now_local.year, now_local.year + 1):
+            try:
+                candidate=_date(year, int(date_hint[0]), int(date_hint[1]))
+            except ValueError:
+                continue
+            if candidate >= now_local:
+                return candidate
+        return None
     if date_hint:
         for offset in range(0, 370):
             candidate=now_local + _timedelta(days=offset)
@@ -430,7 +444,7 @@ def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, 
                 return candidate
     return None
 
-def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_value: str|None):
+def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_value: str|None, service=None):
     if not booking_date or not time_value:
         return {"checked":False,"available":None,"date":booking_date.isoformat() if booking_date else None}
     hours=db.scalar(select(BusinessHour).where(
@@ -446,7 +460,7 @@ def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_valu
     if mer=="PM" and hour!=12: hour+=12
     if mer=="AM" and hour==12: hour=0
     requested=__import__("datetime").datetime.combine(booking_date,__import__("datetime").time(hour,minute))
-    from .booking import is_inside_hours, local_to_utc_naive, slot_is_available, find_appointment_for_conversation
+    from .booking import is_inside_hours, local_to_utc_naive, slot_is_available
     if hours and not hours.is_closed and not is_inside_hours(hours.open_time, hours.close_time, requested.time()):
         return {"checked":True,"available":False,"reason":"outside_hours","date":booking_date.isoformat()}
     from zoneinfo import ZoneInfo as _ZoneInfo
@@ -455,12 +469,14 @@ def booking_calendar_status(db: Session, tenant: Tenant, booking_date, time_valu
         return {"checked":True,"available":False,"reason":"past_date","date":booking_date.isoformat()}
     if booking_date == now_local.date() and requested <= now_local.replace(tzinfo=None):
         return {"checked":True,"available":False,"reason":"past","date":booking_date.isoformat()}
-    service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
+    service=service or db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
     duration=(service.duration_minutes if service and service.duration_minutes else 30)
     start_utc=local_to_utc_naive(requested,tenant.timezone)
     end_utc=local_to_utc_naive(requested+__import__("datetime").timedelta(minutes=duration),tenant.timezone)
-    exclude_ids=find_appointment_for_conversation(db,tenant.id,start_utc)
-    available=slot_is_available(db,tenant.id,start_utc,end_utc,None,exclude_ids)
+    # Every other booking counts as a conflict. This used to exclude ANY appointment starting at exactly this minute
+    # (meant for "my own just-created booking"), so a slot another customer had just taken still looked free until
+    # the final "yes".
+    available=slot_is_available(db,tenant.id,start_utc,end_utc,None,None)
     return {
         "checked":True,"available":available,"date":booking_date.isoformat(),
         "service_id":service.id if service else None,
@@ -484,7 +500,7 @@ def booking_day_label(language,value):
         return {"today":"आज","tomorrow":"कल","day after tomorrow":"परसों"}.get(value,value or "उस दिन")
     if language=="te":
         return {"today":"ఈ రోజు","tomorrow":"రేపు","day after tomorrow":"ఎల్లుండి"}.get(value,value or "ఆ రోజు")
-    return value or "that day"
+    return (value.capitalize() if value in _WEEKDAYS else value) or "that day"
 
 def with_meridiem(db: Session, tenant: Tenant, time_value: str|None, target_date) -> str|None:
     """"9:30" -> "9:30 AM" when only one of AM/PM falls inside that day's opening hours.
@@ -497,7 +513,7 @@ def with_meridiem(db: Session, tenant: Tenant, time_value: str|None, target_date
     if not time_value or not target_date or re.search(r"\b(?:AM|PM)\b", time_value, re.I):
         return time_value
     tm = re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
-    if not tm or not 1 <= int(tm.group(1)) <= 11:
+    if not tm or not 1 <= int(tm.group(1)) <= 12:
         return time_value
     hour, minute = int(tm.group(1)), int(tm.group(2) or 0)
     row = db.scalar(select(BusinessHour).where(BusinessHour.tenant_id==tenant.id,
@@ -506,8 +522,8 @@ def with_meridiem(db: Session, tenant: Tenant, time_value: str|None, target_date
         return time_value
     from datetime import time as _time
     from .booking import is_inside_hours
-    am_inside = is_inside_hours(row.open_time, row.close_time, _time(hour, minute))
-    pm_inside = is_inside_hours(row.open_time, row.close_time, _time(hour + 12, minute))
+    am_inside = is_inside_hours(row.open_time, row.close_time, _time(0 if hour == 12 else hour, minute))
+    pm_inside = is_inside_hours(row.open_time, row.close_time, _time(12 if hour == 12 else hour + 12, minute))
     if am_inside == pm_inside:
         return time_value
     meridiem = "AM" if am_inside else "PM"
@@ -557,8 +573,65 @@ def closed_day_notice(db: Session, tenant: Tenant, target, language: str, relati
     )
 
 
+def conversation_user_texts(db: Session, conversation_id: str, cleared_at=None) -> list[str]:
+    q = select(ConversationMessage).where(
+        ConversationMessage.conversation_id == conversation_id, ConversationMessage.role == "user"
+    ).order_by(ConversationMessage.created_at.asc())
+    if cleared_at:
+        q = q.where(ConversationMessage.created_at >= cleared_at)
+    return [r.content for r in db.scalars(q.limit(40)).all()]
+
+
+def active_services(db: Session, tenant: Tenant) -> list:
+    return db.scalars(select(Service).where(Service.tenant_id == tenant.id, Service.is_active == True).order_by(Service.name)).all()
+
+
+def pick_service(db: Session, tenant: Tenant, texts: list[str]):
+    """(service, needs_choice). With one service there is nothing to choose; with several, the caller's most recent
+    mention of a service name wins. If none is named the caller is asked, instead of silently booking the first one
+    alphabetically (wrong service, wrong duration)."""
+    services = active_services(db, tenant)
+    if not services:
+        return None, False
+    if len(services) == 1:
+        return services[0], False
+    for text in reversed(texts):
+        t = (text or "").casefold()
+        hits = [sv for sv in services if sv.name and sv.name.casefold() in t]
+        if not hits:
+            words = set(re.findall(r"[a-z]{4,}", t))
+            hits = [sv for sv in services if words & set(re.findall(r"[a-z]{4,}", (sv.name or "").casefold()))]
+        if len(hits) == 1:
+            return hits[0], False
+    return None, True
+
+
+def nearest_slots(db: Session, tenant: Tenant, service, target_date, time_value: str|None, count: int = 2) -> list[str]:
+    """The `count` free slots on that day closest to the requested time, in clock order ("2:30 PM")."""
+    if not service or not target_date:
+        return []
+    try:
+        slots = available_slots(db, tenant, service.id, target_date)
+    except Exception:
+        return []
+    if not slots:
+        return []
+    tm = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$", (time_value or "").strip(), re.I)
+    wanted = None
+    if tm:
+        hour, minute, mer = int(tm.group(1)), int(tm.group(2) or 0), (tm.group(3) or "").upper()
+        if mer == "PM" and hour != 12: hour += 12
+        if mer == "AM" and hour == 12: hour = 0
+        wanted = hour * 60 + minute
+    def minutes(slot):
+        dt = datetime.fromisoformat(slot["start"]); return dt.hour * 60 + dt.minute
+    ranked = sorted(slots, key=lambda sl: abs(minutes(sl) - wanted) if wanted is not None else minutes(sl))[:count]
+    ranked.sort(key=minutes)
+    return [datetime.fromisoformat(sl["start"]).strftime("%-I:%M %p") for sl in ranked]
+
+
 def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, message: str) -> tuple[str|None, dict]:
-    current = extract_booking_entities(message, expecting_time=asks_for_time(c.last_assistant_message))
+    current = extract_booking_entities(message, expecting_time=expects_time(c.state, c.last_assistant_message, message))
     logger.info(
         "VOICE_BOOKING_EXTRACTION conversation_id=%s state_before=%s message=%r entities=%s",
         c.id, c.state, message, current,
@@ -575,15 +648,19 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
     now_requested = bool(current.get("now_requested") or prior.get("now_requested"))
 
     day_label = relative_day.replace("_", " ") if relative_day and not current["day"] else day
+    if not day_label and date_hint:
+        early_date = resolve_booking_date(tenant, day, relative_day, date_hint)
+        if early_date:
+            day_label = early_date.strftime("%A, %B %-d")      # "the 20th" / "October 22" -> a real date
 
     if time_value and day_label and not re.search(r"\b(?:AM|PM)\b", time_value, re.I):
         tm_bare=re.match(r"^(\d{1,2})(?::(\d{2}))?$", time_value.strip())
         if tm_bare:
             hour=int(tm_bare.group(1)); minute=int(tm_bare.group(2) or 0)
-            if 1 <= hour <= 11:
+            if 1 <= hour <= 12:
                 from datetime import time as _time
-                am_time=_time(hour,minute)
-                pm_time=_time(hour+12,minute)
+                am_time=_time(0 if hour==12 else hour,minute)
+                pm_time=_time(12 if hour==12 else hour+12,minute)
                 target_date=resolve_booking_date(tenant, day, relative_day, date_hint)
                 hours_row=db.scalar(select(BusinessHour).where(
                     BusinessHour.tenant_id==tenant.id,
@@ -607,8 +684,17 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
 
     resolved_date=resolve_booking_date(tenant, day, relative_day, date_hint)
 
+    texts = conversation_user_texts(db, c.id, c.cleared_at) if c.state.startswith("booking") else []
+    chosen_service, needs_service = pick_service(db, tenant, texts + [message])
+    default_service = chosen_service or (active_services(db, tenant) or [None])[0]
+
+    if current.get("any_time") and resolved_date and not time_value and default_service:
+        first_slots = available_slots(db, tenant, default_service.id, resolved_date)
+        if first_slots:
+            time_value = datetime.fromisoformat(first_slots[0]["start"]).strftime("%-I:%M %p")     # "any time" -> earliest free slot
+
     if now_requested and resolved_date:
-        service=db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
+        service=default_service
         if service:
             search_dates=[resolved_date]
             search_dates.extend(resolved_date + timedelta(days=offset) for offset in range(1,8))
@@ -642,7 +728,7 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
                         {"day":"today","time":None,"date":resolved_date.isoformat(),"now_requested":True,"complete":False})
 
     if day_label and time_value:
-        calendar=booking_calendar_status(db,tenant,resolved_date,time_value)
+        calendar=booking_calendar_status(db,tenant,resolved_date,time_value,chosen_service)
         if calendar.get("available") is False:
             if calendar.get("reason")=="past_date":
                 c.state="booking_time_clarification"
@@ -657,13 +743,30 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
                 c.state="booking_time_clarification"
                 return (booking_text(c.language,"outside",time=time_value,day=booking_day_label(c.language,day_label)), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
             c.state="booking_time_clarification"
-            return (booking_text(c.language,"unavailable",time=time_value,day=booking_day_label(c.language,day_label)), {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+            alternatives = nearest_slots(db, tenant, default_service, resolved_date, time_value) if c.language not in ("hi","te") else []
+            if alternatives:
+                when = resolved_date.strftime("%A, %B %-d") if resolved_date else day_label
+                reply = (f"{time_value} on {when} is already booked. The nearest available times are {format_slot_list(alternatives)}. Which would you prefer?"
+                         if len(alternatives) > 1 else
+                         f"{time_value} on {when} is already booked. The nearest available time is {alternatives[0]}. Would that work for you?")
+            else:
+                reply = booking_text(c.language,"unavailable",time=time_value,day=booking_day_label(c.language,day_label))
+            return (reply, {"day":day_label,"time":None,"date":resolved_date.isoformat() if resolved_date else None,"complete":False})
+        if needs_service:
+            c.state = "booking_service"
+            names = format_slot_list([sv.name for sv in active_services(db, tenant)])
+            return (f"Which service would you like to book: {names}?",
+                    {"day": day_label, "time": time_value, "date": resolved_date.isoformat() if resolved_date else None, "complete": False})
         c.state = "booking_confirmation"
         date_phrase=resolved_date.strftime("%A, %B %-d, %Y") if resolved_date else day_label
         return (
             booking_text(c.language,"confirm",date=date_phrase,time=time_value),
             {"day": day_label, "time": time_value, "date": resolved_date.isoformat() if resolved_date else None, "service_id":calendar.get("service_id"), "complete": True},
         )
+
+    if day_label and not time_value and resolved_date and resolved_date < datetime.now(ZoneInfo(tenant.timezone)).date():
+        c.state = "booking_day"
+        return (booking_text(c.language,"past_date"), {"day": day_label, "time": None, "date": resolved_date.isoformat(), "complete": False})
 
     if day_label and not time_value:
         notice = closed_day_notice(db, tenant, resolved_date, c.language, relative_day)
@@ -699,7 +802,7 @@ def booking_reply_from_state(db: Session, tenant: Tenant, c: Conversation, messa
         }
 
     c.state = "booking_day"
-    return "Sure. Which day and time would you prefer?", {
+    return booking_text(c.language, "both"), {
         "day": None, "time": None, "time_hint": time_hint, "date_hint": date_hint, "complete": False
     }
 
@@ -743,11 +846,27 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     policy=tenant_policy(db,tenant_id)
     m=message.casefold()
     greeting_words={"hello","hi","hey","hiya","good morning","good afternoon","good evening","namaste"}
-    current_entities=extract_booking_entities(message, expecting_time=asks_for_time(c.last_assistant_message))
-    has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested"))
+    current_entities=extract_booking_entities(message, expecting_time=expects_time(c.state, c.last_assistant_message, message))
+    has_booking_entities=any(current_entities.get(k) is not None for k in ("day","relative_day","time","time_hint","date_hint")) or bool(current_entities.get("now_requested")) or bool(current_entities.get("any_time"))
+    resume_state=None   # set when a side question interrupts a booking: answer it, then steer back
+    if c.state in ("closed","booking_confirmed","booking_confirmation_requested") and re.search(
+            r"\b(?:another|one more|second|new|again)\b.{0,25}\b(?:appointment|booking|visit|slot)\b|\b(?:appointment|booking|visit)\b.{0,25}\b(?:another|again)\b", m):
+        c.cleared_at=datetime.utcnow(); c.state="information"
     active_booking=c.state.startswith("booking")
+    # A bare "no" / "no no" is answered from context instead of being handed to a human: declining a confirmation,
+    # declining the "would you like to book?" offer, or "nothing else" after the closing line.
+    booking_finished=c.state in ("closed","booking_confirmed","booking_confirmation_requested")
+    decline=None if (is_booking_cancellation(message) and not booking_finished) else decline_kind(c.state,c.last_assistant_message,message)
     if c.state == "new" and any(re.fullmatch(r"\s*"+re.escape(g)+r"\s*[.!?]*\s*",m) for g in greeting_words):
         booking="Hello! How can I help you today?"
+    elif decline:
+        booking=decline_reply(decline,language,tenant.name)
+        if decline=="confirmation":
+            intent="decline"; c.state="booking_day"; c.cleared_at=datetime.utcnow()   # start the slot over, keep nothing stale
+        elif decline=="offer":
+            intent="decline"; c.state="information"
+        else:
+            intent="closing"; c.state="closed"; c.cleared_at=datetime.utcnow()
     elif intent=="language_request":
         requested_language=language_request(message) or "en"
         previous_booking_state=c.state if active_booking else None
@@ -767,13 +886,14 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     elif intent=="human_handoff":
         booking="Of course. I'll arrange for our team to speak with you. I'll pass along what we've discussed so you don't have to repeat it."
         c.state="handoff_requested"
-    elif c.state=="booking_confirmation" and is_explicit_confirmation(message):
+    elif c.state=="booking_confirmation" and (is_explicit_confirmation(message) or is_booking_affirmation(message)):
         prior=previous_booking_context(db,c.id,message)
         booking_date=prior.get("resolved_date") or resolve_booking_date(
             tenant, prior.get("day"), prior.get("relative_day"), prior.get("date_hint")
         )
         prior["time"]=with_meridiem(db,tenant,prior.get("time"),booking_date)
-        calendar=booking_calendar_status(db,tenant,booking_date,prior.get("time"))
+        confirm_service,_ = pick_service(db,tenant,conversation_user_texts(db,c.id,c.cleared_at)+[message])
+        calendar=booking_calendar_status(db,tenant,booking_date,prior.get("time"),confirm_service)
         if booking_date and prior.get("time") and calendar.get("available") is True:
             booking="Perfect. I'll confirm that appointment now."
             booking_data={
@@ -860,6 +980,15 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
             booking_data={"day": None, "time": None, "complete": False}
         elif intent=="voice_feedback":
             booking=voice_feedback_reply(language,agent_gender(db,tenant_id))
+        elif is_hold_on(message):
+            booking=booking_phrase("hold",language)                 # "wait", "one second": no state change, no escalation
+            booking_data={"day": None, "time": None, "complete": False}
+        elif is_start_over(message):
+            booking=booking_phrase("start_over",language)
+            c.state="booking_day"; c.cleared_at=datetime.utcnow()
+            booking_data={"day": None, "time": None, "complete": False}
+        elif c.state=="booking_service":
+            booking, booking_data = booking_reply_from_state(db, tenant, c, message)      # the caller is naming the service
         elif intent=="closing":
             booking="You're welcome. If you need anything else, I'm here to help."
             c.state="closed"
@@ -876,7 +1005,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
                 "te":"సరే. మీరు సిద్ధంగా ఉన్నప్పుడు అపాయింట్‌మెంట్ బుకింగ్ కొనసాగిద్దాం.",
             }.get(language,"Okay. Whenever you're ready, we can continue the appointment booking.")
         elif intent in {"business_hours","pricing","doctor_information","availability","product","date_information","information","clarification"} and not has_booking_entities:
-            c.state="information"
+            resume_state=c.state     # keep the pending booking: answer the question, then ask to continue (previously the booking was dropped)
         else:
             booking, booking_data = booking_reply_from_state(db, tenant, c, message)
     elif intent=="doctor_information":
@@ -924,8 +1053,9 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         contextual_booking = (booking_invitation and (has_booking_entities or invited_yes) and not exploring_hours
                               and intent in {"information","business_hours","closing"})
         implicit_booking = (
-            intent=="information" and bool(current_entities.get("time"))
-            and bool(current_entities.get("day") or current_entities.get("relative_day"))
+            intent=="information"
+            and bool(current_entities.get("day") or current_entities.get("relative_day") or current_entities.get("date_hint"))
+            and (bool(current_entities.get("time")) or (bool(current_entities.get("time_hint")) and not HOURS_CUES.search(m)))
             and capability_enabled(policy,"bookings",True)
         )   # "Monday 9:30 am please" is a booking request even without the word "book"
         if contextual_booking or implicit_booking or intent=="booking" or c.state.startswith("booking"):
@@ -943,7 +1073,9 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         )
         if day_reply:
             intent="business_hours"       # the next bare follow-up ("and Sunday?") keeps this context
-    direct=day_reply or hours or booking or structured_match(db,tenant_id,message)
+    # "any time is fine" inside a booking is an answer to "what time?", not an opening-hours question
+    prefer_booking = bool(booking) and (current_entities.get("any_time") or (active_booking and current_entities.get("time")))
+    direct=day_reply or (booking if prefer_booking else None) or hours or booking or structured_match(db,tenant_id,message)
     semantic=await semantic_match(db,tenant_id,message,language) if not direct else None
     library=semantic["content"] if semantic else (knowledge_match(db,tenant_id,message) if not direct else None)
     faq=faq_match(db,tenant.industry,message,language) if not direct and not library else None
@@ -1028,6 +1160,12 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         if matched:
             matched.usage_count=(matched.usage_count or 0)+1
             matched.last_used_at=__import__("datetime").datetime.utcnow()
+    if resume_state and not handoff_required and provider != "none":
+        c.state=resume_state
+        reply=reply.rstrip()
+        if reply and reply[-1] not in ".!?\u0964":
+            reply+="."
+        reply=reply+" "+resume_prompt(resume_state,language)
     c.intent=intent; c.last_assistant_message=reply; c.updated_at=__import__("datetime").datetime.utcnow()
     logger.info(
         "VOICE_BRAIN_DECISION conversation_id=%s state=%s intent=%s provider=%s retrieval=%s "

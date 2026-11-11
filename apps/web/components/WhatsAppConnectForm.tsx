@@ -23,7 +23,11 @@ export default function WhatsAppConnectForm({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const [openwa, setOpenwa] = useState({ base_url: "", api_key: "", session_id: "" });
+  // OpenWA State
+  const [phone, setPhone] = useState("");
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+  const [bridgeState, setBridgeState] = useState("idle"); 
+
   const [meta, setMeta] = useState({ access_token: "", phone_number_id: "" });
 
   const h = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
@@ -40,18 +44,53 @@ export default function WhatsAppConnectForm({
 
   useEffect(() => { void loadChannels(); }, [tenantId]);
 
-  async function saveOpenWA() {
-    setBusy(true); setStatus("");
+  // Poll for pairing code or connection
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (bridgeState === "pairing_code" || bridgeState === "starting" || bridgeState === "connecting") {
+      interval = setInterval(async () => {
+        try {
+          const r = await fetch(api() + `/api/v1/tenants/${tenantId}/whatsapp/bridge-status`, {
+            headers: h, cache: "no-store"
+          });
+          if (r.ok) {
+            const data = await r.json();
+            if (data.state === "pairing_code" && data.code) {
+              setPairingCode(data.code);
+              setBridgeState("pairing_code");
+            } else if (data.state === "connected") {
+              setBridgeState("connected");
+              setPairingCode(null);
+              clearInterval(interval);
+              await loadChannels(); // Refresh to show as connected
+            } else if (data.state === "disconnected") {
+              setBridgeState("disconnected");
+              setPairingCode(null);
+              clearInterval(interval);
+            } else {
+              setBridgeState(data.state);
+            }
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }, 3000);
+    }
+    return () => clearInterval(interval);
+  }, [bridgeState, tenantId, token]);
+
+  async function connectOpenWA() {
+    if (!phone) return;
+    setBusy(true); setStatus(""); setPairingCode(null); setBridgeState("starting");
     try {
-      const r = await fetch(api() + `/api/v1/tenants/${tenantId}/integrations/whatsapp/openwa`, {
-        method: "PUT", headers: h, body: JSON.stringify(openwa),
+      const r = await fetch(api() + `/api/v1/tenants/${tenantId}/whatsapp/bridge-connect`, {
+        method: "POST", headers: h, body: JSON.stringify({ phone }),
       });
-      const x = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(x?.detail || "OpenWA connect failed");
-      setStatus("OpenWA connected");
-      await loadChannels();
+      if (!r.ok) throw new Error("Failed to start session");
+      setBridgeState("connecting");
     } catch (e: any) {
       setStatus(e.message);
+      setBridgeState("idle");
     }
     setBusy(false);
   }
@@ -156,22 +195,37 @@ export default function WhatsAppConnectForm({
 
       {tab === "openwa" && (
         <div style={{ display: "grid", gap: 12 }}>
-          <label style={lbl}>Base URL
-            <input value={openwa.base_url} onChange={(e) => setOpenwa({ ...openwa, base_url: e.target.value })}
-              placeholder="https://openwa.yourhost.com" style={inp} />
-          </label>
-          <label style={lbl}>API key
-            <input value={openwa.api_key} onChange={(e) => setOpenwa({ ...openwa, api_key: e.target.value })}
-              placeholder="paste API key" style={inp} />
-          </label>
-          <label style={lbl}>Session ID
-            <input value={openwa.session_id} onChange={(e) => setOpenwa({ ...openwa, session_id: e.target.value })}
-              placeholder="session name" style={inp} />
-          </label>
-          <button onClick={saveOpenWA} disabled={busy || !openwa.base_url || !openwa.api_key || !openwa.session_id}
-            style={{ ...btnPrimary, opacity: busy || !openwa.base_url || !openwa.api_key || !openwa.session_id ? 0.6 : 1 }}>
-            {busy ? "Connecting…" : "Connect OpenWA"}
-          </button>
+          {bridgeState === "connected" || channels.openwa?.status === "connected" ? (
+            <div style={{ padding: 16, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, color: "#166534", textAlign: "center" }}>
+              <h3 style={{ margin: "0 0 8px 0" }}>✓ WhatsApp Connected</h3>
+              <p style={{ margin: 0, fontSize: 13 }}>Your bridge is active and ready to receive messages.</p>
+            </div>
+          ) : bridgeState === "pairing_code" ? (
+            <div style={{ padding: 16, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, textAlign: "center" }}>
+              <h3 style={{ margin: "0 0 8px 0", color: "#0f172a" }}>Enter Pairing Code</h3>
+              <p style={{ margin: "0 0 16px 0", fontSize: 13, color: "#64748b" }}>
+                Open WhatsApp → Linked Devices → Link with phone number instead
+              </p>
+              <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 4, color: "#25D366" }}>
+                {pairingCode || "Waiting..."}
+              </div>
+            </div>
+          ) : bridgeState === "starting" || bridgeState === "connecting" ? (
+            <div style={{ padding: 16, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, textAlign: "center", color: "#64748b" }}>
+              Connecting to WhatsApp...
+            </div>
+          ) : (
+            <>
+              <label style={lbl}>WhatsApp Phone Number
+                <input value={phone} onChange={(e) => setPhone(e.target.value)}
+                  placeholder="e.g. 917022147300 (with country code)" style={inp} />
+              </label>
+              <button onClick={connectOpenWA} disabled={busy || !phone}
+                style={{ ...btnPrimary, opacity: busy || !phone ? 0.6 : 1 }}>
+                {busy ? "Starting…" : "Connect OpenWA"}
+              </button>
+            </>
+          )}
         </div>
       )}
 

@@ -12,6 +12,7 @@ the order of the stages and the shape of the reply are unchanged.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import date, datetime, time
 from typing import Mapping, Optional
 
@@ -103,7 +104,7 @@ def spoken_time(text: str) -> Optional[str]:
 # Answers to "What time would you prefer?"
 # --------------------------------------------------------------------------------------
 
-_ASKS_FOR_TIME = re.compile(r"\bwhat time\b|\bwhich time\b|\btime would you (?:prefer|like)\b", re.I)
+_ASKS_FOR_TIME = re.compile(r"\bwhat time\b|\bwhich time\b|\btime would you (?:prefer|like)\b|\bwhich would you prefer\b", re.I)
 _ASKS_FOR_DAY_TOO = re.compile(r"\b(?:day|date) and time\b", re.I)
 _MIN_WORDS = {"five": 5, "ten": 10, "fifteen": 15, "twenty": 20, "twenty five": 25, "twenty-five": 25, "thirty": 30,
               "thirty five": 35, "thirty-five": 35, "forty": 40, "forty five": 45, "forty-five": 45, "fifty": 50,
@@ -113,6 +114,24 @@ _BARE_DIGITS = re.compile(
     r"^(?:at |around |about |by )?(1[0-2]|0?[1-9])(?:[\s.:\-]?([0-5]\d))?\s*(a\.?\s?m\.?|p\.?\s?m\.?)?(?: please| ok| okay| sir| madam)?$")
 _BARE_WORDS = re.compile(
     rf"^(?:at |around |about |by )?({_HOUR_WORD})(?:[\s-]+({_MIN_ANY}))?\s*(a\.?\s?m\.?|p\.?\s?m\.?)?(?: please| ok| okay| sir| madam)?$")
+
+
+_LEAD_STRIP = re.compile(
+    r"^(?:(?:can|could) we (?:do|make it|have it|go for)|(?:please )?(?:change|make|move|shift|switch|set|put)"
+    r"(?: the)?(?: time| appointment| it| this| that)*(?: to| for| at)?|actually|rather|instead|let us do|lets do|let s do|"
+    r"how about|what about|go for|i would like|i d like|id like|i want|i prefer|at|around|about|by)\s+")
+_TRAIL_STRIP = re.compile(r"\s+(?:instead|please|rather|then|sir|madam|ji)$")
+_CHANGE_CUE = re.compile(
+    r"\b(?:change|make it|move|shift|switch|instead|rather|how about|what about|can we do|could we do|let us do|lets do|set it)\b", re.I)
+
+
+def has_change_cue(message: Optional[str]) -> bool:
+    return bool(message and _CHANGE_CUE.search(message))
+
+
+def expects_time(state: Optional[str], last_assistant: Optional[str], message: Optional[str]) -> bool:
+    """Is a bare number in `message` most likely a time? After "What time?" or when changing a proposed slot."""
+    return asks_for_time(last_assistant) or (state == "booking_confirmation" and has_change_cue(message))
 
 
 def asks_for_time(assistant_text: Optional[str]) -> bool:
@@ -130,6 +149,12 @@ def bare_time_answer(text: str) -> Optional[str]:
     """
     v = re.sub(r"[,;!?]", " ", (text or "").casefold()).strip().rstrip(".")
     v = re.sub(r"\s+", " ", v)
+    for _ in range(4):                       # "change the time to 4", "can we do 4", "how about 4 instead"
+        stripped = _LEAD_STRIP.sub("", v)
+        if stripped == v:
+            break
+        v = stripped
+    v = _TRAIL_STRIP.sub("", v)
     if not v:
         return None
     m = _BARE_DIGITS.match(v)
@@ -252,6 +277,80 @@ def describe_day_hours(
 
 
 # --------------------------------------------------------------------------------------
+# Plain refusals: "no", "no no", "nope", "nahi" ... meaning depends on what was just asked
+# --------------------------------------------------------------------------------------
+
+def _plain(text: str) -> str:
+    """Casefold, drop punctuation/symbols (keeps Indic letters and vowel signs), squeeze spaces."""
+    kept = "".join(ch for ch in (text or "").casefold() if not unicodedata.category(ch).startswith(("P", "S")))
+    return re.sub(r"\s+", " ", kept).strip()
+
+
+_NEG = r"(?:no|nope|nah|naa|nahi|nahin|nai|\u0928\u0939\u0940\u0902|\u0928\u0939\u0940|\u0928\u094b|\u0c32\u0c47\u0c26\u0c41|\u0c35\u0c26\u0c4d\u0c26\u0c41)"
+_REFUSAL_RE = re.compile(rf"^(?:{_NEG}(?: {_NEG})*(?: (?:thanks|thank you|please|sir|madam|ji))?|not now|not right now|not really)$")
+_DONE_RE = re.compile(
+    r"^(?:nothing|nothing else|that is all|thats all|i am good|im good|all good|all set|bas|bas itna|bas itna hi|kuch nahi|kuch nahin"
+    r"|\u0915\u0941\u091b \u0928\u0939\u0940\u0902|\u092c\u0938|\u092c\u0938 \u0907\u0924\u0928\u093e)$")
+_OFFERED_MORE_HELP = re.compile(r"anything else|here to help|still there|need anything|how can i help", re.I)
+
+
+def is_refusal(message: str) -> bool:
+    """A bare "no": "no", "no no", "nope", "nahi", "no thanks", "not now" ..."""
+    return bool(_REFUSAL_RE.match(_plain(message)))
+
+
+def is_nothing_else(message: str) -> bool:
+    """"nothing else", "that's all", "I'm good", "bas" ... or any bare refusal."""
+    value = _plain(message)
+    return bool(_REFUSAL_RE.match(value) or _DONE_RE.match(value))
+
+
+def decline_kind(state: Optional[str], last_assistant: Optional[str], message: str) -> Optional[str]:
+    """What a bare refusal means, decided by what the assistant had just said:
+
+    "confirmation"  the caller declined "Shall I confirm that appointment?"
+    "offer"         the caller declined "Would you like to book an appointment?"
+    "nothing_else"  the caller has nothing more to ask after "...anything else..." / a finished call
+    None            no special meaning: the normal ladder decides
+    """
+    refusal, done = is_refusal(message), is_nothing_else(message)
+    if not done:
+        return None
+    last = (last_assistant or "").casefold()
+    if refusal and state == "booking_confirmation":
+        return "confirmation"
+    if refusal and "book an appointment" in last:
+        return "offer"
+    if state in ("closed", "booking_confirmed") or _OFFERED_MORE_HELP.search(last):
+        return "nothing_else"
+    return None
+
+
+_DECLINE_TEXT = {
+    "en": {
+        "confirmation": "No problem. I haven't booked anything. Which day and time would you prefer instead?",
+        "offer": "No problem. Is there anything else I can help you with?",
+        "nothing_else": "Alright, thank you for calling {name}. Have a great day!",
+    },
+    "hi": {
+        "confirmation": "\u0915\u094b\u0908 \u092c\u093e\u0924 \u0928\u0939\u0940\u0902, \u092e\u0948\u0902\u0928\u0947 \u0905\u092d\u0940 \u0915\u0941\u091b \u092c\u0941\u0915 \u0928\u0939\u0940\u0902 \u0915\u093f\u092f\u093e \u0939\u0948\u0964 \u0906\u092a \u0915\u093f\u0938 \u0926\u093f\u0928 \u0914\u0930 \u0915\u093f\u0938 \u0938\u092e\u092f \u0906\u0928\u093e \u091a\u093e\u0939\u0947\u0902\u0917\u0947?",
+        "offer": "\u0915\u094b\u0908 \u092c\u093e\u0924 \u0928\u0939\u0940\u0902\u0964 \u0915\u094d\u092f\u093e \u092e\u0948\u0902 \u0906\u092a\u0915\u0940 \u0914\u0930 \u0915\u094b\u0908 \u092e\u0926\u0926 \u0915\u0930 \u0938\u0915\u0924\u093e \u0939\u0942\u0901?",
+        "nothing_else": "\u0920\u0940\u0915 \u0939\u0948, {name} \u0915\u094b \u0915\u0949\u0932 \u0915\u0930\u0928\u0947 \u0915\u0947 \u0932\u093f\u090f \u0927\u0928\u094d\u092f\u0935\u093e\u0926\u0964 \u0906\u092a\u0915\u093e \u0926\u093f\u0928 \u0936\u0941\u092d \u0939\u094b!",
+    },
+    "te": {
+        "confirmation": "\u0c2a\u0c30\u0c4d\u0c35\u0c3e\u0c32\u0c47\u0c26\u0c41, \u0c28\u0c47\u0c28\u0c41 \u0c07\u0c02\u0c15\u0c3e \u0c0f\u0c26\u0c40 \u0c2c\u0c41\u0c15\u0c4d \u0c1a\u0c47\u0c2f\u0c32\u0c47\u0c26\u0c41. \u0c0f \u0c30\u0c4b\u0c1c\u0c41 \u0c2e\u0c30\u0c3f\u0c2f\u0c41 \u0c0f \u0c38\u0c2e\u0c2f\u0c02 \u0c15\u0c3e\u0c35\u0c3e\u0c32\u0c3f?",
+        "offer": "\u0c2a\u0c30\u0c4d\u0c35\u0c3e\u0c32\u0c47\u0c26\u0c41. \u0c07\u0c02\u0c15\u0c47\u0c2e\u0c48\u0c28\u0c3e \u0c38\u0c39\u0c3e\u0c2f\u0c02 \u0c15\u0c3e\u0c35\u0c3e\u0c32\u0c3e?",
+        "nothing_else": "\u0c38\u0c30\u0c47, {name} \u0c15\u0c41 \u0c15\u0c3e\u0c32\u0c4d \u0c1a\u0c47\u0c38\u0c3f\u0c28\u0c02\u0c26\u0c41\u0c15\u0c41 \u0c27\u0c28\u0c4d\u0c2f\u0c35\u0c3e\u0c26\u0c3e\u0c32\u0c41. \u0c2e\u0c40 \u0c30\u0c4b\u0c1c\u0c41 \u0c36\u0c41\u0c2d\u0c02\u0c17\u0c3e \u0c09\u0c02\u0c21\u0c3e\u0c32\u0c3f!",
+    },
+}
+
+
+def decline_reply(kind: str, language: str, business_name: str) -> str:
+    table = _DECLINE_TEXT.get(language, _DECLINE_TEXT["en"])
+    return table[kind].format(name=business_name or "us")
+
+
+# --------------------------------------------------------------------------------------
 # What counts as a bare "day" follow-up
 # --------------------------------------------------------------------------------------
 
@@ -281,3 +380,141 @@ def is_day_followup(message: str) -> bool:
         return len(words) <= 3
     leftover = [w for w in words if w not in _FILLER and w not in _DAYWORDS]
     return not leftover
+
+
+
+# --------------------------------------------------------------------------------------
+# Booking conversation helpers: natural "yes", "wait", "start over", dates, and resuming after a question
+# --------------------------------------------------------------------------------------
+
+_YES_STRONG = {
+    "yes", "yeah", "yep", "yup", "yea", "sure", "okay", "ok", "alright", "correct", "right", "perfect", "fine",
+    "great", "absolutely", "definitely", "certainly", "bilkul", "haan", "han", "avunu", "avunandi", "sare", "sari",
+    "theek", "thik", "soundsgood", "thatsright", "thatworks", "bookit", "confirm", "confirmed", "goahead", "doit",
+    "\u0939\u093e\u0901", "\u0939\u093e\u0902", "\u0920\u0940\u0915", "\u092c\u093f\u0932\u094d\u0915\u0941\u0932", "\u0915\u0928\u094d\u092b\u0930\u094d\u092e",
+    "\u0c05\u0c35\u0c41\u0c28\u0c41", "\u0c38\u0c30\u0c47", "\u0c13\u0c15\u0c47", "\u0c05\u0c32\u0c3e\u0c17\u0c47",
+}
+_YES_FILLER = {"please", "then", "now", "kindly", "ji", "sir", "madam", "it", "this", "that", "one", "is", "the",
+               "appointment", "booking", "hai", "ha", "do", "go", "ahead", "book", "and", "yes", "so",
+               "\u091c\u0940", "\u0939\u0948", "\u0915\u0930\u094b", "\u0915\u0930", "\u0926\u094b", "\u092c\u0941\u0915",
+               "\u0c1a\u0c47\u0c2f\u0c02\u0c21\u0c3f", "\u0c1a\u0c47\u0c2f\u0c3f", "\u0c2c\u0c41\u0c15\u0c4d"}
+_PHRASES = (("sounds good", "soundsgood"), ("thats right", "thatsright"), ("that is right", "thatsright"),
+            ("that works", "thatworks"), ("go ahead", "goahead"), ("do it", "doit"), ("book it", "bookit"),
+            ("theek hai", "theek"), ("thik hai", "theek"), ("\u0920\u0940\u0915 \u0939\u0948", "\u0920\u0940\u0915"))
+
+
+def is_booking_affirmation(message: str) -> bool:
+    """A natural "yes" to "Shall I confirm that appointment?": "yeah sure", "correct", "sounds good", "book it" ...
+
+    Every word must be an agreement or a harmless filler, so "yes but make it 3 pm" and "yes maybe later" are NOT accepted.
+    """
+    value = _plain(message)
+    if not value or len(value) > 60:
+        return False
+    for phrase, token in _PHRASES:
+        value = value.replace(phrase, token)
+    words = value.split()
+    if not words or len(words) > 6:
+        return False
+    return all(w in _YES_STRONG or w in _YES_FILLER for w in words) and any(w in _YES_STRONG for w in words)
+
+
+_HOLD_RE = re.compile(
+    r"^(?:(?:ok|okay|wait|hold on|hang on|just|one|give me|let me|ek|ruko)(?: (?:a|an|the|one|just))*"
+    r"(?: (?:second|sec|minute|min|moment|check|think|please|ek minute|one second))*|wait|wait please|hold on|hold on please|"
+    r"one moment|one second|one minute|just a moment|just a second|just a minute|give me a (?:second|minute|moment)|"
+    r"let me (?:check|think)|let me see|ek minute|ek second|ruko|ruko zara|\u0930\u0941\u0915\u094b|\u090f\u0915 \u092e\u093f\u0928\u091f|"
+    r"\u0c12\u0c15\u0c4d\u0c15 \u0c28\u0c3f\u0c2e\u0c3f\u0c37\u0c02|\u0c06\u0c17\u0c02\u0c21\u0c3f)$")
+_START_OVER_RE = re.compile(
+    r"^(?:(?:please )?(?:let us |lets |let s )?(?:start|begin) (?:over|again|from the beginning|from scratch)|"
+    r"(?:from )?(?:the )?(?:beginning|scratch)|reset|restart|redo|start over please|"
+    r"\u092b\u093f\u0930 \u0938\u0947 \u0936\u0941\u0930\u0942|\u0c2e\u0c33\u0c4d\u0c33\u0c40 \u0c2e\u0c4a\u0c26\u0c32\u0c41)$")
+
+
+def is_hold_on(message: str) -> bool:
+    """"wait", "hold on", "one second", "let me check" ..."""
+    value = _plain(message)
+    return bool(value) and len(value) <= 40 and bool(_HOLD_RE.match(value))
+
+
+def is_start_over(message: str) -> bool:
+    return bool(_START_OVER_RE.match(_plain(message)))
+
+
+_BOOKING_TEXT = {
+    "en": {
+        "hold": "Sure, take your time. I'm here when you're ready.",
+        "start_over": "No problem, let's start again. Which day and time would you prefer?",
+        "resume_booking_confirmation": "Now, shall I go ahead and confirm that appointment?",
+        "resume_booking_day": "Which day and time would you prefer for your appointment?",
+        "resume_booking_time_clarification": "What time would you prefer for your appointment?",
+        "resume_booking_conflict": "Would you like to pick another time for your appointment?",
+        "resume_default": "Shall we continue with your appointment?",
+    },
+    "hi": {
+        "hold": "\u091c\u093c\u0930\u0942\u0930, \u0906\u092a \u0906\u0930\u093e\u092e \u0938\u0947 \u092c\u0924\u093e\u0907\u090f\u0964 \u092e\u0948\u0902 \u092f\u0939\u0940\u0902 \u0939\u0942\u0901\u0964",
+        "start_over": "\u0920\u0940\u0915 \u0939\u0948, \u0939\u092e \u092b\u093f\u0930 \u0938\u0947 \u0936\u0941\u0930\u0942 \u0915\u0930\u0924\u0947 \u0939\u0948\u0902\u0964 \u0906\u092a \u0915\u093f\u0938 \u0926\u093f\u0928 \u0914\u0930 \u0915\u093f\u0938 \u0938\u092e\u092f \u0906\u0928\u093e \u091a\u093e\u0939\u0947\u0902\u0917\u0947?",
+        "resume_booking_confirmation": "\u0905\u092c, \u0915\u094d\u092f\u093e \u092e\u0948\u0902 \u0905\u092a\u0949\u0907\u0902\u091f\u092e\u0947\u0902\u091f \u0915\u0928\u094d\u092b\u0930\u094d\u092e \u0915\u0930 \u0926\u0942\u0901?",
+        "resume_default": "\u0915\u094d\u092f\u093e \u0939\u092e \u0906\u092a\u0915\u093e \u0905\u092a\u0949\u0907\u0902\u091f\u092e\u0947\u0902\u091f \u091c\u093e\u0930\u0940 \u0930\u0916\u0947\u0902?",
+    },
+    "te": {
+        "hold": "\u0c24\u0c2a\u0c4d\u0c2a\u0c15\u0c41\u0c02\u0c21\u0c3e, \u0c28\u0c46\u0c2e\u0c4d\u0c2e\u0c26\u0c3f\u0c17\u0c3e \u0c1a\u0c46\u0c2a\u0c4d\u0c2a\u0c02\u0c21\u0c3f. \u0c28\u0c47\u0c28\u0c41 \u0c07\u0c15\u0c4d\u0c15\u0c21\u0c47 \u0c09\u0c28\u0c4d\u0c28\u0c3e\u0c28\u0c41.",
+        "start_over": "\u0c38\u0c30\u0c47, \u0c2e\u0c33\u0c4d\u0c33\u0c40 \u0c2e\u0c4a\u0c26\u0c32\u0c41\u0c2a\u0c46\u0c1f\u0c4d\u0c1f\u0c4d\u0c26\u0c3e\u0c02. \u0c0f \u0c30\u0c4b\u0c1c\u0c41 \u0c2e\u0c30\u0c3f\u0c2f\u0c41 \u0c0f \u0c38\u0c2e\u0c2f\u0c02 \u0c15\u0c3e\u0c35\u0c3e\u0c32\u0c3f?",
+        "resume_booking_confirmation": "\u0c07\u0c2a\u0c4d\u0c2a\u0c41\u0c21\u0c41, \u0c05\u0c2a\u0c3e\u0c2f\u0c3f\u0c02\u0c1f\u0c4d\u200c\u0c2e\u0c46\u0c02\u0c1f\u0c4d\u200c\u0c28\u0c3f \u0c15\u0c28\u0c4d\u0c2b\u0c30\u0c4d\u0c2e\u0c4d \u0c1a\u0c47\u0c2f\u0c2e\u0c02\u0c1f\u0c3e\u0c30\u0c3e?",
+        "resume_default": "\u0c2e\u0c40 \u0c05\u0c2a\u0c3e\u0c2f\u0c3f\u0c02\u0c1f\u0c4d\u200c\u0c2e\u0c46\u0c02\u0c1f\u0c4d\u200c\u0c28\u0c41 \u0c15\u0c4a\u0c28\u0c38\u0c3e\u0c17\u0c3f\u0c26\u0c4d\u0c26\u0c3e\u0c2e\u0c3e?",
+    },
+}
+
+
+def booking_phrase(key: str, language: str) -> str:
+    table = _BOOKING_TEXT.get(language, _BOOKING_TEXT["en"])
+    return table.get(key) or _BOOKING_TEXT["en"].get(key) or _BOOKING_TEXT["en"]["resume_default"]
+
+
+def resume_prompt(state: Optional[str], language: str) -> str:
+    """After answering a side question in the middle of a booking, steer back to where the booking stopped."""
+    key = "resume_" + (state or "")
+    table = _BOOKING_TEXT.get(language, _BOOKING_TEXT["en"])
+    return table.get(key) or _BOOKING_TEXT["en"].get(key) or table.get("resume_default") or _BOOKING_TEXT["en"]["resume_default"]
+
+
+# ---- dates: "the 20th", "October 22", "22 Oct", "20/10" ------------------------------------------------
+
+_MONTHS = {"january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3, "april": 4, "apr": 4, "may": 5,
+           "june": 6, "jun": 6, "july": 7, "jul": 7, "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+           "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12}
+_MON = "|".join(sorted(_MONTHS, key=len, reverse=True))
+_DOM = r"(3[01]|[12]\d|0?[1-9])"
+_DAY_THEN_MONTH = re.compile(rf"\b{_DOM}(?:st|nd|rd|th)?\s+(?:of\s+)?({_MON})\b")
+_MONTH_THEN_DAY = re.compile(rf"\b({_MON})\s+(?:the\s+)?{_DOM}(?:st|nd|rd|th)?\b(?!\s*(?::|am\b|pm\b|a\.m|p\.m))")
+_SLASH_DATE = re.compile(rf"\b{_DOM}/(1[0-2]|0?[1-9])(?:/\d{{2,4}})?\b")
+_ORDINAL = re.compile(rf"\b(?:on|for|by|the)\s+{_DOM}(?:st|nd|rd|th)\b(?!\s+(?:floor|time|child|kid|person|visit|one|row|room|block|stage|year|class|grade|standard|appointment))")
+_ON_DAY = re.compile(rf"\b(?:date|day|on)\s+(?:the\s+)?{_DOM}\b(?!\s*(?::|am\b|pm\b|a\.m|p\.m|o'?clock))")
+
+
+def parse_date_phrase(text: str):
+    """Return (month, day) for "October 22" / "22nd of Oct" / "20/10", an int day-of-month for "the 20th", else None."""
+    v = (text or "").casefold()
+    m = _DAY_THEN_MONTH.search(v)
+    if m:
+        return (_MONTHS[m.group(2)], int(m.group(1)))
+    m = _MONTH_THEN_DAY.search(v)
+    if m:
+        return (_MONTHS[m.group(1)], int(m.group(2)))
+    m = _SLASH_DATE.search(v)
+    if m:
+        return (int(m.group(2)), int(m.group(1)))
+    m = _ORDINAL.search(v)
+    if m:
+        return int(m.group(1))
+    m = _ON_DAY.search(v)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def format_slot_list(slots: list) -> str:
+    """["2:30 PM", "3:00 PM"] -> "2:30 PM and 3:00 PM"."""
+    if len(slots) <= 1:
+        return "".join(slots)
+    return ", ".join(slots[:-1]) + " and " + slots[-1]
