@@ -1,7 +1,7 @@
 """Tenant-scoped AEO/GEO profile, provider visibility, and audit APIs.
 
 AI provider results are recorded as bounded observations, not universal rankings.
-Website fetching remains disabled until its connection-time SSRF controls are verified.
+Website auditing uses a connection-pinned public-website fetch boundary and remains subject to staging release gates.
 """
 import re, json, socket, ipaddress
 from datetime import datetime
