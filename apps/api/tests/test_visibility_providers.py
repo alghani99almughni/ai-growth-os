@@ -183,7 +183,7 @@ def test_provider_requests_use_expected_official_endpoints_and_auth(monkeypatch)
         assert auth_header in captured["kwargs"]["headers"]
         assert "secret-test-key" in captured["kwargs"]["headers"][auth_header]
         assert result["answer"]
-        assert result["method"] == ("search_grounded" if provider in ("gemini", "perplexity") else "model_sampled")
+        assert result["method"] == "model_sampled"  # No provider-supplied sources in this fixture.
 
 
 def test_provider_http_error_does_not_expose_response_body(monkeypatch):
@@ -280,3 +280,33 @@ def test_search_capable_provider_with_sources_is_search_grounded(monkeypatch):
     result = asyncio.run(providers.run_provider("perplexity", "test-key", "sonar-test", "test prompt"))
     assert result["method"] == "search_grounded"
     assert result["citations"] == [{"url": "https://example.com/source", "title": ""}]
+
+
+def test_gemini_with_grounding_sources_is_search_grounded(monkeypatch):
+    import asyncio
+    import app.visibility_providers as providers
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "candidates": [{"content": {"parts": [{"text": "A sourced Gemini answer."}]}}],
+                "groundingMetadata": {
+                    "groundingChunks": [{"web": {"uri": "https://example.com/source", "title": "Source"}}]
+                },
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(providers.httpx, "AsyncClient", FakeClient)
+    result = asyncio.run(providers.run_provider("gemini", "test-key", "gemini-test", "test prompt"))
+    assert result["method"] == "search_grounded"
+    assert result["citations"] == [{"url": "https://example.com/source", "title": "Source"}]
