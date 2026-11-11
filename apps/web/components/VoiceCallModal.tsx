@@ -233,6 +233,10 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   const langCandidateRef = useRef<string | null>(null);
   const ttsLangRef = useRef("en");     // language of the brain's last reply (voice for speech out)
   const repeatRef = useRef(0);
+  const micPermissionRequestedRef = useRef(false);
+  const srRestartTimerRef = useRef<number | null>(null);
+  const srRunningRef = useRef(false);
+  const srGenerationRef = useRef(0);
 
   const go = (p: Phase) => { phaseRef.current = p; setPhase(p); };
 
@@ -345,6 +349,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
 
   const startListening = () => {
     if (!activeRef.current || phaseRef.current !== "brain" || speakingRef.current || busyRef.current || mutedRef.current) return;
+    srGenerationRef.current += 1;
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) { setMicOk(false); return; }
     if (!recRef.current) {
@@ -365,11 +370,26 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
         }
         if (interim.trim()) queueInterim(interim);
       };
+      rec.onstart = () => { srRunningRef.current = true; setMicOk(true); };
       rec.onend = () => { window.setTimeout(startListening, 250); };
       rec.onerror = (ev: any) => {
-        if (ev?.error === "not-allowed" || ev?.error === "service-not-allowed") {
+        const reason = String(ev?.error || "");
+        srRunningRef.current = false;
+        if (reason === "not-allowed" || reason === "service-not-allowed") {
           setMicOk(false);
-          setError("Microphone is blocked. You can type your message below instead.");
+          setError("Microphone access is blocked. Please allow Microphone for this site.");
+          return;
+        }
+        if (reason === "audio-capture" || reason === "network" || reason === "no-speech" || reason === "aborted") {
+          setMicOk(reason !== "audio-capture" || !!micStreamRef.current);
+          if (activeRef.current && phaseRef.current === "brain" && !mutedRef.current && !busyRef.current) {
+            if (srRestartTimerRef.current) window.clearTimeout(srRestartTimerRef.current);
+            const g = srGenerationRef.current;
+            srRestartTimerRef.current = window.setTimeout(() => {
+              srRestartTimerRef.current = null;
+              if (g === srGenerationRef.current) startListening();
+            }, 500);
+          }
         }
       };
       recRef.current = rec;
@@ -507,6 +527,7 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   /* ---------- media helpers (Layers 2 and 3) ---------- */
   const getMic = async (): Promise<MediaStream> => {
     if (micStreamRef.current) return micStreamRef.current;
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone capture is not supported by this browser.");
     const s = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
@@ -865,6 +886,7 @@ ${recent}`,
     autoStartedRef.current = true;
     endRequestRef.current = null;
     setError("");
+    micPermissionRequestedRef.current = false;
     // Every new call starts with a clean conversation boundary.
     convRef.current = null;
     if (nm.trim().length < 1 || ph.replace(/\D/g, "").length < 5) {
@@ -893,6 +915,18 @@ ${recent}`,
       if (!res.ok) throw new Error(String(data.detail || "Unable to start the call."));
       callRef.current = { call_id: data.call_id, customer_id: data.customer_id };
       if (data.customer_id) { try { onCustomerIdentified?.(String(data.customer_id)); } catch {} }
+      // Keep a single browser-owned microphone stream alive for the duration of the call.
+      // This keeps the permission/capture path stable while SpeechRecognition starts/stops internally.
+      if (!micPermissionRequestedRef.current) {
+        micPermissionRequestedRef.current = true;
+        try {
+          await getMic();
+          setMicOk(true);
+        } catch {
+          setMicOk(false);
+          setError("Microphone access is unavailable. Please allow Microphone for this site, then use the typed fallback if needed.");
+        }
+      }
       try {
         if (data.customer_id) localStorage.setItem(`cust:${slug}:id`, data.customer_id);
         localStorage.setItem(`cust:${slug}:name`, nm.trim());
