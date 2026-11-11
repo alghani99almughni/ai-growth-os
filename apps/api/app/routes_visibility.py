@@ -18,6 +18,7 @@ from .website_audit_fetcher import fetch_public_homepage, UnsafeWebsiteTarget, W
 
 # Imported by main.py at the end of module initialization to avoid an import cycle.
 from .main import get_current_user, get_db, require_tenant
+from .visibility_db import get_visibility_db
 
 router = APIRouter(prefix="/api/v1/tenants/{tenant_id}/visibility", tags=["AEO/GEO Visibility"])
 
@@ -81,13 +82,13 @@ def _brand_out(row):
             "locale": row.locale, "created_at": row.created_at.isoformat() if row.created_at else None}
 
 @router.get("/brand")
-def get_brand(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_brand(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     row = db.scalar(select(VisibilityBrand).where(VisibilityBrand.tenant_id == tenant_id).order_by(VisibilityBrand.created_at.asc()))
     return {"brand": _brand_out(row) if row else None}
 
 @router.put("/brand")
-def put_brand(tenant_id: str, payload: BrandPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def put_brand(tenant_id: str, payload: BrandPayload, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     row = db.scalar(select(VisibilityBrand).where(VisibilityBrand.tenant_id == tenant_id).order_by(VisibilityBrand.created_at.asc()))
     if row is None:
@@ -102,20 +103,20 @@ def put_brand(tenant_id: str, payload: BrandPayload, user: User = Depends(get_cu
     return {"brand": _brand_out(row)}
 
 @router.get("/competitors")
-def list_competitors(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_competitors(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     rows = db.scalars(select(VisibilityCompetitor).where(VisibilityCompetitor.tenant_id == tenant_id).order_by(VisibilityCompetitor.created_at.desc()).limit(100)).all()
     return {"items": [{"id": r.id, "name": r.name, "domain": r.domain, "notes": r.notes, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]}
 
 @router.post("/competitors", status_code=201)
-def add_competitor(tenant_id: str, payload: CompetitorPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_competitor(tenant_id: str, payload: CompetitorPayload, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     row = VisibilityCompetitor(tenant_id=tenant_id, name=payload.name.strip(), domain=_domain(payload.domain), notes=payload.notes.strip())
     db.add(row); db.commit(); db.refresh(row)
     return {"id": row.id, "name": row.name, "domain": row.domain, "notes": row.notes}
 
 @router.delete("/competitors/{competitor_id}")
-def delete_competitor(tenant_id: str, competitor_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def delete_competitor(tenant_id: str, competitor_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     row = db.scalar(select(VisibilityCompetitor).where(VisibilityCompetitor.id == competitor_id, VisibilityCompetitor.tenant_id == tenant_id))
     if not row:
@@ -124,13 +125,13 @@ def delete_competitor(tenant_id: str, competitor_id: str, user: User = Depends(g
     return {"deleted": True}
 
 @router.get("/queries")
-def list_queries(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_queries(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     rows = db.scalars(select(VisibilityQuery).where(VisibilityQuery.tenant_id == tenant_id).order_by(VisibilityQuery.created_at.desc()).limit(200)).all()
     return {"items": [{"id": r.id, "query_text": r.query_text, "intent": r.intent, "locale": r.locale, "topic": r.topic, "is_active": r.is_active, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]}
 
 @router.post("/queries", status_code=201)
-def add_query(tenant_id: str, payload: QueryPayload, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def add_query(tenant_id: str, payload: QueryPayload, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     row = VisibilityQuery(tenant_id=tenant_id, query_text=payload.query_text.strip(), intent=payload.intent, locale=payload.locale.strip(), topic=payload.topic.strip(), is_active=payload.is_active)
     db.add(row); db.commit(); db.refresh(row)
@@ -190,7 +191,7 @@ def _validated_public_url(value: str) -> str:
     return urlunsplit((parts.scheme, host, path, parts.query, ""))
 
 @router.post("/audits", status_code=201)
-def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     """Run a single-page audit through the connection-pinned public-website fetch boundary."""
     _authorize(user, tenant_id)
     brand = db.scalar(select(VisibilityBrand).where(
@@ -286,7 +287,7 @@ def run_website_audit(tenant_id: str, user: User = Depends(get_current_user), db
     }
 
 @router.get("/audits")
-def list_website_audits(tenant_id: str, limit: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def list_website_audits(tenant_id: str, limit: int = 20, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     rows = db.scalars(select(VisibilityAudit).where(VisibilityAudit.tenant_id == tenant_id)
                       .order_by(VisibilityAudit.created_at.desc()).limit(min(max(limit, 1), 50))).all()
@@ -295,7 +296,7 @@ def list_website_audits(tenant_id: str, limit: int = 20, user: User = Depends(ge
                       "created_at":r.created_at.isoformat() if r.created_at else None} for r in rows]}
 
 @router.get("/audits/{audit_id}")
-def get_website_audit(tenant_id: str, audit_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_website_audit(tenant_id: str, audit_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     record = db.scalar(select(VisibilityAudit).where(VisibilityAudit.id == audit_id, VisibilityAudit.tenant_id == tenant_id))
     if not record: raise HTTPException(404, "Audit not found")
@@ -342,7 +343,8 @@ def _provider_config(provider: str, tenant_id: str, db: Session):
 
 @router.post("/checks/{query_id}", status_code=201)
 async def run_visibility_checks(tenant_id: str, query_id: str, payload: VisibilityCheckPayload,
-                                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+                                user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db),
+                                platform_db: Session = Depends(get_db)):
     """Run a saved query against configured providers and persist evidence per provider."""
     _authorize(user, tenant_id)
     query = db.scalar(select(VisibilityQuery).where(
@@ -359,7 +361,7 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
         raise HTTPException(422, "Supported providers: gemini, perplexity, grok, claude")
     results = []
     for provider in providers:
-        api_key, model = _provider_config(provider, tenant_id, db)
+        api_key, model = _provider_config(provider, tenant_id, platform_db)
         run = VisibilityCheckRun(tenant_id=tenant_id, query_id=query.id, provider=provider,
                                  measurement_method="search_grounded" if provider in ("gemini", "perplexity") else "model_sampled",
                                  status="running", started_at=datetime.utcnow())
@@ -414,7 +416,7 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
 
 @router.get("/checks")
 def list_visibility_checks(tenant_id: str, limit: int = 50,
-                           user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+                           user: User = Depends(get_current_user), db: Session = Depends(get_visibility_db)):
     _authorize(user, tenant_id)
     rows = db.scalars(select(VisibilityCheckRun).where(
         VisibilityCheckRun.tenant_id == tenant_id
