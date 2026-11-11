@@ -32,30 +32,8 @@ def _normalize_confirmation(text: str) -> str:
     return " ".join(value.strip().split())
 
 
-_AFFIRM_LEAD = r"(?:yes|yeah|yep|yup|sure|okay|ok|alright|absolutely|definitely|please)"
-_AFFIRM_OBJ = r"(?:it|that|this|that appointment|this appointment|the appointment|my appointment)"
-_AFFIRM_ACTION = (
-    r"(?:go ahead(?: and (?:cancel|reschedule|change|move)(?: " + _AFFIRM_OBJ + r")?)?|do it|confirm(?: it)?|"
-    r"(?:cancel|reschedule|change|move) " + _AFFIRM_OBJ + r"|that is (?:right|correct)|thats (?:right|correct))"
-)
-# "yes cancel it", "ok go ahead", "please cancel my appointment", "yes please reschedule it" ...
-_AFFIRM_RE = re.compile(r"^(?:" + _AFFIRM_LEAD + r" )*" + _AFFIRM_ACTION + r"(?: please)?$")
-# Whole short refusals only: "no", "no keep it", "dont cancel", "do not cancel it", "never mind", "keep it", "stop".
-# A mixed answer such as "no, actually yes" is deliberately NOT a refusal.
-_NEG_OBJ = r"(?: it| that| this| my appointment| the appointment)?"
-_NEGATIVE_RE = re.compile(
-    r"^(?:(?:no|nope|nah)(?: thanks| thank you| please)?"
-    r"|(?:(?:no|nope|nah) )?(?:dont|do not)(?: cancel)?" + _NEG_OBJ +
-    r"|(?:(?:no|nope|nah) )?(?:never ?mind|keep|leave|stop)" + _NEG_OBJ + r")$"
-)
-
-
 def _affirmative(text: str) -> bool:
     value = _normalize_confirmation(text)
-    if _negative(text):
-        return False
-    if _AFFIRM_RE.match(value):
-        return True
     return value in {
         "yes", "yes please", "yeah", "yep", "sure", "confirm", "confirmed",
         "okay", "ok", "please do", "go ahead", "haan", "han", "ji", "theek hai",
@@ -68,8 +46,6 @@ def _affirmative(text: str) -> bool:
 
 def _negative(text: str) -> bool:
     value = _normalize_confirmation(text)
-    if _NEGATIVE_RE.match(value):
-        return True
     return value in {
         "no", "no thanks", "don't", "do not", "cancel that", "leave it",
         "not now", "no please", "nahi", "nahin", "नहीं", "मत करो",
@@ -77,17 +53,6 @@ def _negative(text: str) -> bool:
         "না", "না ধন্যবাদ", "না", "ના", "ના જોઈએ", "ਨਹੀਂ", "ਨਹੀਂ ਜੀ",
         "ନା", "ନାହିଁ",
     }
-
-
-# "what time is my appointment", "when is my booking", "do I have an appointment", "am I booked", "is my appointment confirmed"
-_VIEW_RE = re.compile(
-    r"\b(?:what|which) (?:time|day|date)\b.*\b(?:my )?(?:appointment|booking|slot|visit)\b"
-    r"|\bwhen (?:is|was|will)\b.*\b(?:my )?(?:appointment|booking|slot|visit)\b"
-    r"|\bdo i have (?:an? )?(?:upcoming )?(?:appointment|booking)\b"
-    r"|\b(?:check|confirm|show|tell me about|details of|status of) my (?:appointment|booking)\b"
-    r"|\bam i (?:booked|scheduled)\b"
-    r"|\bmy (?:appointment|booking) (?:details|status|time|timing)\b"
-    r"|\bis my (?:appointment|booking) (?:confirmed|booked)\b")
 
 
 def _action_intent(text: str) -> str | None:
@@ -111,8 +76,6 @@ def _action_intent(text: str) -> str | None:
         return "reschedule"
     if cancel:
         return "cancel"
-    if _VIEW_RE.search(value):
-        return "view"
     return None
 
 
@@ -197,10 +160,8 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                                     message: str, prior_state: str) -> dict | None:
     """Return an override response when an appointment action is in progress."""
     if not call or not call.customer_id:
-        action = _action_intent(message)
-        if action:
-            what = "look up" if action == "view" else "change"
-            return {"reply": f"Before I {what} an appointment, I need to verify your name and mobile number.",
+        if _action_intent(message):
+            return {"reply": "Before I change an appointment, I need to verify your name and mobile number.",
                     "appointment_action": {"status": "identity_required"}}
         return None
     customer = db.get(Customer, call.customer_id)
@@ -406,21 +367,6 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
     intent = _action_intent(message)
     if not intent:
         return None
-    if intent == "view":
-        # Read-only: answer from the customer's real appointments and leave any booking in progress untouched.
-        rows = _upcoming(db, tenant.id, customer.id)
-        if conversation and prior_state:
-            conversation.state = prior_state
-        if rows:
-            first = rows[0]
-            word = "confirmed" if first.status == "confirmed" else "pending confirmation"
-            more = f" You have {len(rows) - 1} more upcoming appointment{'s' if len(rows) > 2 else ''} as well." if len(rows) > 1 else ""
-            return {"reply": f"Your appointment is on {_when(first, tenant)}, and it is {word}.{more}",
-                    "appointment_action": {"status": "info", "action": "view", "appointment_id": first.id}}
-        if state.startswith("booking"):
-            return None           # nothing booked yet: the booking flow answers (it is still proposing a slot)
-        return {"reply": "I couldn't find an upcoming appointment for this mobile number.",
-                "appointment_action": {"status": "not_found", "action": "view"}}
     # Preserve the existing ability to stop an unfinished booking conversation.
     # Only booking_confirmed means an appointment should be looked up for cancellation.
     if intent == "cancel" and state.startswith("booking") and state != "booking_confirmed":
@@ -429,8 +375,6 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
         return {"reply": "Okay, I've stopped the appointment booking process. No appointment was created from this unfinished booking.",
                 "appointment_action": {"status": "booking_stopped", "action": "cancel"}}
     rows = _upcoming(db, tenant.id, customer.id)
-    if not rows and intent == "reschedule" and state.startswith("booking") and state != "booking_confirmed":
-        return None   # "change the time to 4" while a new booking is being proposed edits THAT proposal, not an existing appointment
     if not rows:
         return {"reply": "I couldn't find an active upcoming appointment for this mobile number. I haven't changed anything.",
                 "appointment_action": {"status": "not_found", "action": intent}}
