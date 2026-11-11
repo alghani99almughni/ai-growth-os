@@ -12,6 +12,7 @@ export default function VisibilityWorkspace() {
   const [queries, setQueries] = useState<any[]>([]);
   const [audits, setAudits] = useState<any[]>([]);
   const [visibilityRuns, setVisibilityRuns] = useState<any[]>([]);
+  const [latestCheck, setLatestCheck] = useState<any>(null);
   const [checkBusy, setCheckBusy] = useState<string | null>(null);
   const [gscBusy, setGscBusy] = useState(false);
   const [gscForm, setGscForm] = useState({ site_url: "", start_date: "", end_date: "" });
@@ -90,6 +91,7 @@ export default function VisibilityWorkspace() {
       const r = await fetch(endpoint(tenant.id, "checks/" + encodeURIComponent(queryId)), { method: "POST", headers: headers(), body: JSON.stringify({ providers: ["gemini", "perplexity", "grok", "claude"] }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "AI visibility check failed.");
+      setLatestCheck(d);
       const successes = (d.results || []).filter((x: any) => x.status === "completed").length;
       const failures = (d.results || []).length - successes;
       setStatus("AI visibility check finished: " + successes + " provider(s) completed, " + failures + " provider(s) need configuration or review.");
@@ -203,6 +205,21 @@ export default function VisibilityWorkspace() {
         <label>Topic<input style={input} value={query.topic} onChange={e => setQuery({ ...query, topic: e.target.value })}/></label>
         <button disabled={busy} style={{ padding: 12, border: 0, borderRadius: 9, background: "#176b63", color: "white" }}>Add question</button>
       </form>
+      {latestCheck && <section aria-live="polite" style={{ marginTop: 18, padding: 16, border: "1px solid #cbd9e8", borderRadius: 12, background: "#f8fbff" }}>
+        <h3 style={{ marginTop: 0 }}>Latest provider check · {latestCheck.query_text}</h3>
+        <p style={{ color: "#69778a", fontSize: 13 }}>{latestCheck.note}</p>
+        <div style={{ display: "grid", gap: 10 }}>
+          {(latestCheck.results || []).map((result: any) => <article key={result.run_id || result.provider} style={{ padding: 13, background: "white", border: "1px solid #e5eaf2", borderRadius: 9 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}><strong>{result.provider?.toUpperCase()}</strong><span>{result.status === "completed" ? "Completed" : "Needs attention"}</span></div>
+            {result.status === "completed" ? <>
+              <small style={{ color: "#69778a" }}>Model: {result.model || "—"} · Method: {result.measurement_method || result.method || "—"} · Evidence: {result.evidence_quality || "—"}</small>
+              <p style={{ marginBottom: 8 }}><strong>Brand mention:</strong> {result.brand_mentioned ? "Observed" : "Not observed"} · <strong>Website cited:</strong> {result.website_cited ? "Yes" : "No"}</p>
+              <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{result.answer_excerpt || "No answer text returned."}</p>
+              {(result.citations || []).map((citation: any) => <div key={citation.url}><a href={citation.url} target="_blank" rel="noreferrer">{citation.title || citation.url}</a></div>)}
+            </> : <p style={{ color: "#9a5b16", marginBottom: 0 }}>{result.message || "Provider request failed. Check credentials, model access and quota."}</p>}
+          </article>)}
+        </div>
+      </section>}
       <div style={{ display: "grid", gap: 8, marginTop: 16 }}>{queries.map(q => <article key={q.id} style={{ padding: 12, border: "1px solid #e8edf4", borderRadius: 10 }}><strong>{q.query_text}</strong><div style={{ color: "#69778a", fontSize: 13, marginTop: 5 }}>{q.intent} · {q.locale}{q.topic ? " · " + q.topic : ""}</div><button disabled={!!checkBusy || busy} onClick={() => runVisibilityCheck(q.id)} style={{ marginTop: 10, padding: "9px 13px", border: 0, borderRadius: 8, background: "#176b63", color: "white" }}>{checkBusy === q.id ? "Checking providers…" : "Check AI visibility"}</button></article>)}</div>
       {visibilityRuns.length > 0 && <div style={{ marginTop: 16, overflowX: "auto" }}><h3>AI visibility history</h3><table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}><thead><tr><th style={{ padding: 10 }}>Date</th><th>Provider</th><th>Method</th><th>Status</th><th>Brand mention</th><th>Website citations</th></tr></thead><tbody>{visibilityRuns.map((r: any) => <tr key={r.run_id} style={{ borderTop: "1px solid #e8edf4" }}><td style={{ padding: 10 }}>{r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td><td>{r.provider}</td><td>{r.measurement_method}</td><td>{r.status}</td><td>{r.brand_mentioned === null ? "—" : r.brand_mentioned ? "Yes" : "Not observed"}</td><td>{(r.cited_urls || []).length}</td></tr>)}</tbody></table>{visibilityRuns.filter((r: any) => r.answer_excerpt).slice(0, 6).map((r: any) => <article key={r.run_id} style={{ marginTop: 10, padding: 12, border: "1px solid #e8edf4", borderRadius: 9 }}><strong>{r.provider} · {r.brand_mentioned ? "Brand mentioned" : "Brand not observed"}</strong><p style={{ whiteSpace: "pre-wrap" }}>{r.answer_excerpt}</p>{(r.cited_urls || []).map((url: string) => <div key={url}><a href={url} target="_blank" rel="noreferrer">{url}</a></div>)}</article>)}</div>}
     </section>
