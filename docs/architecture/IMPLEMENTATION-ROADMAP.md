@@ -15,9 +15,11 @@
 - [x] Proposed database design.
 - [x] Security/reliability gates.
 - [x] Phased roadmap.
-- [ ] Agree endpoint/model naming with existing conventions.
-- [ ] Add schema/models and migrations only after confirming migration workflow.
-- [ ] Add tenant-scoped service and API tests.
+- [x] Align endpoint/model naming with existing platform conventions.
+- [x] Add visibility-only SQLAlchemy metadata, session and schema initialization; no platform tenant foreign keys.
+- [x] Add a dedicated Render Postgres resource and `VISIBILITY_DATABASE_URL` wiring.
+- [ ] Verify the separate database is provisioned in Render and test backup/restore/rollback.
+- [ ] Complete tenant-isolation coverage for every new endpoint and resource.
 
 ## Phase 2 — Website audit MVP
 - [x] Public HTTP/HTTPS URL validation and connection-pinned fetcher; all DNS answers must be globally routable.
@@ -50,6 +52,7 @@
 
 ## Scope guardrails
 - This is a module inside AI Growth OS, not a separate SaaS.
+- Visibility data uses its own database; existing tenant authentication and integration credentials remain in the platform database.
 - Do not duplicate tenant/auth/billing/integration systems.
 - Do not change the production branch or production deployment during development.
 - Do not claim implementation is complete until checks are executed and results recorded.
