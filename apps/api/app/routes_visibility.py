@@ -317,6 +317,31 @@ from pydantic import BaseModel, Field
 class VisibilityCheckPayload(BaseModel):
     providers: list[str] = Field(default_factory=lambda: list(PROVIDER_ORDER), min_length=1, max_length=4)
 
+def _commit_visibility_result(db: Session, run: VisibilityCheckRun) -> bool:
+    """Commit a provider result; recover the run row if evidence persistence fails."""
+    run.completed_at = datetime.utcnow()
+    try:
+        db.commit()
+        return True
+    except Exception:
+        # SQLAlchemy sessions require rollback after a failed flush/commit.
+        # The run row was committed as 'running' before the external API call,
+        # so reload it and record a safe persistence failure in a fresh txn.
+        db.rollback()
+        persisted_run = db.get(VisibilityCheckRun, run.id)
+        if persisted_run is None:
+            return False
+        persisted_run.status = "failed"
+        persisted_run.error_code = "result_persistence_failed"
+        persisted_run.completed_at = datetime.utcnow()
+        try:
+            db.commit()
+            return True
+        except Exception:
+            db.rollback()
+            return False
+
+
 def _provider_config(provider: str, tenant_id: str, db: Session):
     values = {
         "gemini": (visibility_settings.gemini_api_key, visibility_settings.gemini_model, "gemini"),
@@ -408,8 +433,12 @@ async def run_visibility_checks(tenant_id: str, query_id: str, payload: Visibili
             results.append({"run_id": run.id, "provider": provider, "status": "failed",
                             "error_code": run.error_code,
                             "message": "Provider API key/model is not configured." if run.error_code == "provider_not_configured" else "Provider request failed; verify API access, quota and model configuration."})
-        run.completed_at = datetime.utcnow()
-        db.commit()
+        if not _commit_visibility_result(db, run):
+            raise HTTPException(503, "Provider response was received but its result could not be saved. Please retry.")
+        if run.error_code == "result_persistence_failed":
+            results[-1] = {"run_id": run.id, "provider": provider, "status": "failed",
+                           "error_code": "result_persistence_failed",
+                           "message": "Provider response could not be saved; please retry this check."}
     return {"query_id": query.id, "query_text": query.query_text, "brand": brand.name,
             "results": results,
             "note": "Results are observations for these exact provider queries, not universal rankings or a guarantee of what every consumer sees."}
