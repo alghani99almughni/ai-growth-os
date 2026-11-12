@@ -3,7 +3,7 @@ Alerts are committed alongside the event source when possible and exposed only t
 users belonging to the owning tenant. Delivery is an in-app inbox, not a claim of
 email/SMS/push delivery.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 import json
 import jwt
@@ -114,6 +114,10 @@ def _actor(authorization: str | None, db: Session):
 class ReadInput(BaseModel):
     read: bool = True
 
+class TicketDepartmentCorrection(BaseModel):
+    department_id: str | None = None
+    reason: str = "Department routing corrected by tenant administrator"
+
 def _out(row):
     try:
         payload = json.loads(row.payload_json or "{}")
@@ -151,6 +155,124 @@ def list_ticket_escalations(ticket_id: str, authorization: str | None = Header(d
     return {"items": [{"id":r.id,"ticket_id":r.ticket_id,"from_status":r.from_status,"to_status":r.to_status,
         "department_id":r.department_id,"assigned_staff_id":r.assigned_staff_id,"room_key":r.room_key,"reason":r.reason,
         "escalated_by":r.escalated_by,"created_at":r.created_at.isoformat()+"Z"} for r in rows]}
+
+@router.patch("/tickets/{ticket_id}/department")
+def correct_ticket_department(ticket_id: str, payload: TicketDepartmentCorrection,
+                              authorization: str | None = Header(default=None), db: Session = Depends(_db)):
+    """Allow tenant admins to correct an escalated ticket's department without resetting its age or original SLA."""
+    user = _actor(authorization, db)
+    if user.role not in {"owner", "tenant_admin", "admin"}:
+        raise HTTPException(403, "Tenant administrator permission required")
+
+    from .models_growth import SupportTicket
+    from .ticket_escalation_automation import TicketAutoEscalationClaim
+    from .routes_team_comms import TeamMessage
+
+    ticket = db.scalar(select(SupportTicket).where(
+        SupportTicket.id == ticket_id, SupportTicket.tenant_id == user.tenant_id
+    ))
+    if not ticket:
+        raise HTTPException(404, "Ticket not found")
+
+    claim = db.scalar(select(TicketAutoEscalationClaim).where(
+        TicketAutoEscalationClaim.ticket_id == ticket.id,
+        TicketAutoEscalationClaim.tenant_id == user.tenant_id
+    ))
+    if not claim:
+        raise HTTPException(409, "Ticket has not been automatically escalated")
+
+    department = None
+    if payload.department_id:
+        department = db.scalar(select(Department).where(
+            Department.id == payload.department_id,
+            Department.tenant_id == user.tenant_id,
+            Department.is_active.is_(True)
+        ))
+        if not department:
+            raise HTTPException(404, "Active department not found in this workspace")
+
+    previous_department_id = claim.department_id
+    claim.department_id = department.id if department else None
+    response_hours = max(1, int(ticket.sla_hours or 24))
+    claim.department_response_due_at = datetime.utcnow() + timedelta(hours=response_hours)
+
+    latest_event = db.scalar(select(TicketEscalation).where(
+        TicketEscalation.ticket_id == ticket.id,
+        TicketEscalation.tenant_id == user.tenant_id
+    ).order_by(TicketEscalation.created_at.desc()))
+    if latest_event:
+        latest_event.department_id = claim.department_id
+        latest_event.reason = (latest_event.reason or "") + " | Routing correction: " + payload.reason[:500]
+
+    now = datetime.utcnow()
+    destination = department.name if department else "Escalation"
+    db.add(TeamMessage(
+        tenant_id=user.tenant_id, sender_id=user.id, sender_name=user.name,
+        recipient_id=None, room="escalation",
+        message=f"[ROUTING CORRECTION · Ticket #{ticket.id}] {ticket.subject}\\n"
+                f"Department: {destination}\\nReason: {payload.reason[:500]}",
+        formatting="bold", attachment_id=None, created_at=now
+    ))
+    create_operational_alerts(
+        db, user.tenant_id, "ticket.department_corrected", "Ticket department corrected",
+        f"{ticket.subject} routed to {destination}",
+        {"ticket_id": ticket.id, "previous_department_id": previous_department_id,
+         "department_id": claim.department_id, "department_name": destination,
+         "department_response_due_at": claim.department_response_due_at.isoformat()},
+        department_id=claim.department_id
+    )
+    db.commit()
+    return {
+        "ticket_id": ticket.id, "department_id": claim.department_id,
+        "department_name": destination,
+        "department_response_due_at": claim.department_response_due_at.isoformat() + "Z",
+        "created_at": ticket.created_at.isoformat() + "Z",
+        "sla_due_at": ticket.sla_due_at.isoformat() + "Z" if ticket.sla_due_at else None,
+        "original_sla_preserved": True
+    }
+
+
+@router.get("/tickets/queue-summary")
+def ticket_queue_summary(authorization: str | None = Header(default=None), db: Session = Depends(_db)):
+    """Tenant-only pending ticket counts and waiting/department-response clocks."""
+    user = _actor(authorization, db)
+    from .models_growth import SupportTicket
+    from .ticket_escalation_automation import TicketAutoEscalationClaim
+    from .models_ai import Department
+
+    now = datetime.utcnow()
+    tickets = db.scalars(select(SupportTicket).where(
+        SupportTicket.tenant_id == user.tenant_id,
+        SupportTicket.status.notin_(("resolved", "closed"))
+    ).order_by(SupportTicket.created_at.asc())).all()
+    claims = db.scalars(select(TicketAutoEscalationClaim).where(
+        TicketAutoEscalationClaim.tenant_id == user.tenant_id
+    )).all()
+    claim_by_ticket = {row.ticket_id: row for row in claims}
+    departments = {row.id: row.name for row in db.scalars(select(Department).where(
+        Department.tenant_id == user.tenant_id
+    )).all()}
+    counts = {}
+    items = []
+    for ticket in tickets:
+        claim = claim_by_ticket.get(ticket.id)
+        department_id = claim.department_id if claim else None
+        key = department_id or "escalation"
+        label = departments.get(department_id, "Escalation") if department_id else "Escalation"
+        counts[key] = counts.get(key, {"department_id": department_id, "department_name": label, "pending_count": 0})
+        counts[key]["pending_count"] += 1
+        items.append({
+            "ticket_id": ticket.id, "subject": ticket.subject, "category": ticket.category,
+            "priority": ticket.priority, "status": ticket.status,
+            "created_at": ticket.created_at.isoformat() + "Z",
+            "waiting_seconds": max(0, int((now - ticket.created_at).total_seconds())),
+            "sla_due_at": ticket.sla_due_at.isoformat() + "Z" if ticket.sla_due_at else None,
+            "sla_breached": bool(ticket.sla_breached or (ticket.sla_due_at and ticket.sla_due_at <= now)),
+            "department_id": department_id, "department_name": label,
+            "department_response_due_at": claim.department_response_due_at.isoformat() + "Z" if claim else None,
+        })
+    return {"pending_by_department": list(counts.values()), "pending_count": len(items), "items": items}
+
 
 @router.patch("/{alert_id}/read")
 def mark_operational_alert_read(alert_id: str, payload: ReadInput,
