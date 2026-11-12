@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import String, DateTime, UniqueConstraint, select
+from sqlalchemy import String, DateTime, UniqueConstraint, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,6 +40,13 @@ class TicketAutoEscalationClaim(Base):
 
 def _ensure_escalation_room(db, tenant_id: str, actor: User) -> str:
     key = "escalation"
+    # Serialize room/member provisioning per tenant on PostgreSQL. This closes the
+    # race where separate API workers process different overdue tickets for one tenant.
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": "ai-growth-os:ticket-escalation-room:" + tenant_id},
+        )
     room = db.scalar(select(TeamRoom).where(
         TeamRoom.tenant_id == tenant_id, TeamRoom.room_key == key
     ))
