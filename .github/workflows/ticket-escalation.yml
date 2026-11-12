@@ -1,0 +1,32 @@
+name: Ticket Escalation Verification
+on:
+  push:
+    branches: ["feat/automated-ticket-escalation-team-chat"]
+    paths:
+      - "apps/api/app/ticket_escalation_automation.py"
+      - "apps/api/app/operational_alerts.py"
+      - "apps/api/tests/test_ticket_escalation_automation.py"
+      - ".github/workflows/ticket-escalation.yml"
+  pull_request:
+    branches: ["**"]
+    paths:
+      - "apps/api/app/ticket_escalation_automation.py"
+      - "apps/api/app/operational_alerts.py"
+      - "apps/api/tests/test_ticket_escalation_automation.py"
+      - ".github/workflows/ticket-escalation.yml"
+jobs:
+  ticket-escalation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m compileall app
+      - run: pytest -q tests/test_ticket_escalation_automation.py tests/test_tickets_unit.py
