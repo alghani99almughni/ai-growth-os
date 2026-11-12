@@ -25,6 +25,7 @@ export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard/team-comms", label: "Team Chat",             icon: "MessagesSquare" },
   { href: "/dashboard/knowledge",  label: "Business Brain",       icon: "Brain", labelKey: "nav.tenant.knowledge" },
   { href: "/dashboard/loyalty",    label: "Loyalty",              icon: "Gift", labelKey: "nav.tenant.loyalty" },
+  { href: "/dashboard/visibility", label: "AI Search Visibility", icon: "Sparkles" },
   { href: "/dashboard/website",    label: "Website",              icon: "Globe", labelKey: "nav.tenant.website" },
   { href: "/dashboard/agent",      label: "Voice agent",           icon: "Bot", labelKey: "nav.tenant.agent" },
   { href: "/dashboard/errors",     label: "Call errors",           icon: "AlertTriangle", labelKey: "nav.tenant.errors" },
