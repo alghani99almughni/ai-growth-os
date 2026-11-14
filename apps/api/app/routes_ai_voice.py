@@ -221,6 +221,15 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
         db.commit()
         return _did_dict(row)
 
+    @router.get("/platform/tenants/{tenant_id}/agents")
+    def platform_list_tenant_agents(tenant_id: str, user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_platform_admin(user)
+        rows = db.scalars(select(VoiceAgentConfig).where(
+            VoiceAgentConfig.tenant_id == tenant_id,
+            VoiceAgentConfig.status != "archived"
+        ).order_by(VoiceAgentConfig.created_at.desc())).all()
+        return {"items": [_agent_dict(row) for row in rows]}
+
     @router.get("/platform/sip-trunks")
     def platform_list_trunks(user=Depends(get_current_user), db: Session = Depends(get_db)):
         require_platform_admin(user)
