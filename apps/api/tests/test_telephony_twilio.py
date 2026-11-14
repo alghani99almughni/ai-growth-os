@@ -18,7 +18,7 @@ def test_did_numbers_must_be_e164():
 
 def test_voice_tools_are_explicit_and_have_required_fields():
     names = {item["function"]["name"]: item["function"] for item in TOOL_SCHEMAS}
-    assert set(names) == {"log_callback_message", "send_whatsapp_info"}
+    assert set(names) == {"save_customer_identity", "log_callback_message", "send_whatsapp_info"}
     assert names["log_callback_message"]["parameters"]["required"] == [
         "caller_name", "phone_number", "inquiry_summary"
     ]
