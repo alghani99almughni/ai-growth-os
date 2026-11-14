@@ -436,6 +436,7 @@ async def twilio_media_stream(ws: WebSocket):
             ))
             if not customer:
                 customer = upsert_customer(db, tenant.id, caller, "Phone caller", False, source="twilio_voice")
+        active_customer_id = customer.id if customer else ""
         call = CallRecord(
             id=str(uuid.uuid4()), tenant_id=tenant.id,
             customer_id=customer.id if customer else None,
@@ -465,6 +466,7 @@ async def twilio_media_stream(ws: WebSocket):
         messages.append({"role": "assistant", "content": greeting})
 
         async def on_transcript(text: str):
+            nonlocal active_customer_id
             clean = " ".join(text.split())
             if not clean:
                 return
@@ -482,8 +484,10 @@ async def twilio_media_stream(ws: WebSocket):
                             args = {}
                         result = await _execute_voice_tool(
                             fn.get("name", ""), args, tenant.id, call.id,
-                            customer.id if customer else "",
+                            active_customer_id,
                         )
+                        if result.get("customer_id"):
+                            active_customer_id = str(result["customer_id"])
                         messages.append({
                             "role": "tool", "tool_call_id": tool_call.get("id"),
                             "content": json.dumps(result, ensure_ascii=False),
