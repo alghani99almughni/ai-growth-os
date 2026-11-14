@@ -31,7 +31,7 @@ CORE_INTENTS = {
     "DELIVERY_AREA", "DELIVERY_TIME", "SHIPPING_COST", "TRACK_DELIVERY",
     "TECHNICAL_SUPPORT", "COMPLAINT", "POOR_SERVICE", "BILLING_COMPLAINT",
     "REQUEST_HUMAN", "SPECIALIST_REQUIRED", "LOW_CONFIDENCE", "CUSTOMER_REQUESTED_CALL",
-    "UNKNOWN",
+    "DOCTOR_INFORMATION", "CHECK_IN_POLICY", "CHECK_OUT_POLICY", "MENU", "ITEM_PRICE", "ITEM_AVAILABILITY", "INGREDIENTS", "ALLERGENS", "TABLE_RESERVATION", "TAKEAWAY", "DELIVERY", "MEMBERSHIP", "CLASS_SCHEDULE", "TRAINER_INFORMATION", "MEMBERSHIP_RENEWAL", "COURSE_INFORMATION", "ENROLMENT", "PROPERTY_LISTING", "PROPERTY_DETAILS", "SITE_VISIT", "RENTAL_ENQUIRY", "ROOM_AVAILABILITY", "ROOM_RESERVATION", "WARRANTY", "SALON_SERVICES", "UNKNOWN",
 }
 
 INDUSTRY_INTENTS = {
@@ -72,20 +72,20 @@ LEGACY_TO_CANONICAL = {
 }
 
 _RULES = (
-    (r"\\b(?:repeat|say that again|what did you say)\\b", "REPEAT_REQUEST"),
-    (r"\\b(?:can you hear me|audio|voice is not clear|speak louder)\\b", "VOICE_FEEDBACK"),
-    (r"\\b(?:speak to|talk to|connect me|human|manager|representative)\\b", "REQUEST_HUMAN"),
-    (r"\\b(?:refund policy|refund|money back)\\b", "REFUND_POLICY"),
-    (r"\\b(?:track|where is)\\b.{0,24}\\b(?:order|delivery|package)\\b", "ORDER_TRACKING"),
-    (r"\\b(?:payment status|did you receive my payment|payment failed)\\b", "PAYMENT_STATUS"),
-    (r"\\b(?:offer|discount|coupon|promotion)\\b", "CURRENT_OFFERS"),
-    (r"\\b(?:loyalty points|reward points|redeem points)\\b", "LOYALTY_BALANCE"),
-    (r"\\b(?:menu|dishes|food items)\\b", "MENU"),
-    (r"\\b(?:check in|check-in)\\b", "CHECK_IN_POLICY"),
-    (r"\\b(?:check out|check-out)\\b", "CHECK_OUT_POLICY"),
-    (r"\\b(?:course|classes|enrol|enroll)\\b", "COURSE_INFORMATION"),
-    (r"\\b(?:property|flat|house|site visit)\\b", "PROPERTY_LISTING"),
-    (r"\\b(?:membership|trainer|gym)\\b", "MEMBERSHIP"),
+    (r"\b(?:repeat|say that again|what did you say)\b", "REPEAT_REQUEST"),
+    (r"\b(?:can you hear me|audio|voice is not clear|speak louder)\b", "VOICE_FEEDBACK"),
+    (r"\b(?:speak to|talk to|connect me|human|manager|representative)\b", "REQUEST_HUMAN"),
+    (r"\b(?:refund policy|refund|money back)\b", "REFUND_POLICY"),
+    (r"\b(?:track|where is)\b.{0,24}\b(?:order|delivery|package)\b", "ORDER_TRACKING"),
+    (r"\b(?:payment status|did you receive my payment|payment failed)\b", "PAYMENT_STATUS"),
+    (r"\b(?:offer|discount|coupon|promotion)\b", "CURRENT_OFFERS"),
+    (r"\b(?:loyalty points|reward points|redeem points)\b", "LOYALTY_BALANCE"),
+    (r"\b(?:menu|dishes|food items)\b", "MENU"),
+    (r"\b(?:check in|check-in)\b", "CHECK_IN_POLICY"),
+    (r"\b(?:check out|check-out)\b", "CHECK_OUT_POLICY"),
+    (r"\b(?:course|classes|enrol|enroll)\b", "COURSE_INFORMATION"),
+    (r"\b(?:property|flat|house|site visit)\b", "PROPERTY_LISTING"),
+    (r"\b(?:membership|trainer|gym)\b", "MEMBERSHIP"),
 )
 
 def canonical_intent(message: str, legacy_intent: Optional[str] = None, industry: Optional[str] = None) -> str:
@@ -96,11 +96,11 @@ def canonical_intent(message: str, legacy_intent: Optional[str] = None, industry
     for pattern, intent in _RULES:
         if re.search(pattern, value, flags=re.IGNORECASE):
             return intent
-    if re.search(r"\\b(?:price|cost|fee|how much)\\b", value):
+    if re.search(r"\b(?:price|cost|fee|how much)\b", value):
         return "GET_PRICE"
-    if re.search(r"\\b(?:book|booking|appointment|reserve)\\b", value):
+    if re.search(r"\b(?:book|booking|appointment|reserve)\b", value):
         return "BOOK"
-    if re.search(r"\\b(?:open|close|hours|timing)\\b", value):
+    if re.search(r"\b(?:open|close|hours|timing)\b", value):
         return "GET_HOURS"
     if industry:
         pack = INDUSTRY_INTENTS.get(industry.casefold().replace(" ", "_"), set())
