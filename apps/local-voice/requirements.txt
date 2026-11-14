@@ -1,0 +1,10 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+python-multipart==0.0.20
+numpy==1.26.4
+scipy==1.14.1
+soundfile==0.13.1
+faster-whisper==1.1.0
+kokoro-onnx==0.4.4
+sentence-transformers==3.3.1
