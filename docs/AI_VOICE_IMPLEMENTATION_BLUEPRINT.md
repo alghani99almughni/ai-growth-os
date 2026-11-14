@@ -107,3 +107,20 @@ Use private S3-compatible storage (e.g. R2/S3) in production; local disk is deve
 - Do not expose SIP passwords, provider tokens, private recordings or customer PII in public URLs.
 - Do not deploy or merge automatically from this feature branch.
 - Do not claim production readiness based only on unit tests or a simulated call.
+
+
+## Branch progress (2026-11-14)
+
+Committed to `ai-voice`:
+- Initial SQLAlchemy records for tenant voice agents, SIP trunks and DID inventory/assignment.
+- Schema registration through the existing startup migration loader.
+- Tenant APIs for agent drafts/updates, SIP trunk configuration and DID-to-published-agent mapping.
+- Super Admin APIs for platform trunk inventory, DID inventory, tenant agent lookup and DID assignment.
+- Tenant workspace page at `/dashboard/ai-voice`.
+- Super Admin control page at `/platform/ai-voice`.
+- Public customer voice entry page at `/voice/[slug]`, reusing the existing VoiceCallModal/WebRTC flow.
+- Navigation entries for tenant and platform workspaces.
+
+These are configuration/control-plane foundations, not a completed telephony launch. The following are still required before a DID can carry production calls: provider-specific SIP registration and health checks; an Asterisk/FreeSWITCH or carrier edge adapter; inbound DID routing into the existing Voice Gateway; outbound trunk routing/caller-ID policy; test-call workflow; whole-call media recording from SIP/RTP; and end-to-end regression tests.
+
+The attached VoiceDesk test suite could not be executed in this environment because its runtime dependency `razorpay` is not installed. No passing test result is claimed. The archive's original DID provisioning helper is intentionally not reused because it modifies dialplan files and shells out with interpolated values.
