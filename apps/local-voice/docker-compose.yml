@@ -32,8 +32,8 @@ services:
       ACTIVE_VERTICAL: diagnostic_labs_pathology
       COMPANY_NAME: Local Business
       WHISPER_MODEL: small
-      WHISPER_DEVICE: cuda
-      WHISPER_COMPUTE_TYPE: float16
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
       KOKORO_MODEL_PATH: /models/kokoro-v1.0.onnx
       KOKORO_VOICES_PATH: /models/voices-v1.0.bin
       EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
@@ -41,13 +41,7 @@ services:
       - ./knowledge_base.json:/app/knowledge_base.json:ro
       - ./models:/models:ro
       - model_cache:/cache
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+
 
 volumes:
   model_cache:
