@@ -15,6 +15,11 @@ export default function PlatformAIVoice() {
   const [number, setNumber] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [agentId, setAgentId] = useState("");
+  const [platformTrunkName, setPlatformTrunkName] = useState("");
+  const [platformProvider, setPlatformProvider] = useState("sip");
+  const [platformHost, setPlatformHost] = useState("");
+  const [platformUsername, setPlatformUsername] = useState("");
+  const [platformPassword, setPlatformPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -37,7 +42,7 @@ export default function PlatformAIVoice() {
 
   useEffect(() => { refresh().catch(e => setMessage(e.message)); }, []);
 
-  async function createDid(e: React.FormEvent) {
+  async function createPlatformTrunk(e: React.FormEvent) {\n    e.preventDefault(); setBusy(true); setMessage("");\n    try { await req("/api/v1/ai-voice/platform/sip-trunks", { method: "POST", body: JSON.stringify({ name: platformTrunkName, provider: platformProvider, registrar_host: platformHost, auth_username: platformUsername, auth_password: platformPassword }) }); setPlatformTrunkName(""); setPlatformHost(""); setPlatformUsername(""); setPlatformPassword(""); await refresh(); setMessage("Platform SIP trunk saved with encrypted credentials. Registration remains pending until a telephony adapter is connected."); }\n    catch (e: any) { setMessage(e.message); } finally { setBusy(false); }\n  }\n\n  async function createDid(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMessage("");
     try { await req("/api/v1/ai-voice/platform/dids", { method: "POST", body: JSON.stringify({ e164_number: number, trunk_id: trunkId }) }); setNumber(""); await refresh(); setMessage("DID added to platform inventory."); }
     catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
@@ -87,6 +92,17 @@ export default function PlatformAIVoice() {
           {trunks.length === 0 && <p style={{ color: "#64748b", fontSize: 13 }}>No platform-owned SIP trunks yet. Add them through the secure platform provisioning workflow.</p>}
           {trunks.map(t => <div key={t.id} style={{ padding: "10px 0", borderBottom: "1px solid #edf0f5" }}><strong style={{ fontSize: 13 }}>{t.name}</strong><div style={{ color: "#64748b", fontSize: 11 }}>{t.provider} · {t.registrar_host} · {t.status}</div></div>)}
         </section>
+        <form onSubmit={createPlatformTrunk} style={panel}>
+          <h2 style={{ fontSize: 17, fontWeight: 800, marginBottom: 12 }}>Add platform SIP trunk</h2>
+          <div style={{ display: "grid", gap: 9 }}>
+            <input required value={platformTrunkName} onChange={e => setPlatformTrunkName(e.target.value)} placeholder="Trunk name" style={input}/>
+            <input required value={platformProvider} onChange={e => setPlatformProvider(e.target.value)} placeholder="Provider" style={input}/>
+            <input required value={platformHost} onChange={e => setPlatformHost(e.target.value)} placeholder="SIP registrar / proxy host" style={input}/>
+            <input value={platformUsername} onChange={e => setPlatformUsername(e.target.value)} placeholder="SIP username" style={input}/>
+            <input type="password" value={platformPassword} onChange={e => setPlatformPassword(e.target.value)} placeholder="SIP password" style={input}/>
+            <button disabled={busy} style={button}>Save platform trunk</button>
+          </div>
+        </form>
         <form onSubmit={createDid} style={panel}>
           <h2 style={{ fontSize: 17, fontWeight: 800, marginBottom: 12 }}>Add DID to inventory</h2>
           <div style={{ display: "grid", gap: 10 }}>
