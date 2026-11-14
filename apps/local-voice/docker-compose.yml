@@ -4,7 +4,7 @@ services:
     container_name: ai_voice_ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
     volumes:
       - ollama_data:/root/.ollama
     deploy:
@@ -22,9 +22,12 @@ services:
     depends_on:
       - ollama
     ports:
-      - "7860:7860"
+      - "127.0.0.1:7860:7860"
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
+      LOCAL_VOICE_API_KEY: ${LOCAL_VOICE_API_KEY:?Set LOCAL_VOICE_API_KEY in .env}
+      HF_HOME: /cache/huggingface
+      XDG_CACHE_HOME: /cache
       LLM_MODEL: qwen2.5:7b-instruct-q4_K_M
       ACTIVE_VERTICAL: diagnostic_labs_pathology
       COMPANY_NAME: Local Business
@@ -37,6 +40,7 @@ services:
     volumes:
       - ./knowledge_base.json:/app/knowledge_base.json:ro
       - ./models:/models:ro
+      - model_cache:/cache
     deploy:
       resources:
         reservations:
@@ -46,4 +50,5 @@ services:
               capabilities: [gpu]
 
 volumes:
+  model_cache:
   ollama_data:
