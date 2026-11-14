@@ -146,6 +146,7 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
 
     @router.get("/agents")
     def list_agents(user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         rows = db.scalars(select(VoiceAgentConfig).where(
             VoiceAgentConfig.tenant_id == user.tenant_id,
             VoiceAgentConfig.status != "archived"
@@ -154,6 +155,7 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
 
     @router.post("/agents", status_code=201)
     def create_agent(payload: AgentCreate, user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         row = VoiceAgentConfig(
             id=str(uuid.uuid4()), tenant_id=user.tenant_id, name=payload.name.strip(),
             industry_template=payload.industry_template, description=payload.description,
@@ -167,6 +169,7 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
 
     @router.patch("/agents/{agent_id}")
     def update_agent(agent_id: str, payload: AgentUpdate, user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         import json
         row = db.scalar(select(VoiceAgentConfig).where(
             VoiceAgentConfig.id == agent_id, VoiceAgentConfig.tenant_id == user.tenant_id
@@ -185,20 +188,24 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
 
     @router.get("/sip-trunks")
     def list_tenant_trunks(user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         rows = db.scalars(select(SipTrunk).where(SipTrunk.tenant_id == user.tenant_id)).all()
         return {"items": [_trunk_dict(row) for row in rows]}
 
     @router.post("/sip-trunks", status_code=201)
     def create_tenant_trunk(payload: TrunkCreate, user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         return _trunk_dict(store_trunk(db, user.tenant_id, payload))
 
     @router.get("/dids")
     def list_tenant_dids(user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         rows = db.scalars(select(DidNumber).where(DidNumber.tenant_id == user.tenant_id)).all()
         return {"items": [_did_dict(row) for row in rows]}
 
     @router.post("/dids/{did_id}/route")
     def route_tenant_did(did_id: str, payload: DidRoute, user=Depends(get_current_user), db: Session = Depends(get_db)):
+        require_tenant(user, user.tenant_id)
         row = db.scalar(select(DidNumber).where(DidNumber.id == did_id, DidNumber.tenant_id == user.tenant_id))
         if not row:
             raise HTTPException(404, "DID not found")
