@@ -371,7 +371,7 @@ async def _finish_call(call_id: str, tenant_id: str, started_at: datetime,
         db.commit()
         # Send a call summary to the business owner using configured platform channels.
         body = (f"Phone call completed — {tenant.name}\nCall ID: {call.id}\n"
-                f"Caller: {customer_id or 'unknown'}\nDuration: {call.duration_seconds}s\n"
+                f"Caller: {(customer.name + ' / ' + customer.phone) if customer else 'unknown'}\nDuration: {call.duration_seconds}s\n"
                 f"Resolution: {call.resolution}\n\nTranscript:\n{transcript[-5000:]}")
         if tenant.email:
             try:
