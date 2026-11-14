@@ -1,4 +1,4 @@
-from app.global_knowledge import CORE_INTENTS, LEGACY_TO_CANONICAL, canonical_intent
+from app.global_knowledge import CORE_INTENTS, INDUSTRY_INTENTS, canonical_intent
 
 
 def test_legacy_knowledge_intents_map_to_canonical_without_changing_names():
@@ -20,4 +20,4 @@ def test_global_classifier_handles_new_topics():
 
 def test_industry_pack_is_optional_and_does_not_change_unknown_fallback():
     assert canonical_intent("I need information", industry="clinic") == "UNKNOWN"
-    assert "DOCTOR_INFORMATION" not in LEGACY_TO_CANONICAL.values()
+    assert "DOCTOR_INFORMATION" in INDUSTRY_INTENTS["clinic"]
