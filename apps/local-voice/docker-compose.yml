@@ -1,0 +1,49 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_voice_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  local-voice:
+    build: .
+    container_name: ai_voice_local_engine
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    ports:
+      - "7860:7860"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: qwen2.5:7b-instruct-q4_K_M
+      ACTIVE_VERTICAL: diagnostic_labs_pathology
+      COMPANY_NAME: Local Business
+      WHISPER_MODEL: small
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: float16
+      KOKORO_MODEL_PATH: /models/kokoro-v1.0.onnx
+      KOKORO_VOICES_PATH: /models/voices-v1.0.bin
+      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
+    volumes:
+      - ./knowledge_base.json:/app/knowledge_base.json:ro
+      - ./models:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  ollama_data:
