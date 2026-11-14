@@ -1,0 +1,66 @@
+{
+  "global_reception_faqs": [
+    {
+      "id": "glob_01",
+      "questions": [
+        "What are your working hours?",
+        "Office timing kya hai?",
+        "Kab khulta hai?"
+      ],
+      "answer": "Use the business's approved hours configured in its tenant profile. If those hours are unavailable, ask the caller whether they would like a callback."
+    },
+    {
+      "id": "glob_02",
+      "questions": [
+        "Where is your office located?",
+        "Address kya hai?"
+      ],
+      "answer": "Use the business's approved address configured in its tenant profile. Do not invent a location."
+    }
+  ],
+  "industries": {
+    "diagnostic_labs_pathology": {
+      "industry_name": "Diagnostic Center & Pathology Lab",
+      "faqs": [
+        {
+          "id": "lab_01",
+          "questions": [
+            "Do you offer home blood collection?",
+            "Ghar se sample collection hota hai kya?"
+          ],
+          "answer": "Confirm home collection availability, service area, fee and timing from the tenant's live configuration before promising a collection."
+        },
+        {
+          "id": "lab_02",
+          "questions": [
+            "When will my report be ready?",
+            "Report kab tak aayegi?"
+          ],
+          "answer": "Check the test-specific report turnaround configured by the diagnostic centre. Do not promise a generic report time."
+        },
+        {
+          "id": "lab_03",
+          "questions": [
+            "Do I need to fast before a test?",
+            "Kya khali pet test karwana hoga?"
+          ],
+          "answer": "Do not give patient-specific preparation advice from a generic FAQ. Refer to the lab's approved test-preparation instructions or transfer to qualified lab staff."
+        }
+      ]
+    },
+    "dubai_real_estate_danube": {
+      "industry_name": "Dubai Real Estate & Danube Properties",
+      "faqs": [
+        {
+          "id": "dxb_01",
+          "questions": [
+            "Can I book a consultation?",
+            "Mujhe property ke baare mein baat karni hai",
+            "How do I invest?"
+          ],
+          "answer": "Offer to arrange a consultation with an authorized property advisor. Confirm current project, price, payment plan, eligibility and visa information from approved, current tenant materials before answering."
+        }
+      ]
+    }
+  }
+}
