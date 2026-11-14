@@ -1,0 +1,25 @@
+name: Local Voice Sidecar Checks
+
+on:
+  push:
+    paths:
+      - "apps/local-voice/**"
+      - ".github/workflows/local-voice.yml"
+  pull_request:
+    paths:
+      - "apps/local-voice/**"
+      - ".github/workflows/local-voice.yml"
+  workflow_dispatch:
+
+jobs:
+  local-voice-static-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile local voice service
+        run: python -m py_compile apps/local-voice/app.py
+      - name: Validate local knowledge JSON
+        run: python -m json.tool apps/local-voice/knowledge_base.json > /dev/null
