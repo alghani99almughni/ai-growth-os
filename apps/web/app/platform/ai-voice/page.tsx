@@ -51,7 +51,7 @@ export default function PlatformAIVoice() {
 
   useEffect(() => {
     if (!tenantId) { setAgents([]); return; }
-    req("/api/v1/ai-voice/agents").then(d => setAgents(d.items || [])).catch(() => setAgents([]));
+    req("/api/v1/ai-voice/platform/tenants/" + encodeURIComponent(tenantId) + "/agents").then(d => setAgents(d.items || [])).catch(() => setAgents([]));
   }, [tenantId]);
 
   const panel: React.CSSProperties = { background: "#fff", border: "1px solid #e3e8f0", borderRadius: 14, padding: 18 };
