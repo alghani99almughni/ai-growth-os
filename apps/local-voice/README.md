@@ -21,18 +21,19 @@ https://github.com/pipecat-ai/pipecat/blob/main/examples/transports/transports-s
 
 ## Provision models
 
-1. Download the Kokoro ONNX model and voice file into apps/local-voice/models/.
-2. Start the stack from this directory with docker compose up -d --build.
-3. Pull Qwen once: docker exec -it ai_voice_ollama ollama pull qwen2.5:7b-instruct-q4_K_M.
-4. The first startup downloads the Faster-Whisper and sentence-transformers model weights if they are not already cached. For a fully offline deployment, prepopulate model caches and mount them read-only.
-5. Check http://localhost:7860/health.
+1. Create a .env file in this directory with a long random LOCAL_VOICE_API_KEY value. The inference routes require this key in the X-Local-Voice-Key header. Keep the file private and never commit it.
+2. Download the Kokoro ONNX model and voice file into apps/local-voice/models/.
+3. Start the stack from this directory with docker compose up -d --build.
+4. Pull Qwen once: docker exec -it ai_voice_ollama ollama pull qwen2.5:7b-instruct-q4_K_M.
+5. The first startup downloads the Faster-Whisper and sentence-transformers model weights if they are not already cached. For a fully offline deployment, prepopulate model caches and mount them read-only.
+6. Check http://localhost:7860/health.
 
 ## HTTP API
 
 - GET /health
-- POST /v1/turn — JSON with text, optional history, company_name, industry_name, and approved_context
-- POST /v1/transcribe — multipart upload containing a WAV audio file
-- POST /v1/synthesize — JSON with text, optional voice and Kokoro language code; returns WAV
+- POST /v1/turn — JSON with text, optional history, company_name, industry_name, and approved_context; requires X-Local-Voice-Key
+- POST /v1/transcribe — multipart upload containing a WAV audio file; requires X-Local-Voice-Key
+- POST /v1/synthesize — JSON with text, optional voice and Kokoro language code; returns WAV; requires X-Local-Voice-Key
 
 Example chat request:
 
