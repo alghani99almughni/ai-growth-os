@@ -42,6 +42,21 @@ TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "save_customer_identity",
+            "description": "Save the caller's confirmed name and mobile number in the tenant CRM.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "caller_name": {"type": "string"},
+                    "phone_number": {"type": "string"},
+                },
+                "required": ["caller_name", "phone_number"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "log_callback_message",
             "description": "Save a caller's callback request or enquiry in the tenant CRM.",
             "parameters": {
@@ -182,6 +197,7 @@ Do not invent prices, opening hours, staff names, availability, policies, bookin
 Use only verified facts in the approved business context. If a fact is missing, offer a callback or human assistance.
 The caller's phone number is {customer.phone}. The saved caller name is {customer.name or "not yet known"}.
 If the name is unknown, politely ask for it. Do not ask for the mobile number again unless caller ID is unavailable or the caller corrects it.
+Once the caller gives their name, confirm the caller ID number and use save_customer_identity to save both.
 Before creating a callback request, read back the name, number and enquiry and confirm.
 Only call log_callback_message after the caller agrees to a callback/message.
 Only call send_whatsapp_info after the caller explicitly asks for the information on WhatsApp.
@@ -253,8 +269,21 @@ async def _execute_voice_tool(name: str, args: dict[str, Any], tenant_id: str,
         tenant = db.get(Tenant, tenant_id)
         call = db.get(CallRecord, call_id)
         customer = db.get(Customer, customer_id)
-        if not tenant or not call or call.tenant_id != tenant_id or not customer:
-            return {"ok": False, "error": "Call or customer context is no longer available"}
+        if not tenant or not call or call.tenant_id != tenant_id:
+            return {"ok": False, "error": "Call context is no longer available"}
+
+        if name == "save_customer_identity":
+            caller_name = str(args.get("caller_name") or "").strip()
+            phone = normalize_phone(str(args.get("phone_number") or (customer.phone if customer else "")))
+            if not caller_name or not E164.fullmatch(phone):
+                return {"ok": False, "error": "A caller name and valid international mobile number are required"}
+            saved = upsert_customer(db, tenant_id, phone, caller_name, False, source="twilio_voice")
+            call.customer_id = saved.id
+            db.commit()
+            return {"ok": True, "saved_to_crm": True, "customer_id": saved.id}
+
+        if not customer:
+            return {"ok": False, "error": "Verified caller identity is required"}
 
         if name == "log_callback_message":
             caller_name = str(args.get("caller_name") or customer.name or "").strip()
@@ -328,6 +357,7 @@ async def _finish_call(call_id: str, tenant_id: str, started_at: datetime,
     try:
         call = db.get(CallRecord, call_id)
         tenant = db.get(Tenant, tenant_id)
+        customer = db.get(Customer, customer_id) if customer_id else None
         if not call or not tenant or call.tenant_id != tenant_id:
             return
         ended = datetime.utcnow()
