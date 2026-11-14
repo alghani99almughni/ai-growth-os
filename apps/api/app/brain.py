@@ -734,8 +734,8 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
         c.id, tenant_id, channel, message, c.state,
     )
     logger.info(
-        "VOICE_INTENT_RESULT conversation_id=%s message=%r intent=%s state=%s",
-        c.id, message, intent, c.state,
+        "VOICE_INTENT_RESULT conversation_id=%s message=%r intent=%s canonical_intent=%s state=%s",
+        c.id, message, intent, global_intent, c.state,
     )
     db.add(ConversationMessage(conversation_id=c.id,role="user",content=message,language=language,intent=intent))
 
