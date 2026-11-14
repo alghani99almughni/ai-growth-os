@@ -9,6 +9,7 @@ import asyncio
 import io
 import json
 import os
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ from typing import Any
 import httpx
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from scipy.signal import resample_poly
@@ -32,6 +33,7 @@ WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "float16")
 KOKORO_MODEL_PATH = os.getenv("KOKORO_MODEL_PATH", "/models/kokoro-v1.0.onnx")
 KOKORO_VOICES_PATH = os.getenv("KOKORO_VOICES_PATH", "/models/voices-v1.0.bin")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+LOCAL_VOICE_API_KEY = os.getenv("LOCAL_VOICE_API_KEY", "")
 
 runtime: dict[str, Any] = {"kb": {}, "faqs": [], "embedder": None, "embeddings": None,
                            "whisper": None, "kokoro": None}
@@ -81,6 +83,22 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AI Growth OS Local Voice Engine", version="0.1.0", lifespan=lifespan)
 
 
+def _authorize(x_local_voice_key: str | None = Header(default=None)) -> None:
+    if not LOCAL_VOICE_API_KEY or not x_local_voice_key or not hmac.compare_digest(
+        LOCAL_VOICE_API_KEY, x_local_voice_key
+    ):
+        raise HTTPException(401, "Invalid local voice service credential")
+
+
+def _run_transcription(samples: np.ndarray):
+    segments, info = runtime["whisper"].transcribe(
+        samples, language=None, vad_filter=True, beam_size=3,
+        condition_on_previous_text=False,
+    )
+    return (" ".join(segment.text.strip() for segment in segments).strip(),
+            info.language, info.language_probability)
+
+
 class TurnRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     history: list[dict[str, str]] = Field(default_factory=list, max_length=24)
@@ -97,7 +115,7 @@ async def health():
 
 
 @app.post("/v1/turn")
-async def turn(payload: TurnRequest):
+async def turn(payload: TurnRequest, _: None = Depends(_authorize)):
     if runtime.get("embedder") is None:
         raise HTTPException(503, "Local models are still loading")
     matches = _retrieve(payload.text)
@@ -142,7 +160,7 @@ async def turn(payload: TurnRequest):
 
 
 @app.post("/v1/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
+async def transcribe(audio: UploadFile = File(...), _: None = Depends(_authorize)):
     if runtime.get("whisper") is None:
         raise HTTPException(503, "Local speech model is still loading")
     raw = await audio.read()
@@ -156,19 +174,15 @@ async def transcribe(audio: UploadFile = File(...)):
             from math import gcd
             factor = gcd(int(sample_rate), 16000)
             samples = resample_poly(samples, 16000 // factor, int(sample_rate) // factor)
-        segments, info = await asyncio.to_thread(
-            runtime["whisper"].transcribe, samples, language=None, vad_filter=True,
-            beam_size=3, condition_on_previous_text=False,
-        )
-        text = " ".join(segment.text.strip() for segment in segments).strip()
-        return {"text": text, "language": info.language,
-                "language_probability": info.language_probability, "provider": "local"}
+        text, language, language_probability = await asyncio.to_thread(_run_transcription, samples)
+        return {"text": text, "language": language,
+                "language_probability": language_probability, "provider": "local"}
     except Exception as exc:
         raise HTTPException(422, f"Audio transcription failed: {type(exc).__name__}") from exc
 
 
 @app.post("/v1/synthesize")
-async def synthesize(payload: dict[str, Any]):
+async def synthesize(payload: dict[str, Any], _: None = Depends(_authorize)):
     if runtime.get("kokoro") is None:
         raise HTTPException(503, "Local speech synthesis model is still loading")
     text = str(payload.get("text") or "").strip()
