@@ -21,12 +21,14 @@ https://github.com/pipecat-ai/pipecat/blob/main/examples/transports/transports-s
 
 ## Provision models
 
-1. Create a .env file in this directory with a long random LOCAL_VOICE_API_KEY value. The inference routes require this key in the X-Local-Voice-Key header. Keep the file private and never commit it.
+1. Copy .env.example to .env and replace the placeholder with a long random LOCAL_VOICE_API_KEY value. The inference routes require this key in the X-Local-Voice-Key header. Keep .env private and never commit it.
 2. Download the Kokoro ONNX model and voice file into apps/local-voice/models/.
 3. Start the stack from this directory with docker compose up -d --build.
 4. Pull Qwen once: docker exec -it ai_voice_ollama ollama pull qwen2.5:7b-instruct-q4_K_M.
 5. The first startup downloads the Faster-Whisper and sentence-transformers model weights if they are not already cached. For a fully offline deployment, prepopulate model caches and mount them read-only.
 6. Check http://localhost:7860/health.
+
+The compose default runs Faster-Whisper on CPU (int8) because the Python image does not bundle the CUDA/cuDNN runtime required by CTranslate2. Ollama is configured for NVIDIA GPU acceleration. Enable Whisper GPU only after building an image with the matching CUDA 12 and cuDNN 9 runtime libraries and validating it on the target host.
 
 ## HTTP API
 
