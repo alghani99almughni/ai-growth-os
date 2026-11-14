@@ -4454,3 +4454,7 @@ async def run_campaign_batch(tenant_id: str, campaign_id: str):
     finally:
         db.close()
 # ============ END WHATSAPP BULK CAMPAIGNS ============
+
+# AI Voice control plane: shares the existing tenant auth and platform RBAC.
+from .routes_ai_voice import build_ai_voice_router
+app.include_router(build_ai_voice_router(get_current_user, get_db, require_tenant, require_platform_admin))
