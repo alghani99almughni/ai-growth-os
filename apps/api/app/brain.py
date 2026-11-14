@@ -16,6 +16,7 @@ from .voice_language_patterns import language_request, relative_day_from_text, n
 from .booking import available_slots
 from .agent_training import RECEPTIONIST_OPERATING_CONTRACT
 from .voice_followups import spoken_time, bare_time_answer, asks_for_time, describe_day_hours, is_day_followup, HOURS_CUES
+from .global_knowledge import canonical_intent
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -717,6 +718,7 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     if not tenant: raise ValueError("Tenant not found")
     detected_language=detect_language(message)
     intent=local_intent(message)
+    global_intent=canonical_intent(message, intent, tenant.industry)
     c=conversation(db,tenant_id,message,detected_language,channel,conversation_id)
     prev_intent=c.intent or ""
     requested_language=language_request(message)
@@ -1038,4 +1040,4 @@ async def generate_reply(db:Session,tenant_id:str,message:str,conversation_id:st
     db.add(ConversationMessage(conversation_id=c.id,role="assistant",content=reply,language=language,intent=intent))
     db.commit()
     next_step = "escalate" if handoff_required else "reply"
-    return {"reply":reply,"intent":intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage,"booking":booking_data,"next_step":next_step}
+    return {"reply":reply,"intent":intent,"canonical_intent":global_intent,"provider":provider,"language":language,"conversation_id":c.id,"knowledge_hit":knowledge_hit,"handoff_required":handoff_required,"generation_used":not knowledge_hit,"retrieval_stage":retrieval_stage,"booking":booking_data,"next_step":next_step}
