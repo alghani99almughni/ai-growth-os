@@ -166,7 +166,7 @@ async def twilio_incoming_call(request: Request):
 
     root = ET.Element("Response")
     connect = ET.SubElement(root, "Connect")
-    stream = ET.SubElement(connect, "Stream", {"url": stream_url, "track": "both_tracks"})
+    stream = ET.SubElement(connect, "Stream", {"url": stream_url})
     for name, value in (
         ("callSid", call_sid),
         ("calledNumber", called),
