@@ -75,6 +75,10 @@ class DidAssign(BaseModel):
     agent_id: str | None = Field(default=None, max_length=36)
 
 
+class DidRoute(BaseModel):
+    agent_id: str | None = Field(default=None, max_length=36)
+
+
 def _trunk_dict(row: SipTrunk) -> dict:
     return {
         "id": row.id, "tenant_id": row.tenant_id, "name": row.name,
@@ -194,11 +198,11 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
         return {"items": [_did_dict(row) for row in rows]}
 
     @router.post("/dids/{did_id}/route")
-    def route_tenant_did(did_id: str, payload: AgentUpdate, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    def route_tenant_did(did_id: str, payload: DidRoute, user=Depends(get_current_user), db: Session = Depends(get_db)):
         row = db.scalar(select(DidNumber).where(DidNumber.id == did_id, DidNumber.tenant_id == user.tenant_id))
         if not row:
             raise HTTPException(404, "DID not found")
-        agent_id = getattr(payload, "agent_id", None)
+        agent_id = payload.agent_id
         if agent_id:
             agent = db.scalar(select(VoiceAgentConfig).where(
                 VoiceAgentConfig.id == agent_id, VoiceAgentConfig.tenant_id == user.tenant_id,
