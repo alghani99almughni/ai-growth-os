@@ -31,7 +31,7 @@ from .models import Customer, Lead, Tenant
 from .models_ai import ReceptionAlert
 from .models_ai_voice import DidNumber, SipTrunk, VoiceAgentConfig
 from .models_growth import CallRecord
-from .services import normalize_phone, upsert_customer
+from .services import normalize_phone
 
 log = logging.getLogger("api.telephony.twilio")
 router = APIRouter(tags=["AI Voice Telephony"])
@@ -87,6 +87,28 @@ TOOL_SCHEMAS = [
         },
     },
 ]
+
+
+def _upsert_phone_customer(db, tenant_id: str, phone: str, name: str):
+    """Persist phone identity without triggering unrelated welcome-message automation."""
+    normalized = normalize_phone(phone)
+    if not normalized or not E164.fullmatch(normalized):
+        raise ValueError("A valid international mobile number is required")
+    customer = db.scalar(select(Customer).where(
+        Customer.tenant_id == tenant_id, Customer.phone == normalized
+    ))
+    if customer:
+        if name and name.strip() and name.strip() != "Phone caller":
+            customer.name = name.strip()
+    else:
+        customer = Customer(
+            id=str(uuid.uuid4()), tenant_id=tenant_id, phone=normalized,
+            name=(name or "Phone caller").strip(), whatsapp_opt_in=False,
+            source="twilio_voice",
+        )
+        db.add(customer)
+        db.flush()
+    return customer
 
 
 def _stream_token(call_sid: str, called: str, caller: str) -> str:
@@ -277,7 +299,7 @@ async def _execute_voice_tool(name: str, args: dict[str, Any], tenant_id: str,
             phone = normalize_phone(str(args.get("phone_number") or (customer.phone if customer else "")))
             if not caller_name or not E164.fullmatch(phone):
                 return {"ok": False, "error": "A caller name and valid international mobile number are required"}
-            saved = upsert_customer(db, tenant_id, phone, caller_name, False, source="twilio_voice")
+            saved = _upsert_phone_customer(db, tenant_id, phone, caller_name)
             call.customer_id = saved.id
             db.commit()
             return {"ok": True, "saved_to_crm": True, "customer_id": saved.id}
@@ -435,7 +457,7 @@ async def twilio_media_stream(ws: WebSocket):
                 Customer.tenant_id == tenant.id, Customer.phone == caller
             ))
             if not customer:
-                customer = upsert_customer(db, tenant.id, caller, "Phone caller", False, source="twilio_voice")
+                customer = _upsert_phone_customer(db, tenant.id, caller, "Phone caller")
         active_customer_id = customer.id if customer else ""
         call = CallRecord(
             id=str(uuid.uuid4()), tenant_id=tenant.id,
