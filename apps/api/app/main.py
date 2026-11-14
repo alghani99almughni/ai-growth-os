@@ -4458,3 +4458,8 @@ async def run_campaign_batch(tenant_id: str, campaign_id: str):
 # AI Voice control plane: shares the existing tenant auth and platform RBAC.
 from .routes_ai_voice import build_ai_voice_router
 app.include_router(build_ai_voice_router(get_current_user, get_db, require_tenant, require_platform_admin))
+
+
+# Additive inbound PSTN phone channel; existing PWA/WebRTC voice routes are unchanged.
+from .telephony_twilio import router as twilio_telephony_router
+app.include_router(twilio_telephony_router)
