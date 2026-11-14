@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .models_ai_voice import DidNumber, SipTrunk, VoiceAgentConfig
+from .models import Tenant
 from .integrations import encrypt_channel_config
 
 
@@ -256,6 +257,8 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
         trunk = db.get(SipTrunk, payload.trunk_id)
         if not trunk:
             raise HTTPException(404, "SIP trunk not found")
+        if trunk.tenant_id is not None:
+            raise HTTPException(400, "Platform DID inventory must use a platform-owned SIP trunk")
         row = DidNumber(id=str(uuid.uuid4()), trunk_id=trunk.id, e164_number=number,
                         provider_number_id=payload.provider_number_id, tenant_id=None, status="inventory")
         db.add(row)
@@ -274,6 +277,8 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
             raise HTTPException(404, "DID not found")
         if row.tenant_id and row.tenant_id != payload.tenant_id:
             raise HTTPException(409, "DID is already assigned; unassign it before reassignment")
+        if not db.get(Tenant, payload.tenant_id):
+            raise HTTPException(404, "Tenant not found")
         if payload.agent_id:
             agent = db.scalar(select(VoiceAgentConfig).where(
                 VoiceAgentConfig.id == payload.agent_id, VoiceAgentConfig.tenant_id == payload.tenant_id,
