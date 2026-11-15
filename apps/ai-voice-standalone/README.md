@@ -1,34 +1,40 @@
-# AI Voice — Standalone deployment
+# AI Voice — standalone application
 
-This application is an independent marketing and onboarding entry point in the monorepo. It does not replace the existing AI Growth OS web app or its routes.
+AI Voice is packaged as **one Render web service**. The Next.js frontend and FastAPI backend run in the same container behind Nginx; browser API requests and WebSocket calls are routed internally to FastAPI.
 
-## Frontend
+## Render architecture
 
-- Vercel project root: `apps/ai-voice-standalone/web`
-- Framework: Next.js 15
-- Build: `npm run build`
-- Start: `npm start`
-- No paid AI provider key is required to render the landing page.
-- Contact actions currently use `contact@aigrowthos.com`.
+- **One application web service:** `ai-voice` (Next.js + FastAPI in one Docker container).
+- **One dedicated PostgreSQL database:** `ai-voice-db` (managed data resource, not an application server).
+- **One managed Redis resource:** `ai-voice-redis` (managed data resource, not an application server).
+- **Local inference:** the existing Ollama + local-voice engine is not bundled into this web container. It needs model storage and sufficient CPU/RAM/GPU. It can initially run on a separately provisioned inference machine/service and connect privately to the API. Do not assume the Free zero-paid-token call path is production-ready until this connection is configured and tested.
 
-## Render
+## Deploy
 
-A separate blueprint is provided at `render.ai-voice.yaml`. It defines separately named AI Voice API and web services and a dedicated Postgres database. Review the environment variables and set secrets in Render before deploying. The API service reuses the existing FastAPI application code, so its full environment requirements and migrations must be checked against the target database before production traffic is enabled.
+1. Select the `ai-voice` branch in Render.
+2. Create a Blueprint using `render.ai-voice.yaml`.
+3. Confirm it creates only one `ai-voice` web service, one PostgreSQL database and one Redis resource.
+4. Configure the required secret environment variables in Render.
+5. Verify `/health` and `/ready`, then run authentication, tenant-isolation, browser-call and WebSocket tests before onboarding clients.
 
-## Important separation
+The Dockerfile is `deploy/ai-voice/Dockerfile`. Nginx routes `/api/*`, `/ws/*`, health and documentation endpoints to FastAPI, and all other paths to Next.js.
 
-- Deploy only from the `ai-voice` branch.
-- Do not connect this blueprint to the existing AI Growth OS production database, Redis, API or frontend services.
-- Set a unique `DATABASE_URL`, `JWT_SECRET`, `ALLOWED_ORIGINS`, `PUBLIC_APP_URL` and any required encryption/provider secrets.
-- Set the standalone frontend `NEXT_PUBLIC_API_URL` to the new AI Voice API URL.
-- The current landing page is a product website, not yet a verified tenant sign-up/login flow. Authentication, tenant provisioning and complete call runtime must be validated separately before accepting customers.
-- Zero-paid-AI-token Free inference is only achieved when the local STT/LLM/TTS runtime is provisioned and selected. Carrier, DID/SIP, hosting, hardware and network costs are separate.
+## Vercel alternative
 
-## Local frontend check
+Vercel can host the Next.js frontend, but then the FastAPI API must be hosted separately. That is not the one-application-server option. For a single web service, use the Render Docker blueprint.
+
+## Local frontend development
 
 ```bash
 cd apps/ai-voice-standalone/web
 npm install
-npm run build
 npm run dev
 ```
+
+## Separation and safety
+
+- Deploy only from `ai-voice`.
+- Do not connect to AI Growth OS production database, Redis, API or frontend.
+- No changes to `main` and no deployment has been performed by this work.
+- Set unique secrets and a dedicated database for AI Voice.
+- Carrier, DID/SIP, hosting, hardware and network costs are separate from AI inference-token costs.
