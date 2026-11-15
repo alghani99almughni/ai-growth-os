@@ -2763,9 +2763,22 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 if weekday_rule and (not is_inside_hours(weekday_rule.open_time,weekday_rule.close_time,starts_at.time()) or not is_inside_hours(weekday_rule.open_time,weekday_rule.close_time,(starts_at+timedelta(minutes=(service.duration_minutes or 30))-timedelta(minutes=1)).time())):
                                     raise ValueError("That time is outside business hours.")
                                 staff_id=str(args.get("staff_id")).strip() if args.get("staff_id") else None
+                                # Re-check the live calendar after the customer confirms. This
+                                # catches slots taken while the agent was reading back the time.
+                                final_slots=available_slots(
+                                    db,tenant,service.id,starts_at.date(),staff_id,reference_now=call_local
+                                )
+                                selected_slot=next(
+                                    (slot for slot in final_slots if slot["start"][11:16]==starts_at.strftime("%H:%M")),
+                                    None
+                                )
+                                if not selected_slot:
+                                    raise ValueError("That appointment slot is no longer available. Please offer another slot.")
+                                if not staff_id:
+                                    staff_id=selected_slot.get("staff_id")
                                 a,q=create_appointment(
                                     db,tenant,c,service,starts_at,"ai_voice",staff_id,
-                                    str(args.get("notes")) if args.get("notes") else None,True,False
+                                    str(args.get("notes")) if args.get("notes") else None,False,False
                                 )
                                 db.commit()
                                 _log.info("VOICE_BOOKING_CONFIRMED call_id=%s booking_id=%s service_id=%s starts_at=%s",
