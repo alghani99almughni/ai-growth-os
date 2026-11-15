@@ -27,7 +27,7 @@ export const TENANT_NAV: NavItem[] = [
   { href: "/dashboard/loyalty",    label: "Loyalty",              icon: "Gift", labelKey: "nav.tenant.loyalty" },
   { href: "/dashboard/website",    label: "Website",              icon: "Globe", labelKey: "nav.tenant.website" },
   { href: "/dashboard/agent",      label: "Voice agent",           icon: "Bot", labelKey: "nav.tenant.agent" },
-  { href: "/dashboard/ai-voice",   label: "AI Voice & SIP",         icon: "Phone" },
+  { href: "/dashboard/ai-voice",   label: "AI Voice",                icon: "Phone" },
   { href: "/dashboard/errors",     label: "Call errors",           icon: "AlertTriangle", labelKey: "nav.tenant.errors" },
   { href: "/dashboard/support",    label: "Support",               icon: "LifeBuoy", labelKey: "nav.tenant.support" },
   { href: "/dashboard/email",      label: "Email",                 icon: "Mail" },
