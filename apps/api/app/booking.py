@@ -118,7 +118,7 @@ def find_appointment_for_conversation(db: Session, tenant_id: str, starts_utc: d
     ).all()
     return [a.id for a in rows]
 
-def available_slots(db: Session, tenant: Tenant, service_id: str, day: date, staff_id: str | None = None):
+def available_slots(db: Session, tenant: Tenant, service_id: str, day: date, staff_id: str | None = None, reference_now: datetime | None = None):
     service = db.scalar(select(Service).where(Service.id == service_id, Service.tenant_id == tenant.id, Service.is_active == True))
     if not service:
         raise ValueError("Service not found or inactive")
@@ -137,9 +137,12 @@ def available_slots(db: Session, tenant: Tenant, service_id: str, day: date, sta
     # Overnight business: window wraps past midnight.
     if rule.close_time <= rule.open_time:
         close = close + timedelta(days=1)
-    # Never expose slots that have already passed in the tenant local timezone.
-    if day == datetime.now(ZoneInfo(tenant.timezone)).date():
-        now_local = datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
+    # Voice booking supplies the actual call-start timestamp in tenant-local
+    # wall time, so "today" and past-slot filtering stay anchored to the call.
+    # Other callers continue to use the current tenant-local wall clock.
+    effective_now = reference_now or datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
+    if day == effective_now.date():
+        now_local = effective_now
         interval_minutes = max(5, rule.slot_interval_minutes or 30)
         if cursor <= now_local:
             elapsed = (now_local - cursor).total_seconds() / 60
