@@ -25,3 +25,7 @@ jobs:
           cache-dependency-path: apps/ai-voice-standalone/web/package.json
       - run: npm install
       - run: npm run build
+
+      - name: Build combined frontend and API image
+        run: docker build -f deploy/ai-voice/Dockerfile -t ai-voice:ci .
+        working-directory: .
