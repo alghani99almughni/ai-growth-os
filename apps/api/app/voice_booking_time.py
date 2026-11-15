@@ -26,12 +26,12 @@ def customer_only_transcript(transcript: str | None) -> str:
 
 def _matches_meridian(text: str, hour: int, minute: int) -> str | None:
     h12 = hour % 12 or 12
-    time_pattern = rf"(?<!\\d)0?{h12}(?::0?{minute:02d})?\\s*(a\\.?m\\.?|p\\.?m\\.?)"
+    time_pattern = rf"(?<!\d)0?{h12}(?::0?{minute:02d})?\s*(a\.?m\.?|p\.?m\.?)"
     match = re.search(time_pattern, text or "", re.I)
     if match:
         return "AM" if match.group(1).lower().startswith("a") else "PM"
     # Common explicit spoken equivalents; do not infer from assistant turns.
-    phrase = rf"(?<!\\d)0?{h12}(?::0?{minute:02d})?\\s+(?:in the )?(morning|afternoon|evening|night)"
+    phrase = rf"(?<!\d)0?{h12}(?::0?{minute:02d})?\s+(?:in the )?(morning|afternoon|evening|night)"
     match = re.search(phrase, text or "", re.I)
     if match:
         return "AM" if match.group(1).lower() == "morning" else "PM"
@@ -58,7 +58,7 @@ def resolve_voice_time(
     Both/neither valid means the caller must clarify.
     """
     raw = (raw_time or "").strip().upper().replace(".", "")
-    match = re.fullmatch(r"(\\d{1,2})(?::(\\d{2}))?\\s*(AM|PM)?", raw)
+    match = re.fullmatch(r"(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?", raw)
     if not match:
         return {"status": "invalid"}
     hour = int(match.group(1))
