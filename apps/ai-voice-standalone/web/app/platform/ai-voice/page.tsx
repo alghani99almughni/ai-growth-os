@@ -87,6 +87,7 @@ export default function PlatformAIVoice() {
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
       <div><div style={{ color: "#5a64d6", fontWeight: 800, fontSize: 11, letterSpacing: 2 }}>PLATFORM OPERATIONS</div><h1 style={{ fontSize: 28, fontWeight: 800, marginTop: 5 }}>AI Voice control</h1><p style={{ color: "#64748b", fontSize: 13, marginTop: 5 }}>Manage free and paid AI engines, plus platform DID/SIP infrastructure.</p></div>
       <button onClick={() => refresh().catch(e => setMessage(e.message))} style={{ ...button, background: "#fff", color: "#334155", border: "1px solid #dbe2ec" }}><RefreshCw size={15}/> Refresh</button>
+      <button onClick={() => { localStorage.removeItem("ago_access_token"); localStorage.removeItem("ago_user"); localStorage.removeItem("ago_tenant"); window.location.assign("/login"); }} style={{ background: "#fff", color: "#334155", border: "1px solid #dbe2ec", borderRadius: 9, padding: "10px 14px", fontSize: 13, fontWeight: 700 }}>Sign out</button>
     </header>
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
       {tabButton("free", "Free", Sparkles)}
