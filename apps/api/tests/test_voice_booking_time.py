@@ -34,7 +34,7 @@ def test_explicit_customer_am_is_never_rewritten():
 
 
 def test_latest_explicit_customer_correction_wins():
-    transcript = "CUSTOMER: book for 9 AM\\nCUSTOMER: sorry, make that 9 PM"
+    transcript = "CUSTOMER: book for 9 AM\nCUSTOMER: sorry, make that 9 PM"
     result = resolve_voice_time("9 AM", transcript, hours("00:00", "23:59"),
                                 date(2026, 11, 16), CALL)
     assert result["status"] == "resolved"
