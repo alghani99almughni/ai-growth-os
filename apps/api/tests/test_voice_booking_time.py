@@ -78,6 +78,15 @@ def test_spoken_local_language_time_marker_is_preserved():
     assert result["time"] == time(5, 30)
 
 
+def test_literal_escaped_transcript_lines_exclude_assistant_meridian():
+    transcript = "CUSTOMER: 5:30\\nAI: Did you mean 5:30 PM?"
+    result = resolve_voice_time("5:30 PM", transcript, hours("09:00", "18:00"),
+                                date(2026, 11, 16), CALL)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(17, 30)
+    assert result["explicit"] is False
+
+
 def test_assistant_meridian_does_not_override_bare_customer_time():
     transcript = "CUSTOMER: 5:30 please\nAI: Did you mean 5:30 PM?"
     result = resolve_voice_time("5:30 PM", transcript, hours("09:00", "18:00"),
