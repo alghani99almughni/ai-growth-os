@@ -72,6 +72,7 @@ export default function AIVoiceWorkspace() {
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap", marginBottom: 24 }}>
       <div><div style={{ color: "#5a64d6", fontWeight: 800, fontSize: 11, letterSpacing: 2 }}>AI VOICE WORKSPACE</div><h1 style={{ fontSize: 28, fontWeight: 800, marginTop: 5 }}>AI Voice</h1><p style={{ color: "#64748b", fontSize: 13, marginTop: 5 }}>Choose the free self-hosted engine or an optional paid provider for your voice agents.</p></div>
       <button onClick={() => refresh().catch(e => setMessage(e.message))} style={{ ...button, background: "#fff", color: "#334155", border: "1px solid #dbe2ec" }}><RefreshCw size={15}/> Refresh</button>
+      <button onClick={() => { localStorage.removeItem("ago_access_token"); localStorage.removeItem("ago_user"); localStorage.removeItem("ago_tenant"); window.location.assign("/login"); }} style={{ background: "#fff", color: "#334155", border: "1px solid #dbe2ec", borderRadius: 9, padding: "10px 14px", fontSize: 13, fontWeight: 700 }}>Sign out</button>
     </header>
 
     <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
