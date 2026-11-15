@@ -21,11 +21,22 @@ def customer_only_transcript(transcript: str | None) -> str:
     for line in (transcript or "").splitlines():
         if line.upper().startswith("CUSTOMER:"):
             lines.append(line.split(":", 1)[1].strip())
-    return " ".join(lines)
+    return "\n".join(lines)
 
 
 def _matches_meridian(text: str, hour: int, minute: int) -> str | None:
     h12 = hour % 12 or 12
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    if lines:
+        # A caller may answer a clarification with only "PM" or "I meant PM".
+        # Apply that response to the already-established ambiguous time.
+        standalone = re.fullmatch(
+            r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\\s+)?(a\\.?m\\.?|p\\.?m\\.?|morning|afternoon|evening|night)",
+            lines[-1], re.I
+        )
+        if standalone:
+            value = standalone.group(1).lower()
+            return "AM" if value.startswith("a") or value == "morning" else "PM"
     time_pattern = rf"(?<!\d)0?{h12}(?::0?{minute:02d})?\s*(a\.?m\.?|p\.?m\.?)"
     matches = list(re.finditer(time_pattern, text or "", re.I))
     if matches:
