@@ -230,7 +230,7 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                     pending = (parts[1], parts[2])
             meridian_only = bool(re.fullmatch(
                 r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\s+)?"
-                r"(?:am|a\\.?m\\.?|pm|p\\.?m\\.?|morning|afternoon|evening|night)"
+                r"(?:am|a\.?m\.?|pm|p\.?m\.?|morning|afternoon|evening|night)"
                 r"(?:\s+please)?",
                 (message or "").strip(), re.I
             ))
