@@ -33,7 +33,7 @@ export default function LoginPage() {
         <label style={{fontSize:13,fontWeight:700}}>Email<input required type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} style={{...field,display:"block",marginTop:7}}/></label>
         <label style={{fontSize:13,fontWeight:700}}>Password<input required type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} style={{...field,display:"block",marginTop:7}}/></label>
         {error&&<p role="alert" style={{padding:11,borderRadius:9,background:"#fff1f2",color:"#be123c",fontSize:13}}>{error}</p>}
-        <button disabled={busy} type="submit" style={{border:0,borderRadius:10,padding:14,background:"#0f766e",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity:busy?.65:1}}>{busy?"Signing in…":"Sign in securely"}</button>
+        <button disabled={busy} type="submit" style={{border:0,borderRadius:10,padding:14,background:"#0f766e",color:"#fff",fontWeight:800,fontSize:14,cursor:"pointer",opacity: busy ? 0.65 : 1}}>{busy?"Signing in…":"Sign in securely"}</button>
       </form>
       <p style={{fontSize:12,color:"#64748b",marginTop:20,lineHeight:1.6}}>New business accounts are provisioned by the AI Voice platform administrator. Contact the platform team if you need access.</p>
     </section>
