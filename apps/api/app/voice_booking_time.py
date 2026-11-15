@@ -90,7 +90,7 @@ def resolve_voice_time(
     # even if the realtime model serialized a conflicting 24-hour value.
     spoken = _matches_meridian(customer_text, h12, minute)
     spoken_24_hour = None
-    for spoken_match in re.finditer(r"(?<!\\d)([01]?\\d|2[0-3]):([0-5]\\d)(?!\\d)", customer_text):
+    for spoken_match in re.finditer(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)", customer_text):
         spoken_hour = int(spoken_match.group(1))
         spoken_minute = int(spoken_match.group(2))
         if spoken_minute == minute and spoken_hour in (0, *range(13, 24)) and (spoken_hour % 12 or 12) == h12:
