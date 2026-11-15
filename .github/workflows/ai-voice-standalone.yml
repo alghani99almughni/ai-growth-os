@@ -32,6 +32,10 @@ jobs:
       - run: npm install
       - run: npm run build
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Run call-time-aware booking unit tests
         run: |
           python -m pip install pytest
