@@ -17,6 +17,19 @@ def test_call_timestamp_is_converted_from_utc_to_tenant_timezone():
     assert call_local_datetime(CALL, "Asia/Kolkata") == datetime(2026, 11, 15, 15, 30)
 
 
+def test_call_start_timezone_conversion_can_change_calendar_date():
+    utc_call = datetime(2026, 11, 15, 23, 0)
+    assert call_local_datetime(utc_call, "Asia/Kolkata") == datetime(2026, 11, 16, 4, 30)
+
+
+def test_call_after_close_uses_tomorrows_hours_not_current_call_hour():
+    local_call = datetime(2026, 11, 15, 19, 30)
+    result = resolve_voice_time("10:00 AM", "CUSTOMER: tomorrow at 10",
+                                hours("09:00", "18:00"), date(2026, 11, 16), local_call)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(10, 0)
+
+
 def test_business_hours_resolve_only_valid_pm_interpretation():
     result = resolve_voice_time("5:30 PM", "CUSTOMER: book tomorrow at 5:30",
                                 hours("09:00", "18:00"), date(2026, 11, 16), CALL)
