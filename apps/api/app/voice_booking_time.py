@@ -31,7 +31,7 @@ def _matches_meridian(text: str, hour: int, minute: int) -> str | None:
         # A caller may answer a clarification with only "PM" or "I meant PM".
         # Apply that response to the already-established ambiguous time.
         standalone = re.fullmatch(
-            r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\s+)?(a\.?m\.?|p\.?m\.?|morning|afternoon|evening|night)",
+            r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\s+)?(a\.?m\.?|p\.?m\.?|morning|afternoon|evening|night)(?:\s+please)?",
             lines[-1], re.I
         )
         if standalone:
