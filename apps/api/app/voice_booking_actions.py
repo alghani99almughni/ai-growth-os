@@ -152,7 +152,7 @@ def _parse_new_start(db, tenant: Tenant, call: CallRecord, text: str):
         BusinessHour.weekday == target_date.weekday(),
     ))
     resolved = resolve_voice_time(
-        raw_time, (call.transcript or "") + "\\nCUSTOMER: " + text,
+        raw_time, (call.transcript or "") + "\nCUSTOMER: " + text,
         hours, target_date, call_local,
     )
     if resolved.get("status") != "resolved":
