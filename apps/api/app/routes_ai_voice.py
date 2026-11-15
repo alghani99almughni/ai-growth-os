@@ -31,6 +31,8 @@ class AgentCreate(BaseModel):
     language_codes: list[str] = Field(default_factory=lambda: ["en", "hi", "te"], max_length=20)
     greeting: str = Field(default="", max_length=2000)
     operating_instructions: str = Field(default="", max_length=12000)
+    voice_provider: str = Field(default="local", pattern="^(local|platform_default|openai|gemini|deepgram|paid_custom)$")
+    voice_profile: str | None = Field(default=None, max_length=120)
     human_handoff_enabled: bool = True
     recording_enabled: bool = True
 
@@ -164,6 +166,7 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
             industry_template=payload.industry_template, description=payload.description,
             language_codes_json=__import__("json").dumps(payload.language_codes),
             greeting=payload.greeting, operating_instructions=payload.operating_instructions,
+            voice_provider=payload.voice_provider, voice_profile=payload.voice_profile,
             human_handoff_enabled=payload.human_handoff_enabled,
             recording_enabled=payload.recording_enabled, status="draft",
         )
