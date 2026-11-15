@@ -18,7 +18,8 @@ from sqlalchemy import select
 from .models import Customer, Service, Tenant
 from .models_ai import Conversation, InteractionEvent
 from .models_growth import Appointment, BusinessHour, CallRecord, QueueEntry
-from .booking import local_to_utc_naive
+from .booking import local_to_utc_naive, is_inside_hours
+from .voice_booking_time import call_local_datetime, resolve_voice_time
 from .brain import extract_booking_entities, resolve_booking_date
 from .events import publish_event_sync
 
@@ -136,23 +137,27 @@ def _notify(tenant: Tenant, call: CallRecord, appointment: Appointment,
                       tenant.id, appointment.id)
 
 
-def _parse_new_start(tenant: Tenant, text: str):
+def _parse_new_start(db, tenant: Tenant, call: CallRecord, text: str):
+    call_local = call_local_datetime(call.started_at, tenant.timezone)
     entities = extract_booking_entities(text)
     target_date = resolve_booking_date(
-        tenant, entities.get("day"), entities.get("relative_day"), entities.get("date_hint")
+        tenant, entities.get("day"), entities.get("relative_day"),
+        entities.get("date_hint"), reference_datetime=call_local,
     )
     raw_time = str(entities.get("time") or "").strip().upper().replace(".", "")
-    # A time without an AM/PM marker is ambiguous; never guess morning/evening.
-    if not target_date or not re.search(r"\b(?:AM|PM)\b", raw_time):
+    if not target_date or not raw_time:
         return None
-    match = re.fullmatch(r"(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(AM|PM)", raw_time)
-    if not match:
+    hours = db.scalar(select(BusinessHour).where(
+        BusinessHour.tenant_id == tenant.id,
+        BusinessHour.weekday == target_date.weekday(),
+    ))
+    resolved = resolve_voice_time(
+        raw_time, (call.transcript or "") + "\\nCUSTOMER: " + text,
+        hours, target_date, call_local,
+    )
+    if resolved.get("status") != "resolved":
         return None
-    hour = int(match.group(1)) % 12
-    minute = int(match.group(2) or 0)
-    if match.group(3) == "PM":
-        hour += 12
-    return datetime.combine(target_date, dt_time(hour, minute))
+    return datetime.combine(target_date, resolved["time"])
 
 
 def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
@@ -216,11 +221,11 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                     "appointment_action": {"status": "cancelled", "appointment_id": appointment.id}}
 
         if step == "reschedule_wait":
-            requested = _parse_new_start(tenant, message)
+            requested = _parse_new_start(db, tenant, call, message)
             if not requested:
                 return {"reply": "What new date and time would you prefer? Please include AM or PM, for example Monday at 11 AM.",
                         "appointment_action": {"status": "awaiting_new_time", "appointment_id": appointment.id}}
-            if requested <= datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None):
+            if requested <= call_local_datetime(call.started_at, tenant.timezone):
                 return {"reply": "That time is in the past. Please choose a future date and time, including AM or PM.",
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             duration = appointment.ends_at - appointment.starts_at
@@ -230,7 +235,7 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                 BusinessHour.tenant_id == tenant.id,
                 BusinessHour.weekday == requested.weekday(),
             ))
-            if hours and (hours.is_closed or requested.time() < hours.open_time or requested_end.time() > hours.close_time):
+            if hours and (hours.is_closed or not is_inside_hours(hours.open_time, hours.close_time, requested.time()) or not is_inside_hours(hours.open_time, hours.close_time, (requested_end - __import__('datetime').timedelta(minutes=1)).time())):
                 return {"reply": "That time is outside the business's available hours. What other date and time would you prefer?",
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
             requested_utc = local_to_utc_naive(requested, tenant.timezone)
