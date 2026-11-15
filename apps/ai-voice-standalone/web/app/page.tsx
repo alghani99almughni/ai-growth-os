@@ -12,14 +12,14 @@ export default function Home() {
     <header className="wrap nav">
       <a className="brand" href="#"><span className="logo">V</span> AI VOICE</a>
       <nav className="navlinks"><a href="#features">Platform</a><a href="#engine">Voice engines</a><a href="#plans">Plans</a></nav>
-      <a className="navcta" href="mailto:contact@aigrowthos.com?subject=AI%20Voice%20Demo">Book a demo</a>
+      <a className="navcta" href="/login">Client / Admin sign in</a>
     </header>
     <section className="wrap hero">
       <div>
         <div className="eyebrow">AI voice receptionist for business</div>
         <h1>Your business.<br/><span>Always heard.</span></h1>
         <p className="lead">A voice-first customer engagement platform that answers questions, captures leads, supports bookings and brings your team into the conversation when needed.</p>
-        <div className="actions"><a className="primary" href="mailto:contact@aigrowthos.com?subject=Start%20AI%20Voice">Get started <span aria-hidden="true"> ↗</span></a><a className="secondary" href="#engine">Explore voice engines</a></div>
+        <div className="actions"><a className="primary" href="/login">Sign in to AI Voice <span aria-hidden="true"> ↗</span></a><a className="secondary" href="#engine">Explore voice engines</a></div>
         <p className="note">Start with the self-hosted Free AI engine. No paid AI inference tokens required for that option.</p>
       </div>
       <div className="visual" aria-label="Illustration of a live AI voice conversation">
