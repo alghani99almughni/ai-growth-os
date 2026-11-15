@@ -34,7 +34,7 @@ def test_explicit_customer_am_is_never_rewritten():
 
 
 def test_standalone_pm_answer_resolves_prior_ambiguous_time():
-    transcript = "CUSTOMER: book tomorrow at 5:30\\nCUSTOMER: I meant PM"
+    transcript = "CUSTOMER: book tomorrow at 5:30\nCUSTOMER: I meant PM"
     result = resolve_voice_time("5:30", transcript, hours("00:00", "23:59"),
                                 date(2026, 11, 16), CALL)
     assert result["status"] == "resolved"
