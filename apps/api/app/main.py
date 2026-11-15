@@ -2638,6 +2638,8 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                             "clarification":"Please ask the customer whether they mean AM or PM.",
                                             "candidate_times":resolution.get("candidates",[])
                                         }}})
+                                        await gateway.adapter_for(provider).send_tool_response(session,responses)
+                                        responses=[]
                                         continue
                                     if resolution.get("status")!="resolved":
                                         raise ValueError("The requested time could not be understood. Ask the customer to clarify.")
