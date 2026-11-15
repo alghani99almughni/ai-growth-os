@@ -55,6 +55,14 @@ def test_standalone_pm_answer_resolves_prior_ambiguous_time():
     assert result["explicit"] is True
 
 
+def test_standalone_pm_reply_with_polite_suffix_resolves_pending_time():
+    transcript = "CUSTOMER: book tomorrow at 5:30\nCUSTOMER: PM please"
+    result = resolve_voice_time("5:30", transcript, hours("00:00", "23:59"),
+                                date(2026, 11, 16), CALL)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(17, 30)
+
+
 def test_latest_explicit_customer_correction_wins():
     transcript = "CUSTOMER: book for 9 AM\nCUSTOMER: sorry, make that 9 PM"
     result = resolve_voice_time("9 AM", transcript, hours("00:00", "23:59"),
