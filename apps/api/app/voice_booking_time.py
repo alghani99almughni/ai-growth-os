@@ -17,8 +17,11 @@ def call_local_datetime(started_at: datetime, timezone_name: str) -> datetime:
 
 
 def customer_only_transcript(transcript: str | None) -> str:
+    # CallRecord transcripts from older sessions may contain literal backslash-n
+    # separators; normalize both historical and current storage formats.
+    raw = (transcript or "").replace("\\r\\n", "\\n").replace("\\n", "\n")
     lines = []
-    for line in (transcript or "").splitlines():
+    for line in raw.splitlines():
         if line.upper().startswith("CUSTOMER:"):
             lines.append(line.split(":", 1)[1].strip())
     return "\n".join(lines)
