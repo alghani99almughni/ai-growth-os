@@ -89,7 +89,7 @@ def resolve_voice_time(
         if hour == 0 or hour > 12:
             raw_24 = f"{hour:02d}:{minute:02d}"
             exact_24h = bool(re.search(
-                rf"(?<!\\d){re.escape(raw_24)}(?!\\d)", customer_text
+                rf"(?<!\d){re.escape(raw_24)}(?!\d)", customer_text
             ))
         if exact_24h:
             resolved_hour = hour
