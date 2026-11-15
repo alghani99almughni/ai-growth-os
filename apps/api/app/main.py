@@ -14,6 +14,7 @@ from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context
 from .voice_booking_actions import handle_voice_appointment_action
+from .voice_booking_time import call_local_datetime, resolve_voice_time
 from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
@@ -2385,6 +2386,8 @@ async def public_voice(websocket:WebSocket,call_id:str):
     if not tenant:
         await websocket.send_json({"type":"error","message":"AI voice is not configured for this business."}); await websocket.close(); db.close(); return
     customer=db.get(Customer,call.customer_id) if call.customer_id else None
+    # Anchor every relative date and same-day booking decision to the actual call start, not server wall time.
+    call_local=call_local_datetime(call.started_at,tenant.timezone)
     context=knowledge_context(db,tenant.id)
     policy=tenant_policy(db,tenant.id)
     system = f"""You are the AI customer engagement voice agent for {tenant.name}.
@@ -2414,9 +2417,9 @@ Start the call immediately with a warm spoken greeting such as:
 "Hello {customer.name if customer and customer.name else "there"}, welcome to {tenant.name}. How can I help you today?"
 Then listen for the customer's request.
 Do not invent business facts, prices, availability, policies, bookings or payment success.
-Today in the business timezone is {datetime.now(ZoneInfo(tenant.timezone)).date().isoformat()}. Resolve phrases such as "coming Tuesday", "next Tuesday", "this Friday", "tomorrow", and "the 29th" to an actual calendar date before discussing an appointment. Never ask the customer which date a weekday means when the calendar can resolve it.
+The customer call started at {call_local.isoformat(timespec="seconds")} in the tenant timezone ({tenant.timezone}); this call-start timestamp is the authoritative reference for "today", "tomorrow", relative weekdays and past-time checks throughout this call. Resolve phrases such as "coming Tuesday", "next Tuesday", "this Friday", "tomorrow", and "the 29th" relative to that call-start date, not the server clock.
 For business-hours questions, answer briefly in natural speech (for example, "Monday to Saturday, 9 AM to 6 PM. Sunday we're closed").
-For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day/date, then preferred time, then service if needed. If the caller has already supplied one booking detail and then supplies another (for example, "5:30" followed by "today"), preserve the earlier detail and combine them. A phrase such as "is it possible today" is a day/date update, not a new time; do not invent or change the time. If a caller gives a bare numeric time such as "5:30" and the business is open during the PM hour but closed at that AM time, treat it as the business-hour PM time unless the caller explicitly says AM. Never turn "today" into "today at 5:30 AM" merely because the previous time was 5:30. Use check_availability before presenting a slot as available. Only use create_booking after all required details are known and the customer explicitly confirms.
+For appointment requests, never hand off merely because the customer has not supplied every booking detail. Guide them one step at a time: identify the requested day/date, then preferred time, then service if needed. If the caller has already supplied one booking detail and then supplies another (for example, "5:30" followed by "today"), preserve the earlier detail and combine them. A phrase such as "is it possible today" is a day/date update, not a new time; do not invent or change the time. For a bare ambiguous time such as "5:30", the server evaluates both 05:30 and 17:30 against the requested date's tenant business hours and the actual call-start timestamp. Use the unique interpretation only when exactly one candidate is within hours and is still in the future relative to the call start. If both candidates or neither candidate qualify, ask the customer to clarify AM or PM; this is mandatory for 24/7 businesses. Never infer AM/PM from the model's own proposed wording. Preserve any AM/PM explicitly spoken by the customer, even when outside business hours, and then explain if it is outside hours. Use check_availability before presenting a slot as available. Only use create_booking after all required details are known and the customer explicitly confirms.
 If the caller pauses, gives an incomplete sentence, or the transcript appears garbled or nonsensical, do not guess, end the call, or hand off. Ask them to repeat or clarify briefly. If the caller starts speaking while you are speaking, stop promptly, listen to the complete request, and answer the new request.
 If the caller says simple acknowledgement such as "okay", "alright", "fine", "thanks", or "thank you" after you have answered a question, do not hand off. Respond naturally and ask whether they need anything else; close the call politely if they are finished.
 For appointment booking, treat speech-recognition errors such as "bhukamp", "bukamp", "buking", or "boking" as possible booking words only when the surrounding request clearly contains appointment/day/time context; never hand off solely because recognition is imperfect.
@@ -2617,41 +2620,30 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 service=db.scalar(select(Service).where(Service.id==service_id,Service.tenant_id==tenant.id,Service.is_active==True)) if service_id else db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
                                 if not service:
                                     raise ValueError("No active appointment service is configured.")
-                                slots=available_slots(db,tenant,service.id,requested_date,str(args.get("staff_id")) if args.get("staff_id") else None)
+                                slots=available_slots(db,tenant,service.id,requested_date,str(args.get("staff_id")) if args.get("staff_id") else None,reference_now=call_local)
                                 weekday_rule=db.scalar(select(BusinessHour).where(
                                     BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==requested_date.weekday()
                                 ))
                                 requested_time=str(args.get("time","")).strip().upper().replace(".","")
+                                if requested_date < call_local.date():
+                                    raise ValueError("The requested appointment date is before this call started.")
                                 if requested_time:
-                                    import re as _re
-                                    # Voice models occasionally attach AM to a bare time such as
-                                    # "5:30" after the caller never said AM. If that AM time is
-                                    # outside the tenant's business hours, prefer the corresponding
-                                    # PM time when the tenant is open then.
-                                    bare_time=None
-                                    tm_bare=_re.match(r"^(\d{1,2})(?::(\d{2}))?$",requested_time)
-                                    if tm_bare:
-                                        bare_time=True
-                                        hh=int(tm_bare.group(1)); mm=int(tm_bare.group(2) or 0)
-                                        if 1 <= hh <= 11:
-                                            requested_time=f"{hh}:{mm:02d} PM"
-                                    tm=_re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$",requested_time)
-                                    if tm:
-                                        hh=int(tm.group(1)); mm=int(tm.group(2) or 0); mer=tm.group(3)
-                                        if mer=="AM" and hh < 12:
-                                            # Only reinterpret an AM value when the same PM value
-                                            # is within business hours AND the recent customer
-                                            # transcript did not explicitly say AM.
-                                            explicit_am=bool(_re.search(r"\b"+str(hh)+r"(?::"+f"{mm:02d}"+r")?\s*a\.?m\.?\b", (call.transcript or "").lower()))
-                                            if not explicit_am and hh < 12:
-                                                pm_hour=hh+12
-                                                rule=weekday_rule
-                                                if rule and rule.open_time <= time(pm_hour,mm) < rule.close_time:
-                                                    mer="PM"
-                                        if mer=="PM" and hh!=12: hh+=12
-                                        if mer=="AM" and hh==12: hh=0
-                                        wanted=f"{hh:02d}:{mm:02d}"
-                                        slots=[s for s in slots if s["start"][11:16]==wanted]
+                                    resolution=resolve_voice_time(
+                                        requested_time,call.transcript,weekday_rule,requested_date,call_local
+                                    )
+                                    if resolution.get("status")=="clarification_required":
+                                        responses.append({"id":fc.get("id"),"name":name,"response":{"result":{
+                                            "date":requested_date.isoformat(),"timezone":tenant.timezone,
+                                            "needs_clarification":True,"available":False,
+                                            "clarification":"Please ask the customer whether they mean AM or PM.",
+                                            "candidate_times":resolution.get("candidates",[])
+                                        }}})
+                                        continue
+                                    if resolution.get("status")!="resolved":
+                                        raise ValueError("The requested time could not be understood. Ask the customer to clarify.")
+                                    wanted=resolution["time"].strftime("%H:%M")
+                                    requested_time=resolution["time"].strftime("%I:%M %p").lstrip("0")
+                                    slots=[s for s in slots if s["start"][11:16]==wanted]
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"date":requested_date.isoformat(),"timezone":tenant.timezone,"service_id":service.id,"service_name":service.name,"requested_time":requested_time or None,"available":bool(slots),"slots":slots[:20]}}})
                             except Exception as exc:
                                 responses.append({"id":fc.get("id"),"name":name,"response":{"result":{"available":False,"error":str(exc)}}})
@@ -2702,18 +2694,37 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 # If the model turned a bare business-hour time such as 5:30
                                 # into 05:30 AM, correct it to 17:30 only when the caller did
                                 # not explicitly say AM and the PM time is within hours.
+                                # Re-resolve from the caller's utterance; never trust the model's
+                                # AM/PM guess. The same resolver is used by availability and rescheduling.
+                                if starts_at.date() < call_local.date():
+                                    raise ValueError("Appointment date is before the customer call started.")
                                 weekday_rule=db.scalar(select(BusinessHour).where(
                                     BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()
                                 ))
-                                if weekday_rule and starts_at.hour < 12:
-                                    import re as _re
-                                    explicit_am=bool(_re.search(
-                                        r"\b"+str(starts_at.hour)+r"(?::"+f"{starts_at.minute:02d}"+r")?\s*a\.?m\.?\b",
-                                        (call.transcript or "").lower()
-                                    ))
-                                    pm_time=time(starts_at.hour+12,starts_at.minute)
-                                    if not explicit_am and weekday_rule.open_time <= pm_time < weekday_rule.close_time:
-                                        starts_at=starts_at.replace(hour=starts_at.hour+12)
+                                import re as _re
+                                customer_text=" ".join(
+                                    line.split(":",1)[1].strip()
+                                    for line in (call.transcript or "").splitlines()
+                                    if line.upper().startswith("CUSTOMER:")
+                                )
+                                spoken_24h=bool(_re.search(
+                                    r"(?<!\d)"+f"{starts_at.hour:02d}:{starts_at.minute:02d}"+r"(?!\d)",
+                                    customer_text
+                                ))
+                                hour12=starts_at.hour%12 or 12
+                                resolver_time=(f"{starts_at.hour:02d}:{starts_at.minute:02d}" if spoken_24h
+                                               else f"{hour12}:{starts_at.minute:02d}")
+                                resolution=resolve_voice_time(
+                                    resolver_time,call.transcript,weekday_rule,starts_at.date(),call_local
+                                )
+                                if resolution.get("status")!="resolved":
+                                    raise ValueError("AM/PM clarification is required before booking. Ask the customer to clarify.")
+                                starts_at=starts_at.replace(
+                                    hour=resolution["time"].hour,minute=resolution["time"].minute,
+                                    second=0,microsecond=0
+                                )
+                                if starts_at <= call_local:
+                                    raise ValueError("Appointment time is before the customer call started.")
                                 # Booking is an owned core workflow: validate the tenant's
                                 # hours and live availability before committing anything.
                                 if weekday_rule and weekday_rule.is_closed:
