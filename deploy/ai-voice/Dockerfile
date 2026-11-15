@@ -14,6 +14,10 @@ WORKDIR /app
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 COPY apps/api /app/api
+# Fail the image build if the real FastAPI application cannot import or its
+# health/readiness/AI Voice control-plane routes are not registered.
+RUN PYTHONPATH=/app/api DATABASE_URL=sqlite:////tmp/ai_voice_import_check.db \
+    /opt/venv/bin/python -c "from app.main import app; paths={getattr(route, 'path', '') for route in app.routes}; required={'/health','/ready','/api/v1/ai-voice/agents','/api/v1/ai-voice/platform/sip-trunks'}; missing=required-paths; assert not missing, f'Missing API routes: {sorted(missing)}'; print('FastAPI import smoke test passed:', ', '.join(sorted(required)))"
 COPY --from=web-build /workspace/apps/ai-voice-standalone/web /app/web
 COPY deploy/ai-voice/nginx.conf.template /etc/nginx/templates/ai-voice.conf.template
 COPY deploy/ai-voice/supervisord.conf /etc/supervisor/conf.d/ai-voice.conf
