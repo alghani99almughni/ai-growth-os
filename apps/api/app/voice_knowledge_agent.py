@@ -21,7 +21,7 @@ def _transcript_lines(transcript: str) -> list[tuple[str, str]]:
     raw = transcript.replace("\\r\\n", "\\n").replace("\\n", "\n")
     turns: list[tuple[str, str]] = []
     for line in raw.splitlines():
-        match = re.match(r"^\\s*(CUSTOMER|AI|ASSISTANT)\\s*:\\s*(.*?)\\s*$", line, re.I)
+        match = re.match(r"^\s*(CUSTOMER|AI|ASSISTANT)\s*:\s*(.*?)\s*$", line, re.I)
         if match and match.group(2):
             role = "CUSTOMER" if match.group(1).upper() == "CUSTOMER" else "AI"
             turns.append((role, match.group(2)))
