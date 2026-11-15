@@ -10,10 +10,21 @@ Scope: `ai-voice` branch only. No Render deployment and no changes to `main`.
 3. Correctly handle AM, PM, noon (12 PM), midnight (12 AM), minutes and spoken variants.
 4. Support bookings across all weekdays and calendar dates, including month/year boundaries and leap day.
 5. Use the tenant's configured IANA timezone for date resolution, opening hours, availability, storage and spoken confirmations.
-6. Explicit AM/PM always wins. Never rewrite an explicitly spoken AM to PM or PM to AM.
+6. The persisted call-start timestamp (CallRecord.started_at) is the authoritative reference for the tenant-local date, relative phrases and past-time checks; never use server wall time for a voice call.
+7. Explicit AM/PM spoken by the customer always wins. Never rewrite an explicitly spoken AM to PM or PM to AM.
+8. For a bare ambiguous time, evaluate both AM and PM against the requested date's configured tenant hours and the call-start timestamp. Resolve only if exactly one interpretation is within hours and still in the future; if both or neither qualify, ask AM/PM. For 24/7 businesses, ask AM/PM because both interpretations may be valid.
 7. When AM/PM is genuinely ambiguous and both interpretations are plausible, ask the caller to clarify before availability is promised or a booking is created.
 8. Check the actual tenant calendar before promising availability; re-check immediately before booking.
 9. Persist bookings in the same tenant appointment database used by the dashboard; no parallel voice-only booking store.
+
+## Call timestamp and interpretation tests
+
+- Call starts at 4:45 PM tenant-local; customer says "today at 5:30"; reject the past AM interpretation and evaluate the 5:30 PM candidate.
+- Call starts after business closing; "tomorrow at 10" must be interpreted using tomorrow's configured hours, not the call's current clock hour.
+- Call starts in a different server timezone; relative date and past-slot filtering must still use the tenant-local call-start timestamp.
+- Call timestamp is stored as UTC; verify the exact tenant-local timestamp used by date resolution, availability and rescheduling.
+- Model suggests AM/PM but the customer transcript did not; the model suggestion must not count as explicit customer clarification.
+- Rescheduling uses the same call-start reference and AM/PM rules as new bookings.
 
 ## Mandatory AM/PM test cases
 
@@ -78,10 +89,14 @@ Scope: `ai-voice` branch only. No Render deployment and no changes to `main`.
 ## Existing implementation review — issues to resolve before claiming PASS
 
 - Current booking schedule stores weekday open/close times and has overnight-window handling in slot generation, but overnight early-morning lookup needs explicit cross-day tests.
-- The current voice availability parser defaults a bare numeric 1–11 time to PM. This can be wrong for a morning business or genuinely ambiguous requests. Change this to use caller context and configured hours, or ask for clarification; do not hard-code PM.
+- The former voice availability parser defaulted bare numeric 1–11 times to PM. The call-time-aware resolver must instead compare both interpretations against configured hours and call-start time, asking for clarification when both or neither qualify.
 - Existing prompt says explicit AM should be preserved, and create-booking contains a correction heuristic. These heuristics must be tested together so availability and booking cannot interpret the same utterance differently.
 - Current 24-hour seed maps 24-hour opening to 00:00–23:59. Verify final slot boundary and all-day semantics.
 - Current weekday resolver and tenant timezone logic require tests across year/month/leap-day boundaries.
+
+## Automated unit coverage
+
+apps/api/tests/test_voice_booking_time.py covers UTC-to-tenant conversion, unique business-hours resolution, explicit AM preservation, ignoring assistant-suggested meridians, 24/7 clarification, neither-valid clarification, same-day past AM exclusion, and explicit 24-hour input.
 
 ## Release acceptance criteria
 
