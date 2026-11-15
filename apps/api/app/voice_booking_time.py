@@ -72,26 +72,30 @@ def resolve_voice_time(
     if minute > 59 or hour > 23:
         return {"status": "invalid"}
 
-    # 24-hour inputs 13..23 and 00 are unambiguous.
-    if hour == 0 or hour > 12:
-        resolved_hour = hour
+    customer_text = customer_only_transcript(customer_transcript)
+    h12 = hour % 12 or 12
+
+    # Customer speech is authoritative. First honour an explicit meridian,
+    # even if the realtime model serialized a conflicting 24-hour value.
+    spoken = _matches_meridian(customer_text, h12, minute)
+    if spoken:
+        resolved_hour = h12 % 12 + (12 if spoken == "PM" else 0)
         explicit = True
-    elif meridian:
-        # The model may attach a meridian the caller never spoke. Only trust it
-        # when the customer transcript independently contains that marker.
-        spoken = _matches_meridian(customer_only_transcript(customer_transcript), hour, minute)
-        if spoken:
-            resolved_hour = hour % 12 + (12 if spoken == "PM" else 0)
-            explicit = True
-        else:
-            meridian = None
-            explicit = False
     else:
-        spoken = _matches_meridian(customer_only_transcript(customer_transcript), hour, minute)
-        if spoken:
-            resolved_hour = hour % 12 + (12 if spoken == "PM" else 0)
+        # Trust 24-hour notation only when the customer actually said that
+        # exact 24-hour value. A model-produced 17:30 for a bare "5:30" is
+        # still ambiguous and must go through the two-candidate decision.
+        exact_24h = False
+        if hour == 0 or hour > 12:
+            raw_24 = f"{hour:02d}:{minute:02d}"
+            exact_24h = bool(re.search(
+                rf"(?<!\\d){re.escape(raw_24)}(?!\\d)", customer_text
+            ))
+        if exact_24h:
+            resolved_hour = hour
             explicit = True
         else:
+            resolved_hour = h12 % 12
             explicit = False
 
     if explicit:
