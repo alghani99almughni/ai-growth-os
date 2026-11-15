@@ -2722,9 +2722,6 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 # create_appointment converts them to UTC.
                                 if starts_at.tzinfo is not None:
                                     starts_at=starts_at.astimezone(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
-                                # If the model turned a bare business-hour time such as 5:30
-                                # into 05:30 AM, correct it to 17:30 only when the caller did
-                                # not explicitly say AM and the PM time is within hours.
                                 # Re-resolve from the caller's utterance; never trust the model's
                                 # AM/PM guess. The same resolver is used by availability and rescheduling.
                                 if starts_at.date() < call_local.date():
@@ -2733,11 +2730,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                     BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()
                                 ))
                                 import re as _re
-                                customer_text=" ".join(
-                                    line.split(":",1)[1].strip()
-                                    for line in (call.transcript or "").splitlines()
-                                    if line.upper().startswith("CUSTOMER:")
-                                )
+                                customer_text=customer_only_transcript(call.transcript).replace("\\n"," ")
                                 spoken_24h=bool(_re.search(
                                     r"(?<!\d)"+f"{starts_at.hour:02d}:{starts_at.minute:02d}"+r"(?!\d)",
                                     customer_text
