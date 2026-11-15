@@ -44,6 +44,8 @@ class AgentUpdate(BaseModel):
     operating_instructions: str | None = Field(default=None, max_length=12000)
     human_handoff_enabled: bool | None = None
     recording_enabled: bool | None = None
+    voice_provider: str | None = Field(default=None, pattern="^(platform_default|local|openai|gemini|deepgram|paid_custom)$")
+    voice_profile: str | None = Field(default=None, max_length=120)
     status: str | None = Field(default=None, pattern="^(draft|published|paused|archived)$")
 
 
@@ -188,21 +190,19 @@ def build_ai_voice_router(get_current_user: Callable, get_db: Callable,
         return _agent_dict(row)
 
     @router.get("/sip-trunks")
-    def list_tenant_trunks(user=Depends(get_current_user), db: Session = Depends(get_db)):
+    def tenant_trunks_forbidden(user=Depends(get_current_user)):
         require_tenant(user, user.tenant_id)
-        rows = db.scalars(select(SipTrunk).where(SipTrunk.tenant_id == user.tenant_id)).all()
-        return {"items": [_trunk_dict(row) for row in rows]}
+        raise HTTPException(403, "DID/SIP administration is available to Super Admin only")
 
-    @router.post("/sip-trunks", status_code=201)
-    def create_tenant_trunk(payload: TrunkCreate, user=Depends(get_current_user), db: Session = Depends(get_db)):
+    @router.post("/sip-trunks", status_code=403)
+    def tenant_trunk_create_forbidden(user=Depends(get_current_user)):
         require_tenant(user, user.tenant_id)
-        return _trunk_dict(store_trunk(db, user.tenant_id, payload))
+        raise HTTPException(403, "DID/SIP administration is available to Super Admin only")
 
     @router.get("/dids")
-    def list_tenant_dids(user=Depends(get_current_user), db: Session = Depends(get_db)):
+    def tenant_dids_forbidden(user=Depends(get_current_user)):
         require_tenant(user, user.tenant_id)
-        rows = db.scalars(select(DidNumber).where(DidNumber.tenant_id == user.tenant_id)).all()
-        return {"items": [_did_dict(row) for row in rows]}
+        raise HTTPException(403, "DID/SIP administration is available to Super Admin only")
 
     @router.post("/dids/{did_id}/route")
     def route_tenant_did(did_id: str, payload: DidRoute, user=Depends(get_current_user), db: Session = Depends(get_db)):
