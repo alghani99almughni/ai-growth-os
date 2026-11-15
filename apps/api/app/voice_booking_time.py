@@ -89,8 +89,17 @@ def resolve_voice_time(
     # Customer speech is authoritative. First honour an explicit meridian,
     # even if the realtime model serialized a conflicting 24-hour value.
     spoken = _matches_meridian(customer_text, h12, minute)
+    spoken_24_hour = None
+    for spoken_match in re.finditer(r"(?<!\\d)([01]?\\d|2[0-3]):([0-5]\\d)(?!\\d)", customer_text):
+        spoken_hour = int(spoken_match.group(1))
+        spoken_minute = int(spoken_match.group(2))
+        if spoken_minute == minute and spoken_hour in (0, *range(13, 24)) and (spoken_hour % 12 or 12) == h12:
+            spoken_24_hour = spoken_hour
     if spoken:
         resolved_hour = h12 % 12 + (12 if spoken == "PM" else 0)
+        explicit = True
+    elif spoken_24_hour is not None:
+        resolved_hour = spoken_24_hour
         explicit = True
     else:
         # Trust 24-hour notation only when the customer actually said that
@@ -100,7 +109,7 @@ def resolve_voice_time(
         if hour == 0 or hour > 12:
             raw_24 = f"{hour:02d}:{minute:02d}"
             exact_24h = bool(re.search(
-                rf"(?<!\d){re.escape(raw_24)}(?!\d)", customer_text
+                rf"(?<!\\d){re.escape(raw_24)}(?!\\d)", customer_text
             ))
         if exact_24h:
             resolved_hour = hour
