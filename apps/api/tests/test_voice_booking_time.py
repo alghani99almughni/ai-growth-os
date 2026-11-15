@@ -57,6 +57,19 @@ def test_assistant_meridian_does_not_override_bare_customer_time():
     assert result["explicit"] is False
 
 
+def test_model_24_hour_pm_guess_does_not_resolve_bare_time_for_247():
+    result = resolve_voice_time("17:30", "CUSTOMER: book tomorrow at 5:30",
+                                hours("00:00", "23:59"), date(2026, 11, 16), CALL)
+    assert result["status"] == "clarification_required"
+
+
+def test_explicit_customer_am_overrides_model_24_hour_pm_guess():
+    result = resolve_voice_time("17:30", "CUSTOMER: book tomorrow at 5:30 AM",
+                                hours("09:00", "18:00"), date(2026, 11, 16), CALL)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(5, 30)
+
+
 def test_247_business_requires_am_pm_clarification():
     result = resolve_voice_time("5:30", "CUSTOMER: 5:30",
                                 hours("00:00", "23:59"), date(2026, 11, 16), CALL)
