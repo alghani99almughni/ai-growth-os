@@ -80,7 +80,7 @@ Standalone AI Voice SaaS with one combined Render web service (Next.js + FastAPI
 - The current Knowledge Agent is a deterministic transcript Q/A extractor, not yet a continuously running autonomous background worker.
 - It uses transcript AI responses as unverified candidate material; Super Admin must verify/edit before approval.
 - The Super Admin Conversation Hub currently lists voice CallRecord transcripts, not every channel's conversation history.
-- The booking-time resolver has 17/17 isolated logic checks in a local harness; this is not a GitHub Actions result or browser E2E evidence. The latest GitHub commit has no reported status checks yet.
+- The booking-time resolver has 18/18 isolated logic checks in a local harness; this is not a GitHub Actions result or browser E2E evidence. The latest GitHub commit has no reported status checks yet.
 - Source-level implementation outside those isolated checks has not yet been proven by a passing CI run or end-to-end test.
 - Free zero-paid-AI-token voice calls, whole-call recording/CRM, and live DID/SIP routing remain separate production gates.
 
