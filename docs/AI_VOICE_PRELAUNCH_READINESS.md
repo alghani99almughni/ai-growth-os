@@ -17,6 +17,8 @@ Standalone AI Voice SaaS with one combined Render web service (Next.js + FastAPI
 - Completed browser voice call finalizer attempts transcript processing.
 - Approved candidate is written to the matching tenant's KnowledgeItem; tenant_id is preserved.
 - Super Admin workspace links to Conversation Hub.
+- Voice booking now has a deterministic AM/PM resolver that uses the persisted UTC call-start timestamp converted to tenant-local time, tenant business hours and the customer-only transcript.
+- Relative appointment dates are re-resolved server-side from the most recent customer date utterance using the call-start date; booking rechecks live availability and staff before commit.
 
 ## Mandatory prelaunch gates
 
@@ -27,6 +29,13 @@ Standalone AI Voice SaaS with one combined Render web service (Next.js + FastAPI
 - [ ] Run API unit tests and focused Knowledge Agent tests.
 - [ ] Verify all new API routes are registered and platform-admin authorization is enforced.
 - [ ] Verify migrations/schema support KnowledgeCandidate, KnowledgeItem and InteractionEvent in a fresh database.
+
+### Booking interpretation and final availability
+- [ ] GitHub Actions booking-time unit tests pass on the latest ai-voice commit.
+- [ ] Browser E2E verifies call-start timezone conversion, today/tomorrow/weekdays, explicit AM/PM, ambiguous AM/PM, 24/7 clarification and standalone AM/PM follow-up.
+- [ ] New booking and rescheduling both use the call-start timestamp and tenant hours.
+- [ ] Availability is checked before read-back and rechecked after customer confirmation; concurrent booking conflict is rejected.
+- [ ] Verify overnight hours, cross-midnight slots, all-day hours and same-day past-time rejection.
 
 ### B. Conversation capture and learning
 - [ ] Verify browser voice call transcripts persist every customer and AI turn.
@@ -71,7 +80,8 @@ Standalone AI Voice SaaS with one combined Render web service (Next.js + FastAPI
 - The current Knowledge Agent is a deterministic transcript Q/A extractor, not yet a continuously running autonomous background worker.
 - It uses transcript AI responses as unverified candidate material; Super Admin must verify/edit before approval.
 - The Super Admin Conversation Hub currently lists voice CallRecord transcripts, not every channel's conversation history.
-- Source-level implementation has not yet been proven by a passing CI run or end-to-end test.
+- The booking-time resolver has 16/16 isolated logic checks in a local harness; this is not a GitHub Actions result or browser E2E evidence. The latest GitHub commit has no reported status checks yet.
+- Source-level implementation outside those isolated checks has not yet been proven by a passing CI run or end-to-end test.
 - Free zero-paid-AI-token voice calls, whole-call recording/CRM, and live DID/SIP routing remain separate production gates.
 
 ## Release rule
