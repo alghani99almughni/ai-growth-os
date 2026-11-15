@@ -33,6 +33,21 @@ def test_explicit_customer_am_is_never_rewritten():
     assert result["explicit"] is True
 
 
+def test_latest_explicit_customer_correction_wins():
+    transcript = "CUSTOMER: book for 9 AM\\nCUSTOMER: sorry, make that 9 PM"
+    result = resolve_voice_time("9 AM", transcript, hours("00:00", "23:59"),
+                                date(2026, 11, 16), CALL)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(21, 0)
+
+
+def test_spoken_local_language_time_marker_is_preserved():
+    result = resolve_voice_time("5:30 PM", "CUSTOMER: 5:30 ఉదయం",
+                                hours("09:00", "18:00"), date(2026, 11, 16), CALL)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(5, 30)
+
+
 def test_assistant_meridian_does_not_override_bare_customer_time():
     transcript = "CUSTOMER: 5:30 please\nAI: Did you mean 5:30 PM?"
     result = resolve_voice_time("5:30 PM", transcript, hours("09:00", "18:00"),
