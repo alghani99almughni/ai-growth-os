@@ -24,7 +24,7 @@ export default function Home() {
       </div>
       <div className="visual" aria-label="Illustration of a live AI voice conversation">
         <div className="visualtop"><span>AI VOICE SESSION</span><span className="live">● LIVE EXPERIENCE</span></div>
-        <div className="wave">{bars.map((h,i)=><i key={i} style={{"--h":h+"px"} as React.CSSProperties}/>)}</div>
+        <div className="wave">{bars.map((h,i)=><i key={i} style={{height:h+"px"}}/>)}</div>
         <div className="callrow"><span>Conversation status</span><strong>Ready to assist</strong></div>
         <div className="callrow"><span>Knowledge source</span><strong>Business-approved</strong></div>
         <div className="callrow"><span>Next step</span><strong>Human handoff available</strong></div>
