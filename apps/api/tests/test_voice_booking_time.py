@@ -72,6 +72,14 @@ def test_model_24_hour_pm_guess_does_not_resolve_bare_time_for_247():
     assert result["status"] == "clarification_required"
 
 
+def test_customer_spoken_24_hour_value_survives_model_normalization():
+    result = resolve_voice_time("5:30 PM", "CUSTOMER: book tomorrow at 17:30",
+                                hours("00:00", "23:59"), date(2026, 11, 16), CALL)
+    assert result["status"] == "resolved"
+    assert result["time"] == time(17, 30)
+    assert result["explicit"] is True
+
+
 def test_explicit_customer_am_overrides_model_24_hour_pm_guess():
     result = resolve_voice_time("17:30", "CUSTOMER: book tomorrow at 5:30 AM",
                                 hours("09:00", "18:00"), date(2026, 11, 16), CALL)
