@@ -146,18 +146,19 @@ def _parse_new_start(db, tenant: Tenant, call: CallRecord, text: str):
     )
     raw_time = str(entities.get("time") or "").strip().upper().replace(".", "")
     if not target_date or not raw_time:
-        return None
+        return {"status": "missing"}
     hours = db.scalar(select(BusinessHour).where(
         BusinessHour.tenant_id == tenant.id,
         BusinessHour.weekday == target_date.weekday(),
     ))
-    resolved = resolve_voice_time(
-        raw_time, (call.transcript or "") + "\nCUSTOMER: " + text,
-        hours, target_date, call_local,
-    )
+    transcript = (call.transcript or "") + "\nCUSTOMER: " + text
+    resolved = resolve_voice_time(raw_time, transcript, hours, target_date, call_local)
+    if resolved.get("status") == "clarification_required":
+        return {"status": "clarification_required", "date": target_date,
+                "time": raw_time, "candidates": resolved.get("candidates", [])}
     if resolved.get("status") != "resolved":
-        return None
-    return datetime.combine(target_date, resolved["time"])
+        return {"status": "missing"}
+    return {"status": "resolved", "starts_at": datetime.combine(target_date, resolved["time"])}
 
 
 def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
@@ -221,10 +222,50 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                     "appointment_action": {"status": "cancelled", "appointment_id": appointment.id}}
 
         if step == "reschedule_wait":
-            requested = _parse_new_start(db, tenant, call, message)
-            if not requested:
+            parsed = None
+            pending = None
+            if requested_iso and requested_iso.startswith("pending|"):
+                parts = requested_iso.split("|", 2)
+                if len(parts) == 3:
+                    pending = (parts[1], parts[2])
+            meridian_only = bool(re.fullmatch(
+                r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\\s+)?"
+                r"(?:am|a\\.?m\\.?|pm|p\\.?m\\.?|morning|afternoon|evening|night)"
+                r"(?:\\s+please)?",
+                (message or "").strip(), re.I
+            ))
+            if pending and meridian_only:
+                pending_date = datetime.fromisoformat(pending[0]).date()
+                pending_time = pending[1]
+                pending_hours = db.scalar(select(BusinessHour).where(
+                    BusinessHour.tenant_id == tenant.id,
+                    BusinessHour.weekday == pending_date.weekday(),
+                ))
+                call_local = call_local_datetime(call.started_at, tenant.timezone)
+                resolved = resolve_voice_time(
+                    pending_time, (call.transcript or "") + "\\nCUSTOMER: " + message,
+                    pending_hours, pending_date, call_local,
+                )
+                if resolved.get("status") == "resolved":
+                    parsed = {"status": "resolved",
+                              "starts_at": datetime.combine(pending_date, resolved["time"])}
+                else:
+                    parsed = {"status": "clarification_required", "date": pending_date,
+                              "time": pending_time, "candidates": resolved.get("candidates", [])}
+            else:
+                parsed = _parse_new_start(db, tenant, call, message)
+            if parsed.get("status") == "clarification_required":
+                if conversation:
+                    conversation.state = f"voice_action:reschedule_wait:{appointment.id}:pending|{parsed['date'].isoformat()}|{parsed['time']}"
+                    db.commit()
+                label = parsed["time"]
+                return {"reply": f"Do you mean {label} AM or PM?",
+                        "appointment_action": {"status": "awaiting_am_pm", "appointment_id": appointment.id,
+                                               "date": parsed["date"].isoformat(), "time": label}}
+            if parsed.get("status") != "resolved":
                 return {"reply": "What new date and time would you prefer? Please include AM or PM, for example Monday at 11 AM.",
                         "appointment_action": {"status": "awaiting_new_time", "appointment_id": appointment.id}}
+            requested = parsed["starts_at"]
             if requested <= call_local_datetime(call.started_at, tenant.timezone):
                 return {"reply": "That time is in the past. Please choose a future date and time, including AM or PM.",
                         "appointment_action": {"status": "slot_unavailable", "appointment_id": appointment.id}}
