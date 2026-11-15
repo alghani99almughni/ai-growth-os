@@ -27,14 +27,19 @@ def customer_only_transcript(transcript: str | None) -> str:
 def _matches_meridian(text: str, hour: int, minute: int) -> str | None:
     h12 = hour % 12 or 12
     time_pattern = rf"(?<!\d)0?{h12}(?::0?{minute:02d})?\s*(a\.?m\.?|p\.?m\.?)"
-    match = re.search(time_pattern, text or "", re.I)
-    if match:
+    matches = list(re.finditer(time_pattern, text or "", re.I))
+    if matches:
+        # The latest customer correction wins (e.g. "9 AM — sorry, 9 PM").
+        match = matches[-1]
         return "AM" if match.group(1).lower().startswith("a") else "PM"
-    # Common explicit spoken equivalents; do not infer from assistant turns.
-    phrase = rf"(?<!\d)0?{h12}(?::0?{minute:02d})?\s+(?:in the )?(morning|afternoon|evening|night)"
-    match = re.search(phrase, text or "", re.I)
-    if match:
-        return "AM" if match.group(1).lower() == "morning" else "PM"
+    # Explicit spoken equivalents in English and common Indian languages.
+    am_words = r"morning|subah|सुबह|ఉదయం|காலை|ಬೆಳಿಗ್ಗೆ|രാവിലെ|सकाळी|সকাল|સવારે|ਸਵੇਰੇ|صبح"
+    pm_words = r"afternoon|evening|night|shaam|शाम|సాయంత్రం|రాత్రి|மாலை|இரவு|ಸಂಜೆ|ರಾತ್ರಿ|വൈകുന്നേരം|സന്ധ്യ|संध्याकाळी|সন্ধ্যা|রাত|સાંજે|ਸ਼ਾਮ|رات"
+    phrase = rf"(?<!\d)0?{h12}(?::0?{minute:02d})?\s+(?:in the )?({am_words}|{pm_words})"
+    matches = list(re.finditer(phrase, text or "", re.I))
+    if matches:
+        word = matches[-1].group(1).casefold()
+        return "AM" if word in {"morning", "subah", "सुबह", "ఉదయం", "காலை", "ಬೆಳಿಗ್ಗೆ", "രാവിലെ", "सकाळी", "সকাল", "સવારે", "ਸਵੇਰੇ", "صبح"} else "PM"
     return None
 
 
