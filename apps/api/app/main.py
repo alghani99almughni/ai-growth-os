@@ -12,9 +12,9 @@ from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyT
 from .models_ai import GlobalFaq,Conversation,ConversationMessage,Department,StaffMember,StaffServiceAssignment,RoleDefinition,InteractionEvent
 from .schemas import *
 from .services import *
-from .brain import generate_reply,knowledge_context
+from .brain import generate_reply,knowledge_context,extract_booking_entities,resolve_booking_date
 from .voice_booking_actions import handle_voice_appointment_action
-from .voice_booking_time import call_local_datetime, resolve_voice_time
+from .voice_booking_time import call_local_datetime, resolve_voice_time, customer_only_transcript
 from .config import settings
 from .signaling import signal
 from .events import publish_event_sync, subscribe_events
@@ -2616,6 +2616,19 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 if not capability_enabled(tenant_policy(db,tenant.id),"bookings",True):
                                     raise ValueError("Appointments are disabled for this business.")
                                 requested_date=date.fromisoformat(str(args.get("date","")))
+                                # Re-resolve relative dates from customer turns using the persisted call start.
+                                # Keep the most recent customer turn that actually supplied a date.
+                                customer_turns=customer_only_transcript(call.transcript).splitlines()
+                                for customer_turn in reversed(customer_turns):
+                                    date_entities=extract_booking_entities(customer_turn)
+                                    if date_entities.get("day") or date_entities.get("relative_day") or date_entities.get("date_hint"):
+                                        call_resolved_date=resolve_booking_date(
+                                            tenant,date_entities.get("day"),date_entities.get("relative_day"),
+                                            date_entities.get("date_hint"),reference_datetime=call_local
+                                        )
+                                        if call_resolved_date:
+                                            requested_date=call_resolved_date
+                                        break
                                 service_id=str(args.get("service_id","")).strip()
                                 service=db.scalar(select(Service).where(Service.id==service_id,Service.tenant_id==tenant.id,Service.is_active==True)) if service_id else db.scalar(select(Service).where(Service.tenant_id==tenant.id,Service.is_active==True).order_by(Service.name).limit(1))
                                 if not service:
@@ -2688,6 +2701,22 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 if not raw_starts:
                                     raise ValueError("Appointment date and time are required.")
                                 starts_at=datetime.fromisoformat(raw_starts.replace("Z","+00:00"))
+                                # Do not rely on the realtime model's calendar arithmetic. Resolve the
+                                # latest customer-supplied relative date from the actual call timestamp.
+                                customer_turns=customer_only_transcript(call.transcript).splitlines()
+                                for customer_turn in reversed(customer_turns):
+                                    date_entities=extract_booking_entities(customer_turn)
+                                    if date_entities.get("day") or date_entities.get("relative_day") or date_entities.get("date_hint"):
+                                        call_resolved_date=resolve_booking_date(
+                                            tenant,date_entities.get("day"),date_entities.get("relative_day"),
+                                            date_entities.get("date_hint"),reference_datetime=call_local
+                                        )
+                                        if call_resolved_date:
+                                            starts_at=starts_at.replace(
+                                                year=call_resolved_date.year,month=call_resolved_date.month,
+                                                day=call_resolved_date.day
+                                            )
+                                        break
                                 # Appointment times from the voice model are business-local.
                                 # Normalize aware values into the tenant-local wall clock before
                                 # create_appointment converts them to UTC.
