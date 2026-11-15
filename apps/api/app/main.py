@@ -32,6 +32,7 @@ from .notifications import send_owner_credentials,send_password_reset
 from .migrations import ensure_schema
 from .faq_seed import FAQS
 from .ai_router import detect_language
+from .voice_knowledge_agent import process_call_transcript
 from .tenant_policy import tenant_policy, capability_enabled, policy_context
 from .website_templates import get_template as _get_site_template
 from .website_templates import merge_with_tenant as _merge_site_content
@@ -2788,6 +2789,11 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
             if call.status not in {"handoff_requested","handoff_accepted","connected"}: call.status="ended"
             if not call.resolution: call.resolution="completed"
             db.commit()
+            try:
+                process_call_transcript(db, call)
+            except Exception:
+                logging.getLogger("uvicorn.error").exception("VOICE_KNOWLEDGE_AGENT_FAILED call_id=%s", call.id)
+                db.rollback()
         finally: db.close()
 
 def _voice_conversation_for_call(db: Session, tenant_id: str, call_id: str|None, requested_conversation_id: str|None):
@@ -4463,3 +4469,162 @@ app.include_router(build_ai_voice_router(get_current_user, get_db, require_tenan
 # Additive inbound PSTN phone channel; existing PWA/WebRTC voice routes are unchanged.
 from .telephony_twilio import router as twilio_telephony_router
 app.include_router(twilio_telephony_router)
+
+
+# --- Super Admin: AI Voice Conversation Hub + Knowledge Agent ---
+@app.get("/api/v1/ai-voice/platform/conversations")
+def platform_voice_conversations(
+    tenant_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_platform_admin(user)
+    q = select(CallRecord)
+    if tenant_id:
+        q = q.where(CallRecord.tenant_id == tenant_id)
+    if status:
+        q = q.where(CallRecord.status == status)
+    rows = db.scalars(q.order_by(CallRecord.created_at.desc()).limit(limit)).all()
+    items = []
+    for call in rows:
+        customer = db.get(Customer, call.customer_id) if call.customer_id else None
+        items.append({
+            "id": call.id, "tenant_id": call.tenant_id,
+            "tenant_name": (db.get(Tenant, call.tenant_id).name if db.get(Tenant, call.tenant_id) else call.tenant_id),
+            "customer_id": call.customer_id,
+            "customer_name": customer.name if customer else None,
+            "customer_phone": customer.phone if customer else None,
+            "source": call.source, "status": call.status, "language": call.language,
+            "started_at": call.started_at.isoformat() if call.started_at else None,
+            "ended_at": call.ended_at.isoformat() if call.ended_at else None,
+            "duration_seconds": call.duration_seconds, "intent": call.intent,
+            "resolution": call.resolution, "summary": call.summary,
+            "transcript": call.transcript or "",
+        })
+    return {"items": items, "count": len(items)}
+
+
+@app.get("/api/v1/ai-voice/platform/conversations/{call_id}")
+def platform_voice_conversation_detail(
+    call_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_platform_admin(user)
+    call = db.get(CallRecord, call_id)
+    if not call:
+        raise HTTPException(404, "Conversation not found")
+    customer = db.get(Customer, call.customer_id) if call.customer_id else None
+    tenant = db.get(Tenant, call.tenant_id)
+    return {
+        "id": call.id, "tenant_id": call.tenant_id,
+        "tenant_name": tenant.name if tenant else call.tenant_id,
+        "customer_id": call.customer_id,
+        "customer_name": customer.name if customer else None,
+        "customer_phone": customer.phone if customer else None,
+        "source": call.source, "status": call.status, "language": call.language,
+        "started_at": call.started_at.isoformat() if call.started_at else None,
+        "ended_at": call.ended_at.isoformat() if call.ended_at else None,
+        "duration_seconds": call.duration_seconds, "intent": call.intent,
+        "resolution": call.resolution, "summary": call.summary,
+        "transcript": call.transcript or "",
+    }
+
+
+@app.post("/api/v1/ai-voice/platform/learning/process")
+def platform_process_voice_learning(
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_platform_admin(user)
+    calls = db.scalars(select(CallRecord).where(
+        CallRecord.transcript.is_not(None),
+        CallRecord.transcript != "",
+        CallRecord.ended_at.is_not(None),
+    ).order_by(CallRecord.ended_at.desc()).limit(limit)).all()
+    results = [process_call_transcript(db, call) for call in calls]
+    return {
+        "calls_checked": len(calls),
+        "calls_processed": sum(1 for item in results if item.get("processed")),
+        "candidates_created": sum(int(item.get("created", 0)) for item in results),
+        "candidates_updated": sum(int(item.get("updated", 0)) for item in results),
+    }
+
+
+@app.get("/api/v1/ai-voice/platform/learning/candidates")
+def platform_voice_learning_candidates(
+    status: str = "pending",
+    tenant_id: str | None = None,
+    limit: int = Query(default=200, ge=1, le=500),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_platform_admin(user)
+    q = select(KnowledgeCandidate)
+    if status != "all":
+        q = q.where(KnowledgeCandidate.status == status)
+    if tenant_id:
+        q = q.where(KnowledgeCandidate.tenant_id == tenant_id)
+    rows = db.scalars(q.order_by(KnowledgeCandidate.last_asked_at.desc()).limit(limit)).all()
+    return {"items": [{
+        "id": row.id, "tenant_id": row.tenant_id,
+        "tenant_name": (db.get(Tenant, row.tenant_id).name if db.get(Tenant, row.tenant_id) else row.tenant_id),
+        "question": row.question, "answer": row.answer, "language": row.language,
+        "intent": row.intent, "status": row.status, "source": row.source,
+        "provider": row.provider, "times_asked": row.times_asked,
+        "last_asked_at": row.last_asked_at.isoformat() if row.last_asked_at else None,
+    } for row in rows]}
+
+
+@app.post("/api/v1/ai-voice/platform/learning/candidates/{candidate_id}/approve")
+def platform_approve_voice_knowledge(
+    candidate_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_platform_admin(user)
+    candidate = db.get(KnowledgeCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Knowledge candidate not found")
+    if candidate.status == "rejected":
+        raise HTTPException(409, "Rejected knowledge cannot be approved")
+    existing = db.scalar(select(KnowledgeItem).where(
+        KnowledgeItem.tenant_id == candidate.tenant_id,
+        KnowledgeItem.title == candidate.question,
+        KnowledgeItem.source == "conversation_learning",
+        KnowledgeItem.is_active == True,
+    ))
+    if existing:
+        existing.content = candidate.answer
+        existing.approval_status = "approved"
+        item = existing
+    else:
+        item = KnowledgeItem(
+            tenant_id=candidate.tenant_id, title=candidate.question,
+            content=candidate.answer, kind="learned_faq",
+            language=candidate.language, source="conversation_learning",
+            approval_status="approved",
+        )
+        db.add(item)
+    candidate.status = "approved"
+    db.commit()
+    db.refresh(item)
+    return {"candidate_id": candidate.id, "knowledge_id": item.id, "tenant_id": candidate.tenant_id, "status": "approved"}
+
+
+@app.post("/api/v1/ai-voice/platform/learning/candidates/{candidate_id}/reject")
+def platform_reject_voice_knowledge(
+    candidate_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    require_platform_admin(user)
+    candidate = db.get(KnowledgeCandidate, candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Knowledge candidate not found")
+    candidate.status = "rejected"
+    db.commit()
+    return {"candidate_id": candidate.id, "status": "rejected"}
