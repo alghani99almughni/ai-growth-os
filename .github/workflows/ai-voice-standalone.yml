@@ -4,11 +4,17 @@ on:
     branches: [ai-voice]
     paths:
       - "apps/ai-voice-standalone/web/**"
+      - "apps/api/**"
+      - "deploy/ai-voice/**"
+      - "render.ai-voice.yaml"
       - ".github/workflows/ai-voice-standalone.yml"
   pull_request:
     branches: [ai-voice]
     paths:
       - "apps/ai-voice-standalone/web/**"
+      - "apps/api/**"
+      - "deploy/ai-voice/**"
+      - "render.ai-voice.yaml"
       - ".github/workflows/ai-voice-standalone.yml"
 jobs:
   build:
@@ -26,6 +32,6 @@ jobs:
       - run: npm install
       - run: npm run build
 
-      - name: Build combined frontend and API image
+      - name: Build combined frontend and API image (includes API import smoke test)
         run: docker build -f deploy/ai-voice/Dockerfile -t ai-voice:ci .
         working-directory: .
