@@ -229,9 +229,9 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                 if len(parts) == 3:
                     pending = (parts[1], parts[2])
             meridian_only = bool(re.fullmatch(
-                r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\\s+)?"
+                r"(?:(?:i mean|i meant|make it|sorry|no|yes|please|in the)\s+)?"
                 r"(?:am|a\\.?m\\.?|pm|p\\.?m\\.?|morning|afternoon|evening|night)"
-                r"(?:\\s+please)?",
+                r"(?:\s+please)?",
                 (message or "").strip(), re.I
             ))
             if pending and meridian_only:
@@ -243,7 +243,7 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
                 ))
                 call_local = call_local_datetime(call.started_at, tenant.timezone)
                 resolved = resolve_voice_time(
-                    pending_time, (call.transcript or "") + "\\nCUSTOMER: " + message,
+                    pending_time, (call.transcript or "") + "\nCUSTOMER: " + message,
                     pending_hours, pending_date, call_local,
                 )
                 if resolved.get("status") == "resolved":
