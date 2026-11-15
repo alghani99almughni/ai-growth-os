@@ -2730,7 +2730,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                     BusinessHour.tenant_id==tenant.id,BusinessHour.weekday==starts_at.weekday()
                                 ))
                                 import re as _re
-                                customer_text=customer_only_transcript(call.transcript).replace("\\n"," ")
+                                customer_text=customer_only_transcript(call.transcript)
                                 spoken_24h=bool(_re.search(
                                     r"(?<!\d)"+f"{starts_at.hour:02d}:{starts_at.minute:02d}"+r"(?!\d)",
                                     customer_text
