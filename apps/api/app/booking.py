@@ -140,7 +140,8 @@ def available_slots(db: Session, tenant: Tenant, service_id: str, day: date, sta
     # Voice booking supplies the actual call-start timestamp in tenant-local
     # wall time, so "today" and past-slot filtering stay anchored to the call.
     # Other callers continue to use the current tenant-local wall clock.
-    effective_now = reference_now or datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
+    wall_clock_now = datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
+    effective_now = max(reference_now, wall_clock_now) if reference_now else wall_clock_now
     if day == effective_now.date():
         now_local = effective_now
         interval_minutes = max(5, rule.slot_interval_minutes or 30)
