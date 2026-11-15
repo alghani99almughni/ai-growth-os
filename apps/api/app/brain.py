@@ -406,10 +406,12 @@ def previous_booking_context(db: Session, conversation_id: str, current_message:
     return ctx
 
 
-def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, date_hint: int|None = None):
+def resolve_booking_date(tenant: Tenant, day: str|None, relative_day: str|None, date_hint: int|None = None, reference_datetime=None):
     from datetime import date as _date, timedelta as _timedelta
     from zoneinfo import ZoneInfo as _ZoneInfo
-    now_local=__import__("datetime").datetime.now(_ZoneInfo(tenant.timezone)).date()
+    # Voice calls pass their persisted UTC call-start converted to tenant local time.
+    # Non-voice callers retain the wall-clock default.
+    now_local=(reference_datetime.date() if reference_datetime is not None else __import__("datetime").datetime.now(_ZoneInfo(tenant.timezone)).date())
     if relative_day=="yesterday":
         return now_local - _timedelta(days=1)
     if relative_day=="today":
