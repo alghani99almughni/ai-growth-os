@@ -1,0 +1,27 @@
+name: AI Voice Standalone Web
+on:
+  push:
+    branches: [ai-voice]
+    paths:
+      - "apps/ai-voice-standalone/web/**"
+      - ".github/workflows/ai-voice-standalone.yml"
+  pull_request:
+    branches: [ai-voice]
+    paths:
+      - "apps/ai-voice-standalone/web/**"
+      - ".github/workflows/ai-voice-standalone.yml"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/ai-voice-standalone/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/ai-voice-standalone/web/package.json
+      - run: npm install
+      - run: npm run build
