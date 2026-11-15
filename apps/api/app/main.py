@@ -87,7 +87,7 @@ from .agent_training import AGENT_TRAINING_CONTEXT
 voice_gateway = VoiceGateway({"gemini": GeminiLiveAdapter(), "openai": OpenAIRealtimeAdapter()})
 
 from .routing import route_call, available_staff
-from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot
+from .booking import ensure_default_hours, available_slots, create_appointment, queue_snapshot, is_inside_hours
 from .industry_templates import seed_industry_defaults
 from .integration_routes import router as integration_router
 from .social_routes import router as social_router
@@ -2441,7 +2441,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
         {"name":"save_customer_identity","description":"Save the customer's name and mobile number.","parameters":{"type":"OBJECT","properties":{"name":{"type":"STRING"},"phone":{"type":"STRING"}},"required":["name","phone"]}}
     ]
     if capability_enabled(policy,"bookings",True):
-        tool_declarations.append({"name":"check_availability","description":"Check the owned appointment calendar for a specific calendar date and optional time. ALWAYS use this before saying a requested appointment slot is available. The date must be YYYY-MM-DD in the tenant timezone. If service_id is omitted, use the first active service.","parameters":{"type":"OBJECT","properties":{"date":{"type":"STRING"},"time":{"type":"STRING"},"service_id":{"type":"STRING"},"staff_id":{"type":"STRING"}},"required":["date"]}})
+        tool_declarations.append({"name":"check_availability","description":"Check the owned appointment calendar for a specific calendar date and optional time. ALWAYS use this before saying a requested appointment slot is available. For bare ambiguous times, ask AM/PM if the server reports needs_clarification. The date must be YYYY-MM-DD in the tenant timezone. If service_id is omitted, use the first active service.","parameters":{"type":"OBJECT","properties":{"date":{"type":"STRING"},"time":{"type":"STRING"},"service_id":{"type":"STRING"},"staff_id":{"type":"STRING"}},"required":["date"]}})
         tool_declarations.append({"name":"create_booking","description":"Create a confirmed appointment ONLY after the customer has explicitly said yes/confirm/that's fine to the exact calendar date, time and service. Never call this merely because the customer supplied details. The server performs a final availability check.","parameters":{"type":"OBJECT","properties":{"service_id":{"type":"STRING"},"starts_at":{"type":"STRING"},"name":{"type":"STRING"},"phone":{"type":"STRING"},"staff_id":{"type":"STRING"},"notes":{"type":"STRING"},"confirmed":{"type":"BOOLEAN"}},"required":["service_id","starts_at","name","phone","confirmed"]}})
     tool_declarations.append({"name":"request_human_handoff","description":"Request a real human executive when the customer explicitly asks for a person, when the requested issue cannot be resolved from approved business knowledge/tools, or when tenant policy requires human assistance. Do not use this for ordinary FAQs, missing booking details, or simple acknowledgements.","parameters":{"type":"OBJECT","properties":{"reason":{"type":"STRING"},"department":{"type":"STRING"}},"required":["reason"]}})
     providers=[]
@@ -2729,7 +2729,7 @@ Be concise, warm, natural, and conversational. Do not read database-style lists 
                                 # hours and live availability before committing anything.
                                 if weekday_rule and weekday_rule.is_closed:
                                     raise ValueError("The business is closed at that time.")
-                                if weekday_rule and (starts_at.time()<weekday_rule.open_time or starts_at.time()>=weekday_rule.close_time):
+                                if weekday_rule and (not is_inside_hours(weekday_rule.open_time,weekday_rule.close_time,starts_at.time()) or not is_inside_hours(weekday_rule.open_time,weekday_rule.close_time,(starts_at+timedelta(minutes=(service.duration_minutes or 30))-timedelta(minutes=1)).time())):
                                     raise ValueError("That time is outside business hours.")
                                 staff_id=str(args.get("staff_id")).strip() if args.get("staff_id") else None
                                 a,q=create_appointment(
