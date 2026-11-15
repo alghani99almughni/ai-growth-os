@@ -14,11 +14,7 @@ WORKDIR /app
 COPY apps/api/requirements.txt /app/requirements.txt
 RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 COPY apps/api /app/api
-COPY --from=web-build /workspace/apps/ai-voice-standalone/web/.next /app/web/.next
-COPY --from=web-build /workspace/apps/ai-voice-standalone/web/public /app/web/public
-COPY --from=web-build /workspace/apps/ai-voice-standalone/web/package.json /app/web/package.json
-COPY --from=web-build /workspace/apps/ai-voice-standalone/web/node_modules /app/web/node_modules
-COPY --from=web-build /workspace/apps/ai-voice-standalone/web/next.config.ts /app/web/next.config.ts
+COPY --from=web-build /workspace/apps/ai-voice-standalone/web /app/web
 COPY deploy/ai-voice/nginx.conf.template /etc/nginx/templates/ai-voice.conf.template
 COPY deploy/ai-voice/supervisord.conf /etc/supervisor/conf.d/ai-voice.conf
 COPY deploy/ai-voice/start.sh /app/start.sh
