@@ -25,6 +25,7 @@ Scope: `ai-voice` branch only. No Render deployment and no changes to `main`.
 - Call timestamp is stored as UTC; verify the exact tenant-local timestamp used by date resolution, availability and rescheduling.
 - Model suggests AM/PM but the customer transcript did not; the model suggestion must not count as explicit customer clarification.
 - Rescheduling uses the same call-start reference and AM/PM rules as new bookings.
+- If rescheduling requires AM/PM clarification, retain the pending date/time and accept a standalone "AM" or "PM" follow-up before reading back the new appointment.
 
 ## Mandatory AM/PM test cases
 
