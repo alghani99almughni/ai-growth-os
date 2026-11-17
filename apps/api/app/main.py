@@ -295,6 +295,9 @@ security=HTTPBearer(auto_error=False)
 async def startup():
     install_signal_handlers(app)
     ensure_schema()
+    # Initialize the separate AEO/GEO store without altering the operational DB schema.
+    from .visibility_db import init_visibility_db
+    init_visibility_db()
     try:
         from .migrations import ensure_email_schema
         ensure_email_schema()
@@ -4454,3 +4457,7 @@ async def run_campaign_batch(tenant_id: str, campaign_id: str):
     finally:
         db.close()
 # ============ END WHATSAPP BULK CAMPAIGNS ============
+
+# AEO/GEO visibility module (feature branch)
+from .routes_visibility import router as visibility_router
+app.include_router(visibility_router)

@@ -1,5 +1,5 @@
 from .db import Base,engine
-from . import models,models_growth,models_ai,models_integrations,models_security,models_email
+from . import models,models_growth,models_ai,models_integrations,models_security,models_email,models_visibility
 from . import industry_catalog
 from sqlalchemy import text, inspect
 
