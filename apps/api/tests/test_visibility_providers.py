@@ -310,3 +310,79 @@ def test_gemini_with_grounding_sources_is_search_grounded(monkeypatch):
     result = asyncio.run(providers.run_provider("gemini", "test-key", "gemini-test", "test prompt"))
     assert result["method"] == "search_grounded"
     assert result["citations"] == [{"url": "https://example.com/source", "title": "Source"}]
+
+
+def test_visibility_result_commit_success(monkeypatch):
+    from types import SimpleNamespace
+    from app.routes_visibility import _commit_visibility_result
+
+    class FakeDB:
+        def __init__(self):
+            self.commits = 0
+        def commit(self):
+            self.commits += 1
+
+    run = SimpleNamespace(id="run-1", completed_at=None, status="completed", error_code=None)
+    db = FakeDB()
+    assert _commit_visibility_result(db, run) is True
+    assert db.commits == 1
+    assert run.completed_at is not None
+
+
+def test_visibility_result_commit_failure_recovers_run_as_failed():
+    from types import SimpleNamespace
+    from app.models_visibility import VisibilityCheckRun
+    from app.routes_visibility import _commit_visibility_result
+
+    persisted = SimpleNamespace(id="run-2", status="running", error_code=None, completed_at=None)
+
+    class FakeDB:
+        def __init__(self):
+            self.commits = 0
+            self.rollbacks = 0
+        def commit(self):
+            self.commits += 1
+            if self.commits == 1:
+                raise RuntimeError("evidence persistence failed")
+        def rollback(self):
+            self.rollbacks += 1
+        def get(self, model, run_id):
+            assert model is VisibilityCheckRun
+            assert run_id == "run-2"
+            return persisted
+
+    db = FakeDB()
+    run = persisted
+    assert _commit_visibility_result(db, run) is True
+    assert db.commits == 2
+    assert db.rollbacks == 1
+    assert persisted.status == "failed"
+    assert persisted.error_code == "result_persistence_failed"
+    assert persisted.completed_at is not None
+
+
+def test_visibility_result_recovery_failure_returns_false_and_rolls_back():
+    from types import SimpleNamespace
+    from app.models_visibility import VisibilityCheckRun
+    from app.routes_visibility import _commit_visibility_result
+
+    persisted = SimpleNamespace(id="run-3", status="running", error_code=None, completed_at=None)
+
+    class FakeDB:
+        def __init__(self):
+            self.commits = 0
+            self.rollbacks = 0
+        def commit(self):
+            self.commits += 1
+            raise RuntimeError("database unavailable")
+        def rollback(self):
+            self.rollbacks += 1
+        def get(self, model, run_id):
+            assert model is VisibilityCheckRun
+            assert run_id == "run-3"
+            return persisted
+
+    db = FakeDB()
+    assert _commit_visibility_result(db, persisted) is False
+    assert db.commits == 2
+    assert db.rollbacks == 2
