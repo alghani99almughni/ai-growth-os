@@ -105,6 +105,9 @@ def test_reschedule_parser_uses_customer_call_time_for_same_day_meridian(monkeyp
 
     # Persisted call time is 10:00 UTC = 15:30 in the tenant's timezone.
     assert captured["reference_datetime"] == datetime(2026, 10, 11, 15, 30)
-    # 05:30 has passed; 17:30 is still in the future at the time of the call.
-    assert parsed["status"] == "resolved"
-    assert parsed["starts_at"] == datetime(2026, 10, 11, 17, 30)
+    # The call timestamp is passed into date resolution, but a 24/7 tenant
+    # must still ask the caller to choose AM or PM rather than guessing.
+    assert parsed["status"] == "clarification_required"
+    assert parsed["date"] == date(2026, 10, 11)
+    assert parsed["time"] == "5:30"
+    assert parsed["candidates"] == ["05:30", "17:30"]
