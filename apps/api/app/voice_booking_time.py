@@ -126,18 +126,22 @@ def resolve_voice_time(
 
     # A bare 12 means noon/midnight; evaluate both.
     candidates = [time(hour % 12, minute), time(hour % 12 + 12, minute)]
-    valid = []
-    for candidate in candidates:
-        inside = bool(hours and not hours.is_closed and _inside_hours(
+    inside_candidates = [
+        candidate for candidate in candidates
+        if hours and not hours.is_closed and _inside_hours(
             hours.open_time, hours.close_time, candidate
-        ))
-        future = appointment_date > call_local.date() or (
+        )
+    ]
+    valid = [
+        candidate for candidate in inside_candidates
+        if appointment_date > call_local.date() or (
             appointment_date == call_local.date()
             and datetime.combine(appointment_date, candidate) > call_local
         )
-        if inside and future:
-            valid.append(candidate)
-    if len(valid) == 1:
+    ]
+    # A 24/7 schedule admits both meridians. The call timestamp can reject a
+    # past slot later, but must never silently choose AM or PM for the caller.
+    if len(inside_candidates) == 1 and len(valid) == 1:
         return {"status": "resolved", "time": valid[0], "explicit": False,
                 "resolution": "unique_business_hours_and_call_time"}
     return {
