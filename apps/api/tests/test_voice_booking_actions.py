@@ -85,3 +85,26 @@ def test_reschedule_parser_uses_business_hours_to_resolve_unique_meridian(monkey
 
     assert parsed["status"] == "resolved"
     assert parsed["starts_at"] == datetime(2026, 10, 12, 17, 30)
+
+
+
+def test_reschedule_parser_uses_customer_call_time_for_same_day_meridian(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(actions, "extract_booking_entities", lambda _text: {
+        "day": "today", "relative_day": "today", "date_hint": None, "time": "5:30"
+    })
+
+    def resolve_date(_tenant, _day, _relative, _hint, reference_datetime=None):
+        captured["reference_datetime"] = reference_datetime
+        return date(2026, 10, 11)
+
+    monkeypatch.setattr(actions, "resolve_booking_date", resolve_date)
+    db, tenant, call = _parser_context("00:00", "23:59")
+
+    parsed = _parse_new_start(db, tenant, call, "Today at 5:30")
+
+    # Persisted call time is 10:00 UTC = 15:30 in the tenant's timezone.
+    assert captured["reference_datetime"] == datetime(2026, 10, 11, 15, 30)
+    # 05:30 has passed; 17:30 is still in the future at the time of the call.
+    assert parsed["status"] == "resolved"
+    assert parsed["starts_at"] == datetime(2026, 10, 11, 17, 30)
