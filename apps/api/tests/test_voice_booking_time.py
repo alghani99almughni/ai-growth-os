@@ -124,6 +124,14 @@ def test_247_business_requires_am_pm_clarification():
     assert result["valid_candidates"] == ["05:30", "17:30"]
 
 
+def test_247_business_still_requires_am_pm_when_call_time_excludes_past_candidate():
+    same_day_call = datetime(2026, 11, 15, 10, 0)  # 15:30 in Asia/Kolkata
+    result = resolve_voice_time("5:30", "CUSTOMER: today at 5:30",
+                                hours("00:00", "23:59"), date(2026, 11, 15), same_day_call)
+    assert result["status"] == "clarification_required"
+    assert result["valid_candidates"] == ["17:30"]
+
+
 def test_neither_interpretation_in_hours_requires_clarification():
     result = resolve_voice_time("5:30", "CUSTOMER: 5:30",
                                 hours("09:00", "12:00"), date(2026, 11, 16), CALL)
