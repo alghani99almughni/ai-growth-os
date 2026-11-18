@@ -36,7 +36,7 @@ def _pending(db, tenant, context):
 
 
 def _format_total(value: int) -> str:
-    return f"₹{value / 100:.2f}" if value % 100 else f"₹{value // 100}"
+    return f"₹{value:,}"
 
 
 async def handle_voice_order(db, tenant, message, language, entities, context):
