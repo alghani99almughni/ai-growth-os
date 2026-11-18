@@ -33,15 +33,23 @@ def test_reschedule_parser_requires_explicit_am_pm(monkeypatch):
     monkeypatch.setattr(actions, "extract_booking_entities", lambda text: {
         "day": "Monday", "relative_day": None, "date_hint": None, "time": "11:00"
     })
-    monkeypatch.setattr(actions, "resolve_booking_date", lambda tenant, day, relative, hint: date(2026, 10, 12))
-    tenant = SimpleNamespace(timezone="Asia/Kolkata")
-    assert _parse_new_start(tenant, "Monday at 11") is None
+    monkeypatch.setattr(actions, "resolve_booking_date", lambda tenant, day, relative, hint, **kwargs: date(2026, 10, 12))
+    monkeypatch.setattr(actions, "resolve_voice_time", lambda *args: {"status": "clarification_required", "candidates": []})
+    tenant = SimpleNamespace(id="t1", timezone="Asia/Kolkata")
+    call = SimpleNamespace(started_at=datetime(2026, 10, 10, 4, 0), transcript="")
+    db = SimpleNamespace(scalar=lambda query: None)
+    result = _parse_new_start(db, tenant, call, "Monday at 11")
+    assert result["status"] == "clarification_required"
 
 
 def test_reschedule_parser_converts_explicit_time(monkeypatch):
     monkeypatch.setattr(actions, "extract_booking_entities", lambda text: {
         "day": "Monday", "relative_day": None, "date_hint": None, "time": "11:00 AM"
     })
-    monkeypatch.setattr(actions, "resolve_booking_date", lambda tenant, day, relative, hint: date(2026, 10, 12))
-    tenant = SimpleNamespace(timezone="Asia/Kolkata")
-    assert _parse_new_start(tenant, "Monday at 11 AM") == datetime(2026, 10, 12, 11, 0)
+    monkeypatch.setattr(actions, "resolve_booking_date", lambda tenant, day, relative, hint, **kwargs: date(2026, 10, 12))
+    monkeypatch.setattr(actions, "resolve_voice_time", lambda *args: {"status": "resolved", "time": __import__("datetime").time(11, 0)})
+    tenant = SimpleNamespace(id="t1", timezone="Asia/Kolkata")
+    call = SimpleNamespace(started_at=datetime(2026, 10, 10, 4, 0), transcript="")
+    db = SimpleNamespace(scalar=lambda query: None)
+    result = _parse_new_start(db, tenant, call, "Monday at 11 AM")
+    assert result == {"status": "resolved", "starts_at": datetime(2026, 10, 12, 11, 0)}
