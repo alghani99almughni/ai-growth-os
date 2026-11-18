@@ -83,3 +83,33 @@ def test_greeting_without_customer_utterance_is_recorded():
     assert turn.customer_text == ""
     assert turn.ai_text == "Welcome"
     db.close()
+
+
+
+def test_call_links_only_to_customer_in_same_tenant():
+    db = make_session()
+    db.add_all([
+        Tenant(id="tenant-a", name="Tenant A", slug="tenant-a", industry="services"),
+        Tenant(id="tenant-b", name="Tenant B", slug="tenant-b", industry="services"),
+    ])
+    from app.models import Customer
+    db.add_all([
+        Customer(id="customer-a", tenant_id="tenant-a", name="Verified Caller", phone="+919876543210"),
+        Customer(id="customer-b", tenant_id="tenant-b", name="Other Tenant Caller", phone="+919876543211"),
+    ])
+    db.commit()
+
+    valid = CallRecorder(db, "tenant-a", customer_id="customer-a", customer_name="Guest")
+    valid_id = valid.start()
+    assert valid_id
+    valid_recording = db.get(CallRecording, valid_id)
+    assert valid_recording.customer_id == "customer-a"
+    assert valid_recording.customer_name == "Verified Caller"
+    assert valid_recording.customer_phone == "+919876543210"
+
+    cross_tenant = CallRecorder(db, "tenant-a", customer_id="customer-b")
+    cross_id = cross_tenant.start()
+    assert cross_id
+    cross_recording = db.get(CallRecording, cross_id)
+    assert cross_recording.customer_id is None
+    db.close()
