@@ -30,6 +30,7 @@ from .intent_handlers import (
     handle_emergency,
 )
 from .intent_handlers_hours import handle_business_hours
+from .voice_order_actions import handle_voice_order
 
 
 IntentHandler = Callable[..., object]
@@ -57,6 +58,8 @@ INTENT_HANDLERS: dict = {
 
     # Order lifecycle
     "order_status": handle_order_status,
+    "order_create": handle_voice_order,
+    "order_confirm": handle_voice_order,
     "delay_query":  handle_delay_query,
 
     # Communication
