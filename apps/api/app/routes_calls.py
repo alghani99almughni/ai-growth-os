@@ -105,6 +105,7 @@ async def recent_calls(
 @router.get("/problems")
 async def problem_calls(
     request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     limit: int = Query(50, ge=1, le=200),
     severity: Optional[str] = None,
 ):
