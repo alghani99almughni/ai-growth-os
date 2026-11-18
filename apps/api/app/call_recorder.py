@@ -148,6 +148,26 @@ class CallRecorder:
             logger.exception("assistant transcript persistence failed")
             self._rollback()
 
+    def record_transcription_gap(self, reason: str):
+        """Persist an explicit STT failure marker; never invent missing speech."""
+        if not self.recording_id:
+            return
+        try:
+            from .models_calls import CallTurn
+            self.turn_number += 1
+            now = datetime.utcnow()
+            turn = CallTurn(
+                recording_id=self.recording_id, turn_number=self.turn_number,
+                ts_started=now, ts_ended=now, customer_text="", ai_text="",
+                language=self.language_end, source="stt_gap",
+                error=("transcription_gap: " + (reason or "unknown"))[:4000],
+            )
+            self.db.add(turn)
+            self.db.commit()
+        except Exception:
+            logger.exception("transcription gap persistence failed")
+            self._rollback()
+
     def annotate_turn(self, **fields):
         if not self._current_turn_id:
             return
