@@ -40,9 +40,22 @@ class CallRecorder:
     def start(self) -> Optional[str]:
         """Persist call metadata before processing conversation turns."""
         try:
+            from .models import Customer
             from .models_calls import CallRecording
+
+            # Never attach a call to a customer owned by another tenant.
+            linked_customer_id = None
+            if self.customer_id:
+                customer = self.db.get(Customer, self.customer_id)
+                if customer and customer.tenant_id == self.tenant_id:
+                    linked_customer_id = customer.id
+                    self.customer_name = customer.name or self.customer_name
+                    self.customer_phone = customer.phone or self.customer_phone
+                else:
+                    logger.warning("Ignoring invalid/cross-tenant customer link tenant_id=%s", self.tenant_id)
+
             rec = CallRecording(
-                tenant_id=self.tenant_id, customer_id=self.customer_id,
+                tenant_id=self.tenant_id, customer_id=linked_customer_id,
                 call_record_id=self.call_record_id, customer_name=self.customer_name,
                 customer_phone=self.customer_phone, channel=self.channel,
                 language_start=self.language_start, language_end=self.language_end,
