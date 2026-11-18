@@ -19,27 +19,50 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.responses import Response
 from sqlalchemy import select, func, desc
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/calls", tags=["calls"])
+_bearer = HTTPBearer(auto_error=False)
 
 
 # ---------------------------------------------------------------------------
 # Helper — resolve tenant from request
 # ---------------------------------------------------------------------------
 
-def _tenant_id_from_request(request: Request) -> Optional[str]:
-    """Best-effort tenant resolution. Adjust to match your auth setup."""
-    # If you have a dependency that sets request.state.tenant_id, use it.
-    tid = getattr(request.state, "tenant_id", None)
-    if tid:
-        return tid
-    # Fallback: read from query params (dev only)
-    return request.query_params.get("tenant_id")
+def _tenant_id_from_request(request: Request, credentials: Optional[HTTPAuthorizationCredentials]) -> str:
+    """Resolve tenant exclusively from a validated bearer token."""
+    if not credentials or credentials.scheme.lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Authentication required")
+    from .config import settings
+    from .security import decode_token_strict
+    from .db import SessionLocal
+    from .models import User, Tenant
+    try:
+        claims = decode_token_strict(credentials.credentials, settings.jwt_secret, settings.jwt_algorithm)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid authentication token") from exc
+    user_id, token_tenant_id = claims.get("sub"), claims.get("tenant_id")
+    if not user_id or not token_tenant_id:
+        raise HTTPException(status_code=401, detail="Invalid tenant context")
+    db = SessionLocal()
+    try:
+        user = db.get(User, user_id)
+        if not user or not user.is_active or user.tenant_id != token_tenant_id:
+            raise HTTPException(status_code=401, detail="Invalid tenant context")
+        tenant = db.get(Tenant, user.tenant_id)
+        if not tenant or tenant.status != "active":
+            raise HTTPException(status_code=403, detail="Tenant is not active")
+        if user.role not in ("owner", "admin", "tenant_admin", "platform_admin", "super_admin"):
+            raise HTTPException(status_code=403, detail="Call history access denied")
+        request.state.tenant_id = user.tenant_id
+        return user.tenant_id
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -49,13 +72,14 @@ def _tenant_id_from_request(request: Request) -> Optional[str]:
 @router.get("/recent")
 async def recent_calls(
     request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = None,
 ):
     from .db import SessionLocal
     from .models_calls import CallRecording
 
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = _tenant_id_from_request(request, credentials)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="tenant_id required")
 
@@ -87,7 +111,7 @@ async def problem_calls(
     from .db import SessionLocal
     from .models_calls import CallRecording
 
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = _tenant_id_from_request(request, credentials)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="tenant_id required")
 
@@ -114,12 +138,12 @@ async def problem_calls(
 # ---------------------------------------------------------------------------
 
 @router.get("/{recording_id}")
-async def call_detail(recording_id: str, request: Request):
+async def call_detail(recording_id: str, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)):
     from .db import SessionLocal
     from .models_calls import CallRecording, CallTurn
     from .call_diagnostics import list_flags_for_recording
 
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = _tenant_id_from_request(request, credentials)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="tenant_id required")
 
@@ -151,7 +175,7 @@ async def call_detail(recording_id: str, request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/{recording_id}/audio/{side}/{turn_number}")
-async def get_audio(recording_id: str, side: str, turn_number: int, request: Request):
+async def get_audio(recording_id: str, side: str, turn_number: int, request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)):
     """Stream audio for a specific turn.
 
     side is 'customer' or 'ai'.
@@ -160,7 +184,7 @@ async def get_audio(recording_id: str, side: str, turn_number: int, request: Req
     from .models_calls import CallRecording, CallTurn
     from .call_storage import load_audio
 
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = _tenant_id_from_request(request, credentials)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="tenant_id required")
 
@@ -200,11 +224,11 @@ async def get_audio(recording_id: str, side: str, turn_number: int, request: Req
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/summary")
-async def stats_summary(request: Request):
+async def stats_summary(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)):
     from .db import SessionLocal
     from .models_calls import CallRecording
 
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = _tenant_id_from_request(request, credentials)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="tenant_id required")
 
@@ -249,11 +273,11 @@ async def stats_summary(request: Request):
 # ---------------------------------------------------------------------------
 
 @router.get("/stats/flags")
-async def top_flags(request: Request, limit: int = 10):
+async def top_flags(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer), limit: int = 10):
     from .db import SessionLocal
     from .models_calls import CallFlag, CallRecording
 
-    tenant_id = _tenant_id_from_request(request)
+    tenant_id = _tenant_id_from_request(request, credentials)
     if not tenant_id:
         raise HTTPException(status_code=401, detail="tenant_id required")
 
