@@ -86,3 +86,13 @@ test("silence and clipping stay within range", () => {
   const loud = downsampleToPcm16(Float32Array.from({ length: 480 }, () => 5), 48000);
   assert.ok(loud.every((v) => v === 32767));
 });
+
+
+test("voice microphone profile requests mono low-latency capture with browser audio processing", () => {
+  assert.equal(VOICE_AUDIO_CAPTURE_CONSTRAINTS.channelCount.ideal, 1);
+  assert.equal(VOICE_AUDIO_CAPTURE_CONSTRAINTS.sampleRate.ideal, 48000);
+  assert.equal(VOICE_AUDIO_CAPTURE_CONSTRAINTS.echoCancellation.ideal, true);
+  assert.equal(VOICE_AUDIO_CAPTURE_CONSTRAINTS.noiseSuppression.ideal, true);
+  assert.equal(VOICE_AUDIO_CAPTURE_CONSTRAINTS.autoGainControl.ideal, true);
+  assert.equal(VOICE_AUDIO_CAPTURE_CONSTRAINTS.latency.ideal, 0.02);
+});
