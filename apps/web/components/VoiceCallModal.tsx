@@ -22,7 +22,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { endpointDelayMs, nextRecognitionLang, downsampleToPcm16, pcm16ToBase64 } from "../lib/voiceEndpoint";
+import { endpointDelayMs, nextRecognitionLang, downsampleToPcm16, pcm16ToBase64, VOICE_AUDIO_CAPTURE_CONSTRAINTS } from "../lib/voiceEndpoint";
 
 type Props = {
   slug: string;
@@ -507,9 +507,9 @@ export default function VoiceCallModal({ slug, businessName, existingCustomerId,
   /* ---------- media helpers (Layers 2 and 3) ---------- */
   const getMic = async (): Promise<MediaStream> => {
     if (micStreamRef.current) return micStreamRef.current;
-    const s = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    // Prefer mono 48 kHz, browser echo cancellation, noise suppression and AGC.
+    // These are ideal constraints so unsupported devices can negotiate their best available mode.
+    const s = await navigator.mediaDevices.getUserMedia({ audio: VOICE_AUDIO_CAPTURE_CONSTRAINTS });
     micStreamRef.current = s;
     return s;
   };
