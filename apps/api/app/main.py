@@ -14,6 +14,7 @@ from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context,extract_booking_entities,resolve_booking_date
 from .voice_booking_actions import handle_voice_appointment_action
+from .voice_booking_policy import get_voice_booking_policy, save_voice_booking_policy
 from .voice_booking_time import call_local_datetime, resolve_voice_time, customer_only_transcript
 from .config import settings
 from .signaling import signal
@@ -52,6 +53,9 @@ from .hardening import (
     auth_rate_limit, enrich_health, install_signal_handlers,
 )
 from .security import check_secret, cleanup_expired_idempotency, decode_token_strict, verify_hmac_sha256, audit
+
+class VoiceBookingPolicyPayload(BaseModel):
+    last_minute_window_minutes: int = Field(default=30, ge=15, le=30)
 
 class RoutingRulePayload(BaseModel):
     name: str = Field(min_length=1, max_length=160)
@@ -3289,6 +3293,19 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
 def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
+@app.get("/api/v1/tenants/{tenant_id}/voice/booking-policy")
+def read_voice_booking_policy(tenant_id: str, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    return get_voice_booking_policy(db, tenant_id)
+
+@app.put("/api/v1/tenants/{tenant_id}/voice/booking-policy")
+def update_voice_booking_policy(tenant_id: str, payload: VoiceBookingPolicyPayload, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    try:
+        return save_voice_booking_policy(db, tenant_id, payload.last_minute_window_minutes)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
 @app.get("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}")
 def loyalty_balance(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
