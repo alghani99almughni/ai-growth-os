@@ -2074,7 +2074,10 @@ def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)
     ).all()
     items = []
     for call in rows:
-        customer = db.get(Customer, call.customer_id) if call.customer_id else None
+        customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
         items.append({
             "id": call.id,
             "customer_id": call.customer_id,
@@ -2959,7 +2962,10 @@ def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest
     if existing:
         return _request_out(existing, db)
 
-    customer = db.get(Customer, call.customer_id) if call.customer_id else None
+    customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
     who = customer.name if customer and customer.name else "Customer"
     phone = customer.phone if customer and customer.phone else "no phone on file"
     recent = (call.transcript or "").strip()[-700:]
@@ -4537,7 +4543,10 @@ def platform_voice_conversations(
     rows = db.scalars(q.order_by(CallRecord.created_at.desc()).limit(limit)).all()
     items = []
     for call in rows:
-        customer = db.get(Customer, call.customer_id) if call.customer_id else None
+        customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
         items.append({
             "id": call.id, "tenant_id": call.tenant_id,
             "tenant_name": (db.get(Tenant, call.tenant_id).name if db.get(Tenant, call.tenant_id) else call.tenant_id),
@@ -4564,7 +4573,10 @@ def platform_voice_conversation_detail(
     call = db.get(CallRecord, call_id)
     if not call:
         raise HTTPException(404, "Conversation not found")
-    customer = db.get(Customer, call.customer_id) if call.customer_id else None
+    customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
     tenant = db.get(Tenant, call.tenant_id)
     return {
         "id": call.id, "tenant_id": call.tenant_id,
