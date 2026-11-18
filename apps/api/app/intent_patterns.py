@@ -25,7 +25,7 @@ _RAW_PATTERNS: dict[str, dict[str, list[str]]] = {
         "ta": [r"^(ஆம்|சரி|இல்லை|வேண்டாம்|ரத்து)"],
     },
     "order_create": {
-        "en": [r"\b(order|place an order|i want|add to my order|buy|send me)\b"],
+        "en": [r"\b(order|place an order|i want|i need|need|can i have|i would like|add to my order|buy|get me|send me)\b"],
         "hi": [r"(ऑर्डर|मुझे .* चाहिए|भेज दीजिए)"],
         "te": [r"(ఆర్డర్|నాకు .* కావాలి|పంపండి)"],
         "ta": [r"(ஆர்டர்|எனக்கு .* வேண்டும்|அனுப்புங்கள்)"],
