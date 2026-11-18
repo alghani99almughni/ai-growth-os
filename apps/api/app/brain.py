@@ -321,7 +321,13 @@ def extract_booking_entities(text: str, expecting_time: bool = False) -> dict:
     if time_value is None and expecting_time:
         time_value = bare_time_answer(value)   # "10 10", "1010", "930", "11" -- only right after "What time ...?"
 
-    time_hint = next((label for label in ("morning","afternoon","evening","night") if re.search(rf"\b{label}\b",value)),None)
+    # Dayparts are hints, never exact appointment times. Ask for a clock time
+    # instead of silently converting a broad phrase into an arbitrary hour.
+    if re.search(r"\blate[ -]evening\b", value):
+        time_hint = "late evening"
+    else:
+        time_hint = next((label for label in ("morning", "afternoon", "evening", "night")
+                          if re.search(rf"\b{label}\b", value)), None)
     date_hint = None
     dm=re.search(r"\b(?:date|day|on|the)\s+(3[01]|[12]\d|[1-9])(?:st|nd|rd|th)?\b",value)
     if dm:
