@@ -33,4 +33,4 @@ jobs:
       - name: Compile telephony adapter
         run: python -m py_compile app/telephony_twilio.py
       - name: Run deterministic voice regression
-        run: pytest -q tests/test_voice_agent_regression.py tests/test_global_knowledge.py tests/test_telephony_twilio.py
+        run: pytest -q tests/test_voice_agent_regression.py tests/test_global_knowledge.py tests/test_telephony_twilio.py tests/test_call_recorder_durability.py
