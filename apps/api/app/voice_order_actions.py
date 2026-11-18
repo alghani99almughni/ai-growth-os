@@ -85,7 +85,8 @@ async def handle_voice_order(db, tenant, message, language, entities, context):
                 return "A menu price has changed. I'll prepare a fresh total; please order again."
 
             customer = None
-            customer_id = (context or {}).get("customer_id")
+            customer_obj = (context or {}).get("customer")
+            customer_id = getattr(customer_obj, "id", None)
             if customer_id:
                 from .models import Customer
                 customer = db.scalar(select(Customer).where(
@@ -166,7 +167,7 @@ async def handle_voice_order(db, tenant, message, language, entities, context):
         draft = VoiceOrderDraft(
             tenant_id=tenant.id,
             conversation_id=conversation_id,
-            customer_id=(context or {}).get("customer_id"),
+            customer_id=getattr((context or {}).get("customer"), "id", None),
             items_json=json.dumps(matched),
             total=subtotal,
             status="awaiting_confirmation",
