@@ -46,3 +46,20 @@ def test_confirmation_recovers_exact_next_available_slot_from_prompt():
     assert context["day"] == "monday"
     assert context["relative_day"] is None
     assert context["time"] == "9:00 AM"
+
+
+def test_dayparts_remain_hints_and_never_become_guessed_clock_times():
+    from app.brain import extract_booking_entities
+
+    for phrase in ("morning", "afternoon", "evening", "night", "late evening"):
+        entities = extract_booking_entities(f"Please book for tomorrow in the {phrase}")
+        assert entities["time"] is None
+        assert entities["time_hint"] == phrase
+
+
+def test_late_evening_is_not_reduced_to_generic_evening():
+    from app.brain import extract_booking_entities
+
+    entities = extract_booking_entities("I prefer late-evening tomorrow")
+    assert entities["time"] is None
+    assert entities["time_hint"] == "late evening"
