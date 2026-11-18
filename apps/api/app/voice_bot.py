@@ -173,7 +173,7 @@ class VoiceBot:
                     self.db, self.tenant.id,
                     customer_id=getattr(self.customer, "id", None) if self.customer else None,
                     customer_name=getattr(self.customer, "name", "Guest") if self.customer else "Guest",
-                    customer_phone=getattr(self.customer, "mobile", "") if self.customer else "",
+                    customer_phone=(getattr(self.customer, "phone", None) or getattr(self.customer, "mobile", "")) if self.customer else "",
                     channel="webrtc_bot",
                     language=self._lang,
                     call_record_id=self.call_record_id,
@@ -188,8 +188,10 @@ class VoiceBot:
                 from .voice_stt import StreamingRecognizer
                 self.recognizer = StreamingRecognizer(language=self._lang)
             except Exception as exc:
-                logger.debug("stt init failed: %s", exc)
+                logger.warning("stt init failed: %s", exc)
                 self.recognizer = None
+                if self.recorder:
+                    self.recorder.record_transcription_gap(f"STT initialization failed: {type(exc).__name__}")
 
             # Create peer
             self.pc = RTCPeerConnection()
@@ -214,7 +216,9 @@ class VoiceBot:
             }
         except Exception as exc:
             logger.exception("create_answer failed: %s", exc)
-            return {"type": "answer", "sdp": "", "error": str(exc)[:200]}
+            if self.recorder:
+                self.recorder.finish(outcome="webrtc_setup_failed", status="failed")
+            return {"type": "answer", "sdp": "", "error": "webrtc_setup_failed"}
 
     async def close(self):
         """Cleanly close the bot."""
@@ -288,7 +292,10 @@ class VoiceBot:
 
         try:
             event = self.recognizer.feed(pcm)
-        except Exception:
+        except Exception as exc:
+            logger.warning("STT chunk processing failed: %s", exc)
+            if self.recorder:
+                self.recorder.record_transcription_gap(f"STT processing failed: {type(exc).__name__}")
             return
 
         if not event.is_final or not event.text.strip():
