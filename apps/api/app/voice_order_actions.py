@@ -149,7 +149,13 @@ async def handle_voice_order(db, tenant, message, language, entities, context):
         matched = []
         for item in menu:
             name = (item.name or "").strip().lower()
-            if name and re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text):
+            name_match = re.search(r"(?<![\w])" + re.escape(name) + r"(?![\w])", text) if name else None
+            if name_match:
+                trailing = text[name_match.end():].strip().split()
+                harmless = {"please", "plz", "thanks", "thank", "only", "and"}
+                # Never interpret an unknown longer product phrase as a shorter menu item.
+                if trailing and trailing[0].strip(".,!?") not in harmless and trailing[0].strip(".,!?").isalpha():
+                    continue
                 qty_match = re.search(r"\b(\d{1,2})\s*(?:x\s*)?" + re.escape(name) + r"\b", text)
                 if not qty_match:
                     qty_match = re.search(r"\b" + re.escape(name) + r"\s*(?:x\s*)?(\d{1,2})\b", text)
