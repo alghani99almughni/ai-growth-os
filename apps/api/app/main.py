@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
+from typing import Literal
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
 from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken,AIProviderUsage
@@ -55,7 +56,15 @@ from .hardening import (
 from .security import check_secret, cleanup_expired_idempotency, decode_token_strict, verify_hmac_sha256, audit
 
 class VoiceBookingPolicyPayload(BaseModel):
-    last_minute_window_minutes: int = Field(default=30, ge=15, le=30)
+    last_minute_window_minutes: Literal[15, 30] = 30
+
+
+def _voice_date_label(value: datetime) -> str:
+    return f"{value.strftime('%A, %B')} {value.day}"
+
+
+def _voice_time_label(value: datetime) -> str:
+    return value.strftime("%I:%M %p").lstrip("0")
 
 class RoutingRulePayload(BaseModel):
     name: str = Field(min_length=1, max_length=160)
@@ -3202,8 +3211,8 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                         next_time = datetime.fromisoformat(next_slots[0]["start"])
                         result["reply"] = (
                             f"I’m sorry, that is too close to closing time. "
-                            f"The next available appointment is {next_time.strftime('%A, %B %-d')} "
-                            f"at {next_time.strftime('%-I:%M %p')}. Would you like that?"
+                            f"The next available appointment is {_voice_date_label(next_time)} "
+                            f"at {_voice_time_label(next_time)}. Would you like that?"
                         )
                         result["booking"] = {**booking, "confirmed": False, "suggested_slot": next_slots[0]["start"]}
                     else:
@@ -3324,13 +3333,13 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 conversation_row.state="booking_confirmed"
                 conversation_row.last_assistant_message=(
                     f"Perfect. Your appointment is confirmed for "
-                    f"{starts_at.strftime('%A, %B %-d')} at {starts_at.strftime('%-I:%M %p')}. "
+                    f"{_voice_date_label(starts_at)} at {_voice_time_label(starts_at)}. "
                     "We look forward to seeing you."
                 )
                 db.commit()
             result["reply"]=(
                 f"Perfect. Your appointment is confirmed for "
-                f"{starts_at.strftime('%A, %B %-d')} at {starts_at.strftime('%-I:%M %p')}. "
+                f"{_voice_date_label(starts_at)} at {_voice_time_label(starts_at)}. "
                 "We look forward to seeing you."
             )
             result["booking"]={**booking,"confirmed":True,"booking_id":appointment.id,
