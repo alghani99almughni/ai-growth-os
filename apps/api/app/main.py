@@ -2954,8 +2954,42 @@ def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
 class PublicCallbackRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=300)
 
+
+async def _notify_voice_callback(db: Session, tenant: Tenant, call: CallRecord, request: ServiceRequest) -> dict:
+    """Send callback alerts to configured tenant contacts and persist delivery outcomes."""
+    from .notifications import send_email, send_platform_whatsapp
+
+    message = request.message or "A customer requested a callback."
+    email_result = {"sent": False, "status": "no_tenant_email", "channel": "email"}
+    whatsapp_result = {"sent": False, "status": "no_tenant_whatsapp", "channel": "whatsapp"}
+    if tenant.email:
+        try:
+            email_result = await send_email(tenant.email, f"Callback requested — {tenant.name}", message)
+        except Exception as exc:
+            email_result = {"sent": False, "status": "failed", "channel": "email", "error": str(exc)[:300]}
+    if tenant.whatsapp_number:
+        try:
+            whatsapp_result = await send_platform_whatsapp(tenant.whatsapp_number, message)
+        except Exception as exc:
+            whatsapp_result = {"sent": False, "status": "failed", "channel": "whatsapp", "error": str(exc)[:300]}
+
+    db.add(InteractionEvent(
+        tenant_id=tenant.id,
+        customer_id=call.customer_id,
+        call_id=call.id,
+        channel="system",
+        event_type="callback_notification",
+        payload_json=json.dumps({
+            "request_id": request.id,
+            "email": email_result,
+            "whatsapp": whatsapp_result,
+        }, default=str),
+    ))
+    db.commit()
+    return {"email": email_result, "whatsapp": whatsapp_result}
+
 @app.post("/api/v1/public/business/{slug}/call/{call_id}/callback", status_code=201)
-def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, db: Session = Depends(get_db)):
+async def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, db: Session = Depends(get_db)):
     """Last rung of the call ladder: nobody could take the call, so raise a callback
     request that shows up in the dashboard's service requests (request_type="callback")."""
     t = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
@@ -3009,6 +3043,7 @@ def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest
         "status": r.status,
         "assigned_staff_id": r.assigned_staff_id,
     }, context_token=r.context_token)
+    await _notify_voice_callback(db, t, call, r)
     return _request_out(r, db)
 
 @app.get("/api/v1/public/business/{slug}/voice/ice")
@@ -3188,6 +3223,7 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                                 "status": callback.status,
                                 "assigned_staff_id": None,
                             }, context_token=callback.context_token)
+                            await _notify_voice_callback(db, t, call_for_booking, callback)
                             result["handoff_required"] = False
                             result["reply"] = "No team member is available right now. I’ve recorded your callback request; our team will contact you."
                         result["booking"] = {**booking, "confirmed": False, "pending_human_review": True}
