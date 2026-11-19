@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI,Depends,HTTPException,Query,Request,WebSocket
+from fastapi import FastAPI,BackgroundTasks,Depends,HTTPException,Query,Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 from fastapi.responses import JSONResponse
@@ -2988,8 +2988,31 @@ async def _notify_voice_callback(db: Session, tenant: Tenant, call: CallRecord, 
     db.commit()
     return {"email": email_result, "whatsapp": whatsapp_result}
 
+
+def _notify_voice_callback_background(tenant_id: str, call_id: str, request_id: str) -> None:
+    """Run provider notifications after the voice response, with an independent DB session."""
+    db = SessionLocal()
+    try:
+        tenant = db.get(Tenant, tenant_id)
+        call = db.scalar(select(CallRecord).where(
+            CallRecord.id == call_id, CallRecord.tenant_id == tenant_id
+        ))
+        request = db.scalar(select(ServiceRequest).where(
+            ServiceRequest.id == request_id, ServiceRequest.tenant_id == tenant_id
+        ))
+        if tenant and call and request:
+            asyncio.run(_notify_voice_callback(db, tenant, call, request))
+    except Exception:
+        logging.getLogger("uvicorn.error").exception(
+            "VOICE_CALLBACK_NOTIFICATION_FAILED tenant_id=%s call_id=%s request_id=%s",
+            tenant_id, call_id, request_id,
+        )
+    finally:
+        db.close()
+
+
 @app.post("/api/v1/public/business/{slug}/call/{call_id}/callback", status_code=201)
-async def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, db: Session = Depends(get_db)):
+async def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Last rung of the call ladder: nobody could take the call, so raise a callback
     request that shows up in the dashboard's service requests (request_type="callback")."""
     t = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
@@ -3043,7 +3066,7 @@ async def public_call_callback(slug: str, call_id: str, payload: PublicCallbackR
         "status": r.status,
         "assigned_staff_id": r.assigned_staff_id,
     }, context_token=r.context_token)
-    await _notify_voice_callback(db, t, call, r)
+    background_tasks.add_task(_notify_voice_callback_background, t.id, call.id, r.id)
     return _request_out(r, db)
 
 @app.get("/api/v1/public/business/{slug}/voice/ice")
@@ -3062,7 +3085,7 @@ async def public_voice_ice(slug: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/v1/public/business/{slug}/voice/turn")
-async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=Depends(get_db)):
+async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,background_tasks:BackgroundTasks,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
     if not _feature_config(db,t.id).get("ai_voice",True): raise HTTPException(403,"Voice calling is not available for this business")
@@ -3225,7 +3248,7 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                                     "status": callback.status,
                                     "assigned_staff_id": None,
                                 }, context_token=callback.context_token)
-                                await _notify_voice_callback(db, t, call_for_booking, callback)
+                                background_tasks.add_task(_notify_voice_callback_background, t.id, call_for_booking.id, callback.id)
                             result["handoff_required"] = False
                             result["reply"] = "No team member is available right now. I’ve recorded your callback request; our team will contact you."
                         result["booking"] = {**booking, "confirmed": False, "pending_human_review": True}
