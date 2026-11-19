@@ -146,3 +146,21 @@ export function pcm16ToBase64(pcm: Int16Array): string {
   }
   return btoa(bin);
 }
+
+
+/* ------------------------------------------------------------------ */
+/* 4. Speech-first microphone capture                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Browser capture profile for conversational voice. These are preferences, not guarantees:
+ * browsers may ignore unsupported constraints and the active device/network still determines quality.
+ */
+export const VOICE_AUDIO_CAPTURE_CONSTRAINTS = {
+  channelCount: { ideal: 1 },
+  sampleRate: { ideal: 48000 },
+  echoCancellation: { ideal: true },
+  noiseSuppression: { ideal: true },
+  autoGainControl: { ideal: true },
+  latency: { ideal: 0.02 },
+} as const;

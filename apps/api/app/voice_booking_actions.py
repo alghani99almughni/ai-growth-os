@@ -170,7 +170,10 @@ def handle_voice_appointment_action(db, tenant: Tenant, call: CallRecord,
             return {"reply": "Before I change an appointment, I need to verify your name and mobile number.",
                     "appointment_action": {"status": "identity_required"}}
         return None
-    customer = db.get(Customer, call.customer_id)
+    customer = db.scalar(select(Customer).where(
+        Customer.id == call.customer_id,
+        Customer.tenant_id == tenant.id,
+    ))
     if not customer:
         return {"reply": "I couldn't verify the customer record, so I haven't changed any appointment.",
                 "appointment_action": {"status": "identity_error"}}

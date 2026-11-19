@@ -141,7 +141,9 @@ def available_slots(db: Session, tenant: Tenant, service_id: str, day: date, sta
     # wall time, so "today" and past-slot filtering stay anchored to the call.
     # Other callers continue to use the current tenant-local wall clock.
     wall_clock_now = datetime.now(ZoneInfo(tenant.timezone)).replace(tzinfo=None)
-    effective_now = max(reference_now, wall_clock_now) if reference_now else wall_clock_now
+    # Voice calls must stay anchored to the persisted call-start time across turns.
+    # Do not advance this reference to the server's current clock after a slow turn.
+    effective_now = reference_now if reference_now is not None else wall_clock_now
     if day == effective_now.date():
         now_local = effective_now
         interval_minutes = max(5, rule.slot_interval_minutes or 30)

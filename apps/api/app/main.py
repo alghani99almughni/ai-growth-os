@@ -1,11 +1,12 @@
 import logging
-from fastapi import FastAPI,Depends,HTTPException,Query,Request,WebSocket
+from fastapi import FastAPI,BackgroundTasks,Depends,HTTPException,Query,Request,WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials,HTTPBearer
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic import BaseModel,Field
+from typing import Literal
 from .db import SessionLocal
 from .models import Tenant,User,Customer,Lead,Service,Product,TenantWhatsAppConnection
 from .models_growth import KnowledgeItem,KnowledgeCandidate,Appointment,LoyaltyTransaction,QrEntry,CallRecord,Campaign,BusinessHour,QueueEntry,ServiceRequest,TenantSetting,PlatformSetting,MenuCategory,MenuItem,Order,OrderItem,Bill,Feedback,LoyaltyRule,LoyaltyReward,GameScore,PasswordResetToken,AIProviderUsage
@@ -14,6 +15,7 @@ from .schemas import *
 from .services import *
 from .brain import generate_reply,knowledge_context,extract_booking_entities,resolve_booking_date
 from .voice_booking_actions import handle_voice_appointment_action
+from .voice_booking_policy import get_voice_booking_policy, save_voice_booking_policy
 from .voice_booking_time import call_local_datetime, resolve_voice_time, customer_only_transcript
 from .config import settings
 from .signaling import signal
@@ -52,6 +54,17 @@ from .hardening import (
     auth_rate_limit, enrich_health, install_signal_handlers,
 )
 from .security import check_secret, cleanup_expired_idempotency, decode_token_strict, verify_hmac_sha256, audit
+
+class VoiceBookingPolicyPayload(BaseModel):
+    last_minute_window_minutes: Literal[15, 30] = 30
+
+
+def _voice_date_label(value: datetime) -> str:
+    return f"{value.strftime('%A, %B')} {value.day}"
+
+
+def _voice_time_label(value: datetime) -> str:
+    return value.strftime("%I:%M %p").lstrip("0")
 
 class RoutingRulePayload(BaseModel):
     name: str = Field(min_length=1, max_length=160)
@@ -2074,7 +2087,10 @@ def calls(tenant_id, user=Depends(get_current_user), db: Session=Depends(get_db)
     ).all()
     items = []
     for call in rows:
-        customer = db.get(Customer, call.customer_id) if call.customer_id else None
+        customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
         items.append({
             "id": call.id,
             "customer_id": call.customer_id,
@@ -2938,8 +2954,65 @@ def public_handoff_status(slug:str, call_id:str, db:Session=Depends(get_db)):
 class PublicCallbackRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=300)
 
+
+async def _notify_voice_callback(db: Session, tenant: Tenant, call: CallRecord, request: ServiceRequest) -> dict:
+    """Send callback alerts to configured tenant contacts and persist delivery outcomes."""
+    from .notifications import send_email, send_platform_whatsapp
+
+    message = request.message or "A customer requested a callback."
+    email_result = {"sent": False, "status": "no_tenant_email", "channel": "email"}
+    whatsapp_result = {"sent": False, "status": "no_tenant_whatsapp", "channel": "whatsapp"}
+    if tenant.email:
+        try:
+            email_result = await send_email(tenant.email, f"Callback requested — {tenant.name}", message)
+        except Exception as exc:
+            email_result = {"sent": False, "status": "failed", "channel": "email", "error": str(exc)[:300]}
+    if tenant.whatsapp_number:
+        try:
+            whatsapp_result = await send_platform_whatsapp(tenant.whatsapp_number, message)
+        except Exception as exc:
+            whatsapp_result = {"sent": False, "status": "failed", "channel": "whatsapp", "error": str(exc)[:300]}
+
+    db.add(InteractionEvent(
+        tenant_id=tenant.id,
+        customer_id=call.customer_id,
+        call_id=call.id,
+        channel="system",
+        event_type="callback_notification",
+        payload_json=json.dumps({
+            "request_id": request.id,
+            "email": email_result,
+            "whatsapp": whatsapp_result,
+        }, default=str),
+    ))
+    db.commit()
+    return {"email": email_result, "whatsapp": whatsapp_result}
+
+
+def _notify_voice_callback_background(tenant_id: str, call_id: str, request_id: str) -> None:
+    """Run provider notifications after the voice response, with an independent DB session."""
+    db = SessionLocal()
+    try:
+        tenant = db.get(Tenant, tenant_id)
+        call = db.scalar(select(CallRecord).where(
+            CallRecord.id == call_id, CallRecord.tenant_id == tenant_id
+        ))
+        request = db.scalar(select(ServiceRequest).where(
+            ServiceRequest.id == request_id, ServiceRequest.tenant_id == tenant_id
+        ))
+        if tenant and call and request:
+            asyncio.run(_notify_voice_callback(db, tenant, call, request))
+    except Exception:
+        logging.getLogger("uvicorn.error").exception(
+            "VOICE_CALLBACK_NOTIFICATION_FAILED tenant_id=%s call_id=%s request_id=%s",
+            tenant_id, call_id, request_id,
+        )
+    finally:
+        db.close()
+
+
 @app.post("/api/v1/public/business/{slug}/call/{call_id}/callback", status_code=201)
-def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, db: Session = Depends(get_db)):
+async def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Last rung of the call ladder: nobody could take the call, so raise a callback
     request that shows up in the dashboard's service requests (request_type="callback")."""
     t = db.scalar(select(Tenant).where(Tenant.slug == slug.lower()))
@@ -2959,7 +3032,10 @@ def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest
     if existing:
         return _request_out(existing, db)
 
-    customer = db.get(Customer, call.customer_id) if call.customer_id else None
+    customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
     who = customer.name if customer and customer.name else "Customer"
     phone = customer.phone if customer and customer.phone else "no phone on file"
     recent = (call.transcript or "").strip()[-700:]
@@ -2990,6 +3066,7 @@ def public_call_callback(slug: str, call_id: str, payload: PublicCallbackRequest
         "status": r.status,
         "assigned_staff_id": r.assigned_staff_id,
     }, context_token=r.context_token)
+    background_tasks.add_task(_notify_voice_callback_background, t.id, call.id, r.id)
     return _request_out(r, db)
 
 @app.get("/api/v1/public/business/{slug}/voice/ice")
@@ -3008,7 +3085,7 @@ async def public_voice_ice(slug: str, db: Session = Depends(get_db)):
     }
 
 @app.post("/api/v1/public/business/{slug}/voice/turn")
-async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=Depends(get_db)):
+async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,background_tasks:BackgroundTasks,db:Session=Depends(get_db)):
     t=db.scalar(select(Tenant).where(Tenant.slug==slug.lower()))
     if not t: raise HTTPException(404,"Business not found")
     if not _feature_config(db,t.id).get("ai_voice",True): raise HTTPException(403,"Voice calling is not available for this business")
@@ -3111,14 +3188,117 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             ) if ":" in time_text else datetime.strptime(
                 f"{date_text} {time_text}", "%Y-%m-%d %I %p"
             )
+
+            # Last-minute guard is anchored to the persisted call-start timestamp,
+            # never the time of a later conversational turn.
+            if call_for_booking.started_at:
+                from .voice_booking_policy import evaluate_last_minute
+                last_minute = evaluate_last_minute(
+                    db, t, call_for_booking.started_at, starts_at.date(), starts_at.time()
+                )
+                if last_minute.is_last_minute:
+                    insist = any(term in payload.transcript.lower() for term in (
+                        "today at any cost", "at any cost", "insist", "no matter what",
+                        "today only", "must be today", "please arrange today",
+                    ))
+                    if insist:
+                        routed = route_call(db, t.id, call_for_booking, "human_handoff")
+                        staff = routed.get("staff") if isinstance(routed, dict) else None
+                        if staff:
+                            call_for_booking.status = "handoff_requested"
+                            call_for_booking.staff_id = staff.get("id")
+                            call_for_booking.department = routed.get("department") or "reception"
+                            call_for_booking.room_id = call_for_booking.room_id or ("call-" + call_for_booking.id)
+                            call_for_booking.resolution = "human_handoff"
+                            result["handoff_required"] = True
+                            result["reply"] = "I understand. I’m connecting you to our team to check whether today can be arranged."
+                        else:
+                            callback_token = "callback:" + call_for_booking.id
+                            callback = db.scalar(select(ServiceRequest).where(
+                                ServiceRequest.tenant_id == t.id,
+                                ServiceRequest.context_token == callback_token,
+                                ServiceRequest.request_type == "callback",
+                            ))
+                            callback_created = callback is None
+                            if callback_created:
+                                callback = ServiceRequest(
+                                    tenant_id=t.id,
+                                    customer_id=customer.id,
+                                    context_token=callback_token,
+                                    request_type="callback",
+                                    message=(
+                                        f"Customer insists on a same-day appointment. "
+                                        f"Requested: {starts_at.isoformat()}. "
+                                        f"Call: {call_for_booking.id}. "
+                                        f"Customer: {customer.name} ({customer.phone})."
+                                    )[:2000],
+                                    status="requested",
+                                )
+                                db.add(callback)
+                            call_for_booking.human_callback_requested = True
+                            call_for_booking.status = "handoff_unavailable"
+                            call_for_booking.resolution = "human_callback"
+                            db.commit()
+                            db.refresh(callback)
+                            if callback_created:
+                                publish_event_sync(t.id, "service_request.created", {
+                                    "request_id": callback.id,
+                                    "request_type": "callback",
+                                    "message": callback.message,
+                                    "status": callback.status,
+                                    "assigned_staff_id": None,
+                                }, context_token=callback.context_token)
+                                background_tasks.add_task(_notify_voice_callback_background, t.id, call_for_booking.id, callback.id)
+                            result["handoff_required"] = False
+                            result["reply"] = "No team member is available right now. I’ve recorded your callback request; our team will contact you."
+                        result["booking"] = {**booking, "confirmed": False, "pending_human_review": True}
+                        db.commit()
+                        return {**result, "tenant_id": t.id, "call_id": payload.call_id}
+
+                    next_slots = []
+                    reference_local = call_for_booking.started_at
+                    if reference_local.tzinfo is None:
+                        reference_local = reference_local.replace(tzinfo=ZoneInfo("UTC"))
+                    reference_local = reference_local.astimezone(ZoneInfo(t.timezone or "Asia/Kolkata")).replace(tzinfo=None)
+                    for offset in range(0, 15):
+                        candidate_day = reference_local.date() + timedelta(days=offset)
+                        next_slots = available_slots(
+                            db, t, service.id, candidate_day,
+                            reference_now=reference_local,
+                        )
+                        if next_slots:
+                            break
+                    if next_slots:
+                        next_time = datetime.fromisoformat(next_slots[0]["start"])
+                        result["reply"] = (
+                            f"I’m sorry, that is too close to closing time. "
+                            f"The next available appointment is {_voice_date_label(next_time)} "
+                            f"at {_voice_time_label(next_time)}. Would you like that?"
+                        )
+                        result["booking"] = {**booking, "confirmed": False, "suggested_slot": next_slots[0]["start"]}
+                    else:
+                        result["reply"] = "I’m sorry, that is too close to closing time and I can’t find an available slot in the next 14 days. Would you like me to request a callback?"
+                        result["booking"] = {**booking, "confirmed": False, "error": "No upcoming slots"}
+                    result["handoff_required"] = False
+                    db.rollback()
+                    conversation_row = db.get(Conversation, result.get("conversation_id")) if result.get("conversation_id") else None
+                    if conversation_row:
+                        conversation_row.state = "booking_conflict"
+                        conversation_row.last_assistant_message = result["reply"]
+                        db.commit()
+                    return {**result, "tenant_id": t.id, "call_id": payload.call_id}
+
             hours=db.scalar(select(BusinessHour).where(
                 BusinessHour.tenant_id==t.id,
                 BusinessHour.weekday==starts_at.weekday()
             ))
-            if hours and hours.is_closed:
+            if not hours:
+                raise ValueError("Business hours are not configured for that day.")
+            if hours.is_closed:
                 raise ValueError("The business is closed at that time.")
-            if hours and (starts_at.time()<hours.open_time or starts_at.time()>=hours.close_time):
+            if starts_at.time()<hours.open_time or starts_at.time()>=hours.close_time:
                 raise ValueError("That time is outside business hours.")
+
             # Idempotency guard: a repeated voice confirmation must not create a duplicate.
             from .booking import local_to_utc_naive
             starts_utc=local_to_utc_naive(starts_at,t.timezone)
@@ -3129,6 +3309,21 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 Appointment.starts_at==starts_utc,
                 Appointment.status.in_(["requested","confirmed","checked_in","serving"])
             ))
+            if not existing_appointment:
+                # Final server-side availability check: require the requested
+                # start to exist in the tenant's live slot list.
+                call_start_local = call_for_booking.started_at
+                if call_start_local is None:
+                    raise ValueError("The call start time is unavailable; please reconfirm the appointment.")
+                if call_start_local.tzinfo is None:
+                    call_start_local = call_start_local.replace(tzinfo=ZoneInfo("UTC"))
+                call_start_local = call_start_local.astimezone(ZoneInfo(t.timezone or "Asia/Kolkata")).replace(tzinfo=None)
+                verified_slots = available_slots(
+                    db, t, service.id, starts_at.date(), reference_now=call_start_local
+                )
+                requested_slot = starts_at.isoformat(timespec="minutes")
+                if not any(slot.get("start") == requested_slot for slot in verified_slots):
+                    raise ValueError("That time is not currently available. Please choose another available slot.")
             already_confirmed = bool(
                 existing_appointment and existing_appointment.status == "confirmed"
             )
@@ -3199,13 +3394,13 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 conversation_row.state="booking_confirmed"
                 conversation_row.last_assistant_message=(
                     f"Perfect. Your appointment is confirmed for "
-                    f"{starts_at.strftime('%A, %B %-d')} at {starts_at.strftime('%-I:%M %p')}. "
+                    f"{_voice_date_label(starts_at)} at {_voice_time_label(starts_at)}. "
                     "We look forward to seeing you."
                 )
                 db.commit()
             result["reply"]=(
                 f"Perfect. Your appointment is confirmed for "
-                f"{starts_at.strftime('%A, %B %-d')} at {starts_at.strftime('%-I:%M %p')}. "
+                f"{_voice_date_label(starts_at)} at {_voice_time_label(starts_at)}. "
                 "We look forward to seeing you."
             )
             result["booking"]={**booking,"confirmed":True,"booking_id":appointment.id,
@@ -3283,6 +3478,19 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
 @app.post("/api/v1/tenants/{tenant_id}/calls",status_code=201)
 def create_call(tenant_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id); c=CallRecord(tenant_id=tenant_id,status="created"); db.add(c); db.commit(); db.refresh(c); return {"id":c.id,"status":c.status}
+@app.get("/api/v1/tenants/{tenant_id}/voice/booking-policy")
+def read_voice_booking_policy(tenant_id: str, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    return get_voice_booking_policy(db, tenant_id)
+
+@app.put("/api/v1/tenants/{tenant_id}/voice/booking-policy")
+def update_voice_booking_policy(tenant_id: str, payload: VoiceBookingPolicyPayload, user=Depends(get_current_user), db: Session=Depends(get_db)):
+    require_tenant(user, tenant_id)
+    try:
+        return save_voice_booking_policy(db, tenant_id, payload.last_minute_window_minutes)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
 @app.get("/api/v1/tenants/{tenant_id}/loyalty/{customer_id}")
 def loyalty_balance(tenant_id,customer_id,user=Depends(get_current_user),db:Session=Depends(get_db)):
     require_tenant(user,tenant_id)
@@ -4537,7 +4745,10 @@ def platform_voice_conversations(
     rows = db.scalars(q.order_by(CallRecord.created_at.desc()).limit(limit)).all()
     items = []
     for call in rows:
-        customer = db.get(Customer, call.customer_id) if call.customer_id else None
+        customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
         items.append({
             "id": call.id, "tenant_id": call.tenant_id,
             "tenant_name": (db.get(Tenant, call.tenant_id).name if db.get(Tenant, call.tenant_id) else call.tenant_id),
@@ -4564,7 +4775,10 @@ def platform_voice_conversation_detail(
     call = db.get(CallRecord, call_id)
     if not call:
         raise HTTPException(404, "Conversation not found")
-    customer = db.get(Customer, call.customer_id) if call.customer_id else None
+    customer = db.scalar(select(Customer).where(
+            Customer.id == call.customer_id,
+            Customer.tenant_id == call.tenant_id,
+        )) if call.customer_id else None
     tenant = db.get(Tenant, call.tenant_id)
     return {
         "id": call.id, "tenant_id": call.tenant_id,

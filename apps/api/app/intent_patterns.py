@@ -16,6 +16,23 @@ LANGUAGES = ("en", "hi", "te", "ta", "kn", "ml", "mr", "bn", "gu", "pa", "ur")
 _RAW_PATTERNS: dict[str, dict[str, list[str]]] = {
 
     # ============================================================
+    # VOICE ORDERING
+    # ============================================================
+    "order_confirm": {
+        "en": [r"^\s*(yes|yeah|yep|confirm|correct|place it|go ahead|no|nope|cancel|stop)\b"],
+        "hi": [r"^(हाँ|हां|जी हाँ|नहीं|रद्द)"],
+        "te": [r"^(అవును|సరే|కాదు|వద్దు|రద్దు)"],
+        "ta": [r"^(ஆம்|சரி|இல்லை|வேண்டாம்|ரத்து)"],
+    },
+    "order_create": {
+        "en": [r"\b(order|place an order|i want|i need|need|can i have|i would like|add to my order|buy|get me|send me)\b"],
+        "hi": [r"(ऑर्डर|मुझे .* चाहिए|भेज दीजिए)"],
+        "te": [r"(ఆర్డర్|నాకు .* కావాలి|పంపండి)"],
+        "ta": [r"(ஆர்டர்|எனக்கு .* வேண்டும்|அனுப்புங்கள்)"],
+    },
+
+
+    # ============================================================
     # GREETING
     # ============================================================
     "greeting": {
