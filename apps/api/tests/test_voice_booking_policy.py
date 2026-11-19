@@ -30,7 +30,7 @@ def test_last_minute_window_uses_tenant_configured_30_minutes_and_call_start():
 def test_last_minute_window_uses_tenant_configured_15_minutes():
     tenant = SimpleNamespace(id="tenant-a", timezone="Asia/Kolkata")
     decision = evaluate_last_minute(
-        _PolicyDb(15), tenant, datetime(2026, 11, 19, 17, 40),
+        _PolicyDb(15), tenant, datetime(2026, 11, 19, 17, 20),
         date(2026, 11, 19), time(22, 50),
     )
     assert decision.is_last_minute is True
