@@ -3229,22 +3229,6 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             if starts_at.time()<hours.open_time or starts_at.time()>=hours.close_time:
                 raise ValueError("That time is outside business hours.")
 
-            # Final server-side availability check: require the requested start
-            # to exist in the tenant's live slot list (including duration, staff
-            # availability, existing appointments and slot interval).
-            call_start_local = call_for_booking.started_at
-            if call_start_local is None:
-                raise ValueError("The call start time is unavailable; please reconfirm the appointment.")
-            if call_start_local.tzinfo is None:
-                call_start_local = call_start_local.replace(tzinfo=ZoneInfo("UTC"))
-            call_start_local = call_start_local.astimezone(ZoneInfo(t.timezone or "Asia/Kolkata")).replace(tzinfo=None)
-            verified_slots = available_slots(
-                db, t, service.id, starts_at.date(), reference_now=call_start_local
-            )
-            requested_slot = starts_at.isoformat(timespec="minutes")
-            if not any(slot.get("start") == requested_slot for slot in verified_slots):
-                raise ValueError("That time is not currently available. Please choose another available slot.")
-
             # Idempotency guard: a repeated voice confirmation must not create a duplicate.
             from .booking import local_to_utc_naive
             starts_utc=local_to_utc_naive(starts_at,t.timezone)
@@ -3255,6 +3239,21 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                 Appointment.starts_at==starts_utc,
                 Appointment.status.in_(["requested","confirmed","checked_in","serving"])
             ))
+            if not existing_appointment:
+                # Final server-side availability check: require the requested
+                # start to exist in the tenant's live slot list.
+                call_start_local = call_for_booking.started_at
+                if call_start_local is None:
+                    raise ValueError("The call start time is unavailable; please reconfirm the appointment.")
+                if call_start_local.tzinfo is None:
+                    call_start_local = call_start_local.replace(tzinfo=ZoneInfo("UTC"))
+                call_start_local = call_start_local.astimezone(ZoneInfo(t.timezone or "Asia/Kolkata")).replace(tzinfo=None)
+                verified_slots = available_slots(
+                    db, t, service.id, starts_at.date(), reference_now=call_start_local
+                )
+                requested_slot = starts_at.isoformat(timespec="minutes")
+                if not any(slot.get("start") == requested_slot for slot in verified_slots):
+                    raise ValueError("That time is not currently available. Please choose another available slot.")
             already_confirmed = bool(
                 existing_appointment and existing_appointment.status == "confirmed"
             )
