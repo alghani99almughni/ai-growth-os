@@ -3196,7 +3196,8 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                                 ServiceRequest.context_token == callback_token,
                                 ServiceRequest.request_type == "callback",
                             ))
-                            if not callback:
+                            callback_created = callback is None
+                            if callback_created:
                                 callback = ServiceRequest(
                                     tenant_id=t.id,
                                     customer_id=customer.id,
@@ -3216,14 +3217,15 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
                             call_for_booking.resolution = "human_callback"
                             db.commit()
                             db.refresh(callback)
-                            publish_event_sync(t.id, "service_request.created", {
-                                "request_id": callback.id,
-                                "request_type": "callback",
-                                "message": callback.message,
-                                "status": callback.status,
-                                "assigned_staff_id": None,
-                            }, context_token=callback.context_token)
-                            await _notify_voice_callback(db, t, call_for_booking, callback)
+                            if callback_created:
+                                publish_event_sync(t.id, "service_request.created", {
+                                    "request_id": callback.id,
+                                    "request_type": "callback",
+                                    "message": callback.message,
+                                    "status": callback.status,
+                                    "assigned_staff_id": None,
+                                }, context_token=callback.context_token)
+                                await _notify_voice_callback(db, t, call_for_booking, callback)
                             result["handoff_required"] = False
                             result["reply"] = "No team member is available right now. I’ve recorded your callback request; our team will contact you."
                         result["booking"] = {**booking, "confirmed": False, "pending_human_review": True}
