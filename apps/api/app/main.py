@@ -3121,6 +3121,103 @@ async def public_voice_turn(slug:str,payload:PublicVoiceTurnRequest,db:Session=D
             ) if ":" in time_text else datetime.strptime(
                 f"{date_text} {time_text}", "%Y-%m-%d %I %p"
             )
+
+            # Last-minute guard is anchored to the persisted call-start timestamp,
+            # never the time of a later conversational turn.
+            if call_for_booking.started_at:
+                from .voice_booking_policy import evaluate_last_minute
+                last_minute = evaluate_last_minute(
+                    db, t, call_for_booking.started_at, starts_at.date(), starts_at.time()
+                )
+                if last_minute.is_last_minute:
+                    insist = any(term in payload.transcript.lower() for term in (
+                        "today at any cost", "at any cost", "insist", "no matter what",
+                        "today only", "must be today", "please arrange today",
+                    ))
+                    if insist:
+                        routed = route_call(db, t.id, call_for_booking, "human_handoff")
+                        staff = routed.get("staff") if isinstance(routed, dict) else None
+                        if staff:
+                            call_for_booking.status = "handoff_requested"
+                            call_for_booking.staff_id = staff.get("id")
+                            call_for_booking.department = routed.get("department") or "reception"
+                            call_for_booking.room_id = call_for_booking.room_id or ("call-" + call_for_booking.id)
+                            call_for_booking.resolution = "human_handoff"
+                            result["handoff_required"] = True
+                            result["reply"] = "I understand. I’m connecting you to our team to check whether today can be arranged."
+                        else:
+                            callback_token = "callback:" + call_for_booking.id
+                            callback = db.scalar(select(ServiceRequest).where(
+                                ServiceRequest.tenant_id == t.id,
+                                ServiceRequest.context_token == callback_token,
+                                ServiceRequest.request_type == "callback",
+                            ))
+                            if not callback:
+                                callback = ServiceRequest(
+                                    tenant_id=t.id,
+                                    customer_id=customer.id,
+                                    context_token=callback_token,
+                                    request_type="callback",
+                                    message=(
+                                        f"Customer insists on a same-day appointment. "
+                                        f"Requested: {starts_at.isoformat()}. "
+                                        f"Call: {call_for_booking.id}. "
+                                        f"Customer: {customer.name} ({customer.phone})."
+                                    )[:2000],
+                                    status="requested",
+                                )
+                                db.add(callback)
+                            call_for_booking.human_callback_requested = True
+                            call_for_booking.status = "handoff_unavailable"
+                            call_for_booking.resolution = "human_callback"
+                            db.commit()
+                            db.refresh(callback)
+                            publish_event_sync(t.id, "service_request.created", {
+                                "request_id": callback.id,
+                                "request_type": "callback",
+                                "message": callback.message,
+                                "status": callback.status,
+                                "assigned_staff_id": None,
+                            }, context_token=callback.context_token)
+                            result["handoff_required"] = False
+                            result["reply"] = "No team member is available right now. I’ve recorded your callback request; our team will contact you."
+                        result["booking"] = {**booking, "confirmed": False, "pending_human_review": True}
+                        db.commit()
+                        return {**result, "tenant_id": t.id, "call_id": payload.call_id}
+
+                    next_slots = []
+                    reference_local = call_for_booking.started_at
+                    if reference_local.tzinfo is None:
+                        reference_local = reference_local.replace(tzinfo=ZoneInfo("UTC"))
+                    reference_local = reference_local.astimezone(ZoneInfo(t.timezone or "Asia/Kolkata")).replace(tzinfo=None)
+                    for offset in range(0, 15):
+                        candidate_day = reference_local.date() + timedelta(days=offset)
+                        next_slots = available_slots(
+                            db, t, service.id, candidate_day,
+                            reference_now=reference_local,
+                        )
+                        if next_slots:
+                            break
+                    if next_slots:
+                        next_time = datetime.fromisoformat(next_slots[0]["start"])
+                        result["reply"] = (
+                            f"I’m sorry, that is too close to closing time. "
+                            f"The next available appointment is {next_time.strftime('%A, %B %-d')} "
+                            f"at {next_time.strftime('%-I:%M %p')}. Would you like that?"
+                        )
+                        result["booking"] = {**booking, "confirmed": False, "suggested_slot": next_slots[0]["start"]}
+                    else:
+                        result["reply"] = "I’m sorry, that is too close to closing time and I can’t find an available slot in the next 14 days. Would you like me to request a callback?"
+                        result["booking"] = {**booking, "confirmed": False, "error": "No upcoming slots"}
+                    result["handoff_required"] = False
+                    db.rollback()
+                    conversation_row = db.get(Conversation, result.get("conversation_id")) if result.get("conversation_id") else None
+                    if conversation_row:
+                        conversation_row.state = "booking_conflict"
+                        conversation_row.last_assistant_message = result["reply"]
+                        db.commit()
+                    return {**result, "tenant_id": t.id, "call_id": payload.call_id}
+
             hours=db.scalar(select(BusinessHour).where(
                 BusinessHour.tenant_id==t.id,
                 BusinessHour.weekday==starts_at.weekday()
