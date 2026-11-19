@@ -23,6 +23,8 @@ export default function AIVoiceWorkspace() {
   const [instructions, setInstructions] = useState("");
   const [selectedAgent, setSelectedAgent] = useState("");
   const [paidProvider, setPaidProvider] = useState("openai");
+  const [tenantId, setTenantId] = useState("");
+  const [lastMinuteWindow, setLastMinuteWindow] = useState(30);
 
   async function request(path: string, init?: RequestInit) {
     const response = await fetch(api() + path, { ...init, headers: { ...headers(), ...(init?.headers || {}) }, cache: "no-store" });
@@ -42,7 +44,18 @@ export default function AIVoiceWorkspace() {
     }
   }
 
-  useEffect(() => { refresh().catch((e) => setMessage(e.message)); }, []);
+  useEffect(() => {
+    refresh().catch((e) => setMessage(e.message));
+    try {
+      const tenant = JSON.parse(localStorage.getItem("ago_tenant") || "{}");
+      if (tenant.id) {
+        setTenantId(tenant.id);
+        request("/api/v1/tenants/" + tenant.id + "/voice/booking-policy")
+          .then((p) => setLastMinuteWindow(p.last_minute_window_minutes === 15 ? 15 : 30))
+          .catch((e) => setMessage(e.message));
+      }
+    } catch { setMessage("Unable to load the active tenant context."); }
+  }, []);
 
   async function createAgent(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMessage("");
@@ -52,6 +65,18 @@ export default function AIVoiceWorkspace() {
         greeting, operating_instructions: instructions,
       })});
       setAgentName(""); setGreeting(""); setInstructions(""); await refresh(); setMessage("Agent draft created.");
+    } catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
+  }
+
+  async function saveBookingPolicy() {
+    if (!tenantId) return;
+    setBusy(true); setMessage("");
+    try {
+      await request("/api/v1/tenants/" + tenantId + "/voice/booking-policy", {
+        method: "PUT",
+        body: JSON.stringify({ last_minute_window_minutes: lastMinuteWindow }),
+      });
+      setMessage("Voice booking policy saved for this business.");
     } catch (e: any) { setMessage(e.message); } finally { setBusy(false); }
   }
 
@@ -79,6 +104,23 @@ export default function AIVoiceWorkspace() {
       <button onClick={() => setTab("paid")} style={{ ...button, background: tab === "paid" ? "#273cbd" : "#edf1f8", color: tab === "paid" ? "#fff" : "#334155" }}><CreditCard size={15}/> Paid</button>
     </div>
     {message && <p role="status" style={{ background: "#eef2ff", borderRadius: 9, padding: 11, marginBottom: 16, fontSize: 13 }}>{message}</p>}
+
+    <section style={{ ...card, marginBottom: 18 }}>
+      <h2 style={{ fontSize: 17, fontWeight: 800, marginBottom: 7 }}>Booking & human handoff policy</h2>
+      <p style={{ color: "#64748b", fontSize: 13, lineHeight: 1.6, marginBottom: 12 }}>
+        When a call begins close to closing time, the agent will not auto-confirm a same-day booking.
+        It will offer the next available slot. A customer insisting on today is routed to the team;
+        if nobody is available, a callback request is recorded.
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <label htmlFor="last-minute-window" style={{ fontSize: 13, fontWeight: 700 }}>Closing-time buffer</label>
+        <select id="last-minute-window" value={lastMinuteWindow} onChange={e => setLastMinuteWindow(Number(e.target.value))} style={{ ...field, width: 180 }}>
+          <option value={15}>15 minutes</option>
+          <option value={30}>30 minutes (default)</option>
+        </select>
+        <button disabled={busy || !tenantId} onClick={saveBookingPolicy} style={button}>Save booking policy</button>
+      </div>
+    </section>
 
     {tab === "free" ? <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(300px,0.85fr)", gap: 18 }}>
       <section style={card}>
